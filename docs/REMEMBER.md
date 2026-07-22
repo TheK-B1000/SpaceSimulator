@@ -14,9 +14,14 @@ This file stores durable, verified project facts that future Codex sessions must
 - Local engine paths are machine-specific and must not be committed.
 - Unreal binary assets are tracked with Git LFS.
 - Enhanced Input is explicitly enabled in `EdenSpaceSimulator.uproject` and configured in `Config/DefaultInput.ini`.
-- Default game map is `/Engine/Maps/Templates/OpenWorld` until an authored vertical-slice map exists.
+- Default game map and editor startup map are `/Game/Eden/Maps/L_FlightSandbox`.
+- Flight sandbox GameMode is `/Game/Eden/Blueprints/BP_EdenFlightGameMode.BP_EdenFlightGameMode_C`.
+- Six-axis flight shell C++ classes exist under `Source/EdenSpaceSimulator/Public/Flight` and `Private/Flight`.
+- Flight input assets exist under `/Game/Eden/Input`: `IA_FlightTranslate`, `IA_FlightRotate`, `IA_FlightStabilize`, and `IMC_Flight`.
+- Flight composition Blueprints exist under `/Game/Eden/Blueprints`: `BP_EdenSpacecraftPawn`, `BP_EdenFlightPlayerController`, and `BP_EdenFlightGameMode`.
 - Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
+- Flight automation tests use the `Eden.Unit.Flight` prefix.
 - The first vertical slice is a docking and emergency-response trainer.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.

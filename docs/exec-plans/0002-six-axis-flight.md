@@ -462,6 +462,9 @@ Expected result: generated files remain ignored, no unrelated assets are changed
 ## Progress log
 2026-07-22: Drafted initial ExecPlan for review only. No flight code, input assets, map assets, GameMode assets, or config changes were implemented.
 2026-07-22: Revised the plan after directional approval to lock kinematic swept movement, exact state ownership, movement semantics, stabilization behavior, Blueprint composition, input mapping, tests, manual verification, and A-E implementation checkpoints. No implementation was performed.
+2026-07-22: Began Checkpoint A implementation. Added flight command/model, kinematic movement component, and map-free automation tests. Checkpoint A is not accepted yet because the canonical build/test gate is blocked by an open Unreal Editor Live Coding session, and a direct compile probe failed at link because `UnrealEditor.exe` holds the module DLL.
+2026-07-22: Completed Checkpoints A-D after the editor lock cleared. Added C++ flight shell, tests, Enhanced Input assets, Blueprint composition assets, `L_FlightSandbox`, and map/GameMode config. Canonical validation/build/tests passed at each checkpoint after fixes.
+2026-07-22: Completed commandlet verification for asset references, input mappings/modifiers, map actors, default map/GameMode settings, and a headless collision-sweep runtime smoke. Visible PIE verification remains pending for physical input feel, camera usability, possession UX, stabilization toggle feel, PIE stop/start reset, and Output Log review in an interactive editor session.
 
 ## Decision log
 2026-07-22: Plan `L_FlightSandbox` and project-specific pawn/GameMode setup as part of the flight milestone, not foundation.
@@ -477,7 +480,17 @@ Expected result: generated files remain ignored, no unrelated assets are changed
 2026-07-22: Keep resource, mission, telemetry, UI, and EDEN OS work out of this milestone.
 
 ## Acceptance evidence
-Pending. This file is the only artifact revised for this task.
+Partial implementation evidence recorded on 2026-07-22:
+
+- `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot $env:UE_ENGINE_ROOT -TestFilter Eden` passed after Checkpoints A, B, C, D, and final Checkpoint E validation.
+- `Eden.Unit.Flight.*` automation tests passed, including command sanitization, non-finite input, invalid `DeltaTime`, acceleration/clamping, stabilization damping, reset behavior, blocking-hit inward-velocity removal, and DeltaTime partition equivalence.
+- `scripts/Editor/VerifyFlightAssets.py` passed under `UnrealEditor-Cmd.exe`, verifying flight input mappings, required modifiers, Blueprint references/components, map actors, `GameDefaultMap`, `EditorStartupMap`, and `GlobalDefaultGameMode`.
+- `scripts/Editor/VerifyFlightRuntimeSmoke.py` passed under `UnrealEditor-Cmd.exe`, verifying a transient `BP_EdenSpacecraftPawn` used swept movement against the sandbox blocker, stopped at X=748.400003, and cleared inward X velocity.
+- Project source search found no `LogTemp` usage in committed source.
+
+Pending manual evidence:
+
+- Visible PIE verification for pawn possession, camera usability, six translation/rotation axes, physical `X` stabilization toggle feel, PIE stop/start reset, project reload UX, and Output Log review in the interactive editor.
 
 Implementation acceptance criteria for a future approved pass:
 
