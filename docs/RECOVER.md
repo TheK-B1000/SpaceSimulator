@@ -10,13 +10,13 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Branch | `main` |
 | Commit | `0047e41` |
 | Working tree | Six-axis flight implementation is uncommitted. Planned C++ files, config changes, flight input assets, Blueprint assets, and `L_FlightSandbox` are present. |
-| Active ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` |
+| Active ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Last successful validation | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -RunTests -EngineRoot $env:UE_ENGINE_ROOT -TestFilter Eden` |
 | Last successful result | Repository validation passed, `EdenSpaceSimulatorEditor` Win64 Development build passed, and `Eden` automation tests passed. |
-| Asset verification | `UnrealEditor-Cmd.exe ... -ExecutePythonScript=scripts\Editor\VerifyFlightAssets.py -NullRHI -Unattended` passed. It verified input assets, Blueprint references/components, sandbox map actors, and map/GameMode settings. |
-| Runtime smoke | `UnrealEditor-Cmd.exe ... -ExecutePythonScript=scripts\Editor\VerifyFlightRuntimeSmoke.py -NullRHI -Unattended` passed. A transient pawn moved into the sandbox blocker, stopped at X=748.400003, and cleared inward X velocity to zero. |
-| Interactive PIE verification | Pending. A visible editor pass is still needed for physical keyboard/mouse feel, possessed camera usability, six axes, stabilization toggle feel, PIE stop/start reset, and reload UX. |
-| Next task | Perform the visible PIE verification pass, then review and commit the flight shell if accepted. |
+| Asset verification | `UnrealEditor-Cmd.exe ... -ExecutePythonScript=scripts\Editor\VerifyFlightAssets.py -NullRHI -Unattended` passed. |
+| Runtime smoke | `UnrealEditor-Cmd.exe ... -ExecutePythonScript=scripts\Editor\VerifyFlightRuntimeSmoke.py -NullRHI -Unattended` passed. Transient pawn stopped at X=748.400003 and cleared inward X velocity. |
+| Interactive PIE verification | Passed. `L_FlightSandbox` startup map, intended pawn/controller through `BP_EdenFlightGameMode`, possession, camera, six axes, `X` stabilization toggle, released-axis damping without auto-level, blocker stop without bounce, PIE stop/start reset, no `LogTemp`, no per-frame spam, and no unexpected errors. |
+| Next task | Review the uncommitted flight working tree and commit when requested. Do not start the next simulation milestone without a new ExecPlan. |
 
 ## Recovery protocol
 
@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Proje
 & "$env:UE_ENGINE_ROOT\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" ".\EdenSpaceSimulator.uproject" -Unattended -NoSplash -NoP4 -NullRHI -ExecutePythonScript="scripts\Editor\VerifyFlightRuntimeSmoke.py" -AbsLog="$PWD\Saved\Logs\VerifyFlightRuntimeSmoke.log"
 ```
 
-8. Complete the visible editor checklist before claiming manual verification.
+8. Compare actual state with this file. Correct stale recovery information before continuing.
 
 ## Safe Restart Rules
 
@@ -63,9 +63,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Proje
 
 ## Current Known Risks
 
-- Visible PIE verification is still pending.
-- Commandlet logs contain engine-side `LogTemp` lines from UE UnifiedErrorTest during automation startup; project source does not contain `LogTemp`.
-- The `Eden` automation filter also matched a few engine tests whose paths contain matching text, but the project flight and foundation tests passed.
+- The flight shell working tree is still uncommitted relative to `0047e41`.
+- The `Eden` automation filter can also match a few engine tests whose paths contain matching text; project flight and foundation tests still pass.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
 
@@ -78,6 +77,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Proje
 - Implemented Checkpoint C: `IA_FlightTranslate`, `IA_FlightRotate`, `IA_FlightStabilize`, `IMC_Flight`, `BP_EdenSpacecraftPawn`, `BP_EdenFlightPlayerController`, and `BP_EdenFlightGameMode`.
 - Implemented Checkpoint D: `L_FlightSandbox`, a simple blocking cube, a PlayerStart, a light, `GameDefaultMap`, `EditorStartupMap`, and `GlobalDefaultGameMode`.
 - Completed Checkpoint E commandlet and build/test validation.
+- Completed interactive PIE verification for possession, camera, six-axis controls, stabilization, blocker response, PIE restart reset, and Output Log review.
+- Marked ExecPlan `0002-six-axis-flight.md` verified complete.
 
 ### Validation
 
@@ -94,8 +95,6 @@ Evidence:
 ```text
 Command: UnrealEditor-Cmd.exe EdenSpaceSimulator.uproject -Unattended -NoSplash -NoP4 -NullRHI -ExecutePythonScript=scripts\Editor\VerifyFlightAssets.py -AbsLog=Saved\Logs\VerifyFlightAssets.log
 Result: Passed.
-Evidence:
-- Flight input mappings, modifiers, Blueprint references/components, map actors, default maps, and default GameMode verified.
 ```
 
 ```text
@@ -105,14 +104,25 @@ Evidence:
 - Transient BP_EdenSpacecraftPawn hit the sandbox blocker, stopped at X=748.400003, and cleared inward X velocity.
 ```
 
+```text
+Manual PIE verification in Unreal Engine 5.8
+Result: Passed.
+Evidence:
+- L_FlightSandbox opens as the startup map
+- BP_EdenFlightGameMode selects the intended pawn and controller; BP_EdenSpacecraftPawn spawns and is possessed
+- Camera usable; W/S, A/D, Space/Left Ctrl, Mouse X/Y, Q/E all work
+- X toggles stabilization; damps released axes; no auto-level
+- Sandbox blocker stops inward movement without bounce
+- PIE stop/start resets input intent and movement velocity
+- Output Log contains no LogTemp, no repeated per-frame spam, and no unexpected errors
+```
+
 ### Remaining Work
 
-- Open the project in the visible Unreal Editor.
-- Confirm it reloads into `L_FlightSandbox`.
-- Press Play and confirm project-specific pawn possession through `BP_EdenFlightGameMode`.
-- Verify camera usability, W/S, A/D, Space/Left Ctrl, Mouse X/Y, Q/E, X stabilization toggle, collision sweep, PIE stop/start state reset, and no project `LogTemp` or flight per-frame spam in Output Log.
-- Review and commit once the visible PIE pass is accepted.
+- Review the uncommitted flight working tree.
+- Commit the verified flight shell when requested.
+- Author the next ExecPlan before resource, mission, UI, telemetry, or EDEN OS work.
 
 ### Next Clean Action
 
-Run the visible editor checklist above.
+Commit the flight shell when requested.

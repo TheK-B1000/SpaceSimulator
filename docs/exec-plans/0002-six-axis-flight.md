@@ -1,9 +1,9 @@
 # Six-Axis Flight Shell
 
 ## Status
-Approved
+Verified complete
 
-This ExecPlan is approved as the implementation contract. Do not begin Checkpoint A, write flight code, create Unreal assets, edit project map settings, or implement pawn, movement, controller, GameMode, or input changes until implementation is explicitly authorized.
+Implementation and local verification for the six-axis flight shell are complete. Do not start resource simulation, mission gameplay, UI, telemetry export, networking, or EDEN OS integration from this plan.
 
 ## Problem and outcome
 The verified foundation still opens into an Untitled Open World template map using the base GameModeBase. That was acceptable for foundation verification, but the first vertical slice needs a project-owned flight sandbox where a player can spawn into a simple spacecraft pawn and translate and rotate across all six degrees of freedom using Enhanced Input.
@@ -464,7 +464,8 @@ Expected result: generated files remain ignored, no unrelated assets are changed
 2026-07-22: Revised the plan after directional approval to lock kinematic swept movement, exact state ownership, movement semantics, stabilization behavior, Blueprint composition, input mapping, tests, manual verification, and A-E implementation checkpoints. No implementation was performed.
 2026-07-22: Began Checkpoint A implementation. Added flight command/model, kinematic movement component, and map-free automation tests. Checkpoint A is not accepted yet because the canonical build/test gate is blocked by an open Unreal Editor Live Coding session, and a direct compile probe failed at link because `UnrealEditor.exe` holds the module DLL.
 2026-07-22: Completed Checkpoints A-D after the editor lock cleared. Added C++ flight shell, tests, Enhanced Input assets, Blueprint composition assets, `L_FlightSandbox`, and map/GameMode config. Canonical validation/build/tests passed at each checkpoint after fixes.
-2026-07-22: Completed commandlet verification for asset references, input mappings/modifiers, map actors, default map/GameMode settings, and a headless collision-sweep runtime smoke. Visible PIE verification remains pending for physical input feel, camera usability, possession UX, stabilization toggle feel, PIE stop/start reset, and Output Log review in an interactive editor session.
+2026-07-22: Completed commandlet verification for asset references, input mappings/modifiers, map actors, default map/GameMode settings, and a headless collision-sweep runtime smoke.
+2026-07-22: Interactive PIE verification passed. Operator confirmed `L_FlightSandbox` opened as the startup map, `BP_EdenFlightGameMode` selected the intended pawn and controller, the pawn spawned and was possessed, the camera was usable, W/S, A/D, Space/Left Ctrl, Mouse X/Y, and Q/E behaved as documented, `X` toggled stabilization, stabilization damped released-axis velocity without auto-leveling, sandbox blocker collision stopped inward movement without bounce, PIE stop/start reset input intent and movement velocity, Output Log contained no `LogTemp` usage or per-frame spam, and no unexpected errors were observed.
 
 ## Decision log
 2026-07-22: Plan `L_FlightSandbox` and project-specific pawn/GameMode setup as part of the flight milestone, not foundation.
@@ -480,47 +481,35 @@ Expected result: generated files remain ignored, no unrelated assets are changed
 2026-07-22: Keep resource, mission, telemetry, UI, and EDEN OS work out of this milestone.
 
 ## Acceptance evidence
-Partial implementation evidence recorded on 2026-07-22:
+Verified complete on 2026-07-22:
 
 - `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot $env:UE_ENGINE_ROOT -TestFilter Eden` passed after Checkpoints A, B, C, D, and final Checkpoint E validation.
 - `Eden.Unit.Flight.*` automation tests passed, including command sanitization, non-finite input, invalid `DeltaTime`, acceleration/clamping, stabilization damping, reset behavior, blocking-hit inward-velocity removal, and DeltaTime partition equivalence.
 - `scripts/Editor/VerifyFlightAssets.py` passed under `UnrealEditor-Cmd.exe`, verifying flight input mappings, required modifiers, Blueprint references/components, map actors, `GameDefaultMap`, `EditorStartupMap`, and `GlobalDefaultGameMode`.
 - `scripts/Editor/VerifyFlightRuntimeSmoke.py` passed under `UnrealEditor-Cmd.exe`, verifying a transient `BP_EdenSpacecraftPawn` used swept movement against the sandbox blocker, stopped at X=748.400003, and cleared inward X velocity.
-- Project source search found no `LogTemp` usage in committed source.
+- Project source search found no `LogTemp` usage in project Source.
+- Interactive PIE verification passed for:
+  - `L_FlightSandbox` opens as the startup map
+  - `BP_EdenFlightGameMode` selects the intended pawn and controller
+  - `BP_EdenSpacecraftPawn` spawns and is possessed
+  - Camera usable
+  - W/S, A/D, Space/Left Ctrl translation
+  - Mouse X yaw, Mouse Y pitch, Q/E roll
+  - `X` toggles stabilization; released-axis velocity damping visible; no auto-level
+  - Sandbox blocker stops inward movement without bounce
+  - PIE stop/start resets controller input intent and movement velocity
+  - Output Log free of `LogTemp`, repeated per-frame spam, and unexpected errors
 
-Pending manual evidence:
+Not claimed as verified by this plan:
 
-- Visible PIE verification for pawn possession, camera usability, six translation/rotation axes, physical `X` stabilization toggle feel, PIE stop/start reset, project reload UX, and Output Log review in the interactive editor.
-
-Implementation acceptance criteria for a future approved pass:
-
-- `L_FlightSandbox` exists and is set as both `GameDefaultMap` and `EditorStartupMap`.
-- `BP_EdenFlightGameMode` selects `BP_EdenSpacecraftPawn` and `BP_EdenFlightPlayerController`.
-- `AEdenSpacecraftPawn` creates the required `USphereComponent` collision root in C++.
-- `BP_EdenSpacecraftPawn` tunes the required sphere root, has a placeholder mesh, contains a usable debug camera, and does not replace the movement root.
-- Enhanced Input assets exist and follow the documented Axis3D component ordering, including required Negate and Swizzle modifiers.
-- `IA_FlightStabilize` is mapped to `X`.
-- Player can translate and rotate across all six axes.
-- Movement uses swept translation and detects blocking hits.
-- `UEdenFlightMovementComponent` validates `UpdatedComponent`.
-- Blocking-hit response slides by removing inward velocity along the impact normal, with no bounce or damage.
-- Controller input intent and movement velocity reset under their separate owners on initialization and PIE restart.
-- Stabilization toggle damps released-axis velocity and does not auto-level.
-- Movement command shaping and velocity integration have `Eden.Unit.Flight` automation coverage.
-- Build and `Eden` automation tests pass at each checkpoint.
-- Manual editor verification is recorded.
-- No core flight rules live in Blueprints or Level Blueprint.
-- No unrelated authored assets are modified.
+- Flight shell Git commit of the uncommitted working tree.
+- Resource, mission, UI, telemetry gameplay, or EDEN OS work.
 
 ## Handoff
-This plan is approved as the implementation contract. The next clean action is explicit implementation authorization for Checkpoint A, not implementation by assumption.
+Six-axis flight shell implementation and local verification are complete.
 
-When implementation is explicitly approved, proceed checkpoint by checkpoint:
+Next clean checkpoint:
 
-1. Checkpoint A: command model, movement component, and tests.
-2. Checkpoint B: pawn, controller, and GameMode C++.
-3. Checkpoint C: Unreal input and Blueprint assets.
-4. Checkpoint D: map and project configuration.
-5. Checkpoint E: full validation, documentation, and recovery update.
-
-Build before moving past each checkpoint. Do not create Unreal assets before the C++ movement model and tests are building. Do not start resource simulation, mission gameplay, UI, telemetry export, networking, or EDEN OS integration from this plan.
+1. Review the uncommitted flight working tree.
+2. Make the flight shell commit when requested.
+3. Author the next ExecPlan before any resource, mission, UI, telemetry, or EDEN OS work.
