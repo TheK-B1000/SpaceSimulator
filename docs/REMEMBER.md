@@ -23,6 +23,8 @@ This file stores durable, verified project facts that future Codex sessions must
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
 - Flight automation tests use the `Eden.Unit.Flight` prefix.
 - Interactive PIE verification of the six-axis flight shell passed on 2026-07-22, including startup map, possession, camera, six-axis input, stabilization, blocker collision, PIE restart reset, and clean Output Log checks.
+- Verified six-axis flight shell baseline tag: `v0.1.0-flight-shell` on commit `ed7fb55`.
+- Resource simulation work proceeds on branch `feature/spacecraft-resource-simulation` from that tagged baseline.
 - The first vertical slice is a docking and emergency-response trainer.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.
