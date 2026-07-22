@@ -1,0 +1,96 @@
+# Unreal Engine generated directories
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Plugin-generated directories
+Plugins/*/Binaries/
+Plugins/*/Intermediate/
+Plugins/*/DerivedDataCache/
+Plugins/*/Saved/
+
+# Packaged builds and staging
+Builds/
+StagedBuilds/
+Packaged/
+Releases/
+
+# Visual Studio
+.vs/
+*.sln
+*.slnx
+.vsconfig
+*.suo
+*.user
+*.userosscache
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+ipch/
+x64/
+Win32/
+
+# JetBrains Rider
+.idea/
+.idea_modules/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
+# Build products and debug symbols
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.app
+*.dSYM
+*.ipa
+*.apk
+*.aab
+
+# Unreal crash and local logs
+crashinfo--*
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+credentials/
+
+# Operating system
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
+*~
+~$*
+
+# Do not ignore authored Unreal project content:
+# Config/
+# Content/
+# Source/
+# Plugins/
+# *.uproject
+# Build/
