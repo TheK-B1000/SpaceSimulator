@@ -20,7 +20,16 @@ void UEdenFuelSystemComponent::BeginPlay()
 	if (InitializeFromConfiguredDataAsset())
 	{
 		RefreshPropulsionDemandSource();
-		RegisterWithSimulationClock();
+		if (RegisterWithSimulationClock())
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Log,
+				TEXT("%s fuel simulation active (%.2f / %.2f kg). Inspect live values with ShowDebug EdenSystems."),
+				*MakeLogContext(),
+				CurrentSnapshot.FuelQuantityKilograms,
+				ActiveFuelConfig.CapacityKilograms);
+		}
 	}
 }
 
