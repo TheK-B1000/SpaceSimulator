@@ -14,3 +14,21 @@ enum class EEdenFuelState : uint8
 	Critical,
 	Depleted
 };
+
+UENUM(BlueprintType)
+enum class EEdenPowerState : uint8
+{
+	Normal,
+	Warning,
+	Critical,
+	Depleted
+};
+
+UENUM(BlueprintType)
+enum class EEdenThermalState : uint8
+{
+	Normal,
+	Warning,
+	Critical,
+	Overheated
+};
