@@ -72,12 +72,14 @@ bool UEdenPowerSystemComponent::InitializePowerSimulation(const FEdenPowerConfig
 {
 	if (!ValidateAndLogConfig(PowerConfig))
 	{
+		bHasValidPowerConfiguration = false;
 		DisablePowerSimulation(TEXT("invalid explicit power configuration"));
 		return false;
 	}
 
 	ActivePowerConfig = PowerConfig;
 	bPowerSimulationEnabled = true;
+	bHasValidPowerConfiguration = true;
 	ApplySnapshot(FEdenPowerModel::MakeInitialSnapshot(ActivePowerConfig), false);
 
 	return true;
@@ -216,6 +218,22 @@ FEdenPowerStateSnapshot UEdenPowerSystemComponent::GetPowerStateSnapshot() const
 	return CurrentSnapshot;
 }
 
+FEdenPowerDebugSnapshot UEdenPowerSystemComponent::GetPowerDebugSnapshot() const
+{
+	FEdenPowerDebugSnapshot Snapshot;
+	Snapshot.bComponentAvailable = true;
+	Snapshot.bConfigurationValid = bHasValidPowerConfiguration;
+	Snapshot.bRegisteredWithClock = RegisteredSimulationClock.IsValid();
+	Snapshot.BatteryChargeKilowattHours = CurrentSnapshot.BatteryChargeKilowattHours;
+	Snapshot.BatteryCapacityKilowattHours = ActivePowerConfig.BatteryCapacityKilowattHours;
+	Snapshot.ChargePercent = CurrentSnapshot.ChargeFraction * 100.0f;
+	Snapshot.GenerationKilowatts = CurrentSnapshot.GenerationKilowatts;
+	Snapshot.DemandKilowatts = CurrentSnapshot.BaselineDemandKilowatts;
+	Snapshot.NetPowerKilowatts = CurrentSnapshot.NetPowerKilowatts;
+	Snapshot.PowerState = CurrentSnapshot.PowerState;
+	return Snapshot;
+}
+
 bool UEdenPowerSystemComponent::RegisterWithSimulationClock()
 {
 	if (!bPowerSimulationEnabled)
@@ -272,6 +290,7 @@ bool UEdenPowerSystemComponent::InitializeFromConfiguredDataAsset()
 {
 	if (!PowerConfigDataAsset)
 	{
+		bHasValidPowerConfiguration = false;
 		DisablePowerSimulation(TEXT("missing PowerConfigDataAsset"));
 		return false;
 	}
@@ -279,6 +298,7 @@ bool UEdenPowerSystemComponent::InitializeFromConfiguredDataAsset()
 	const FEdenPowerConfig& PowerConfig = PowerConfigDataAsset->PowerConfig;
 	if (!ValidateAndLogConfig(PowerConfig))
 	{
+		bHasValidPowerConfiguration = false;
 		DisablePowerSimulation(FString::Printf(TEXT("invalid PowerConfigDataAsset '%s'"), *GetNameSafe(PowerConfigDataAsset)));
 		return false;
 	}

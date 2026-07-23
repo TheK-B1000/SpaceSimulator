@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Systems/EdenResourceDebugTypes.h"
 #include "Subsystems/WorldSubsystem.h"
 
 #include "EdenSimulationClockSubsystem.generated.h"
@@ -65,6 +66,8 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Eden|Simulation")
 	int32 GetSubscriberCount() const;
+
+	FEdenSimulationClockDebugSnapshot GetSimulationClockDebugSnapshot() const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Eden|Simulation")
 	FEdenSimulationClockOverrunSignature OnSimulationClockOverrun;

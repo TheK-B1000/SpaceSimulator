@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
 #include "Systems/EdenPowerModel.h"
+#include "Systems/EdenResourceDebugTypes.h"
 
 #include "EdenPowerSystemComponent.generated.h"
 
@@ -55,6 +56,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Power")
 	FEdenPowerStateSnapshot GetPowerStateSnapshot() const;
 
+	FEdenPowerDebugSnapshot GetPowerDebugSnapshot() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
 	bool RegisterWithSimulationClock();
 
@@ -92,4 +95,7 @@ private:
 
 	UPROPERTY(Transient)
 	bool bPowerSimulationEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bHasValidPowerConfiguration = false;
 };

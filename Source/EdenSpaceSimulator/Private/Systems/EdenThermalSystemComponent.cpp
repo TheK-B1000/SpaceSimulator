@@ -76,12 +76,14 @@ bool UEdenThermalSystemComponent::InitializeThermalSimulation(const FEdenThermal
 {
 	if (!ValidateAndLogConfig(ThermalConfig))
 	{
+		bHasValidThermalConfiguration = false;
 		DisableThermalSimulation(TEXT("invalid explicit thermal configuration"));
 		return false;
 	}
 
 	ActiveThermalConfig = ThermalConfig;
 	bThermalSimulationEnabled = true;
+	bHasValidThermalConfiguration = true;
 	ApplySnapshot(FEdenThermalModel::MakeInitialSnapshot(ActiveThermalConfig), false);
 
 	return true;
@@ -224,6 +226,20 @@ FEdenThermalStateSnapshot UEdenThermalSystemComponent::GetThermalStateSnapshot()
 	return CurrentSnapshot;
 }
 
+FEdenThermalDebugSnapshot UEdenThermalSystemComponent::GetThermalDebugSnapshot() const
+{
+	FEdenThermalDebugSnapshot Snapshot;
+	Snapshot.bComponentAvailable = true;
+	Snapshot.bConfigurationValid = bHasValidThermalConfiguration;
+	Snapshot.bRegisteredWithClock = RegisteredSimulationClock.IsValid();
+	Snapshot.TemperatureCelsius = CurrentSnapshot.TemperatureCelsius;
+	Snapshot.AmbientTemperatureCelsius = ActiveThermalConfig.AmbientTemperatureCelsius;
+	Snapshot.HeatGenerationDegreesCelsiusPerSecond = CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond;
+	Snapshot.DissipationDegreesCelsiusPerSecond = CurrentSnapshot.DissipationDegreesCelsiusPerSecond;
+	Snapshot.ThermalState = CurrentSnapshot.ThermalState;
+	return Snapshot;
+}
+
 bool UEdenThermalSystemComponent::RegisterWithSimulationClock()
 {
 	if (!bThermalSimulationEnabled)
@@ -280,6 +296,7 @@ bool UEdenThermalSystemComponent::InitializeFromConfiguredDataAsset()
 {
 	if (!ThermalConfigDataAsset)
 	{
+		bHasValidThermalConfiguration = false;
 		DisableThermalSimulation(TEXT("missing ThermalConfigDataAsset"));
 		return false;
 	}
@@ -287,6 +304,7 @@ bool UEdenThermalSystemComponent::InitializeFromConfiguredDataAsset()
 	const FEdenThermalConfig& ThermalConfig = ThermalConfigDataAsset->ThermalConfig;
 	if (!ValidateAndLogConfig(ThermalConfig))
 	{
+		bHasValidThermalConfiguration = false;
 		DisableThermalSimulation(FString::Printf(TEXT("invalid ThermalConfigDataAsset '%s'"), *GetNameSafe(ThermalConfigDataAsset)));
 		return false;
 	}

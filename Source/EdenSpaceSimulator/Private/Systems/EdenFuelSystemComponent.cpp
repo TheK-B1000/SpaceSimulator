@@ -80,6 +80,7 @@ bool UEdenFuelSystemComponent::InitializeFuelSimulation(const FEdenFuelConfig& F
 {
 	if (!ValidateAndLogConfig(FuelConfig))
 	{
+		bHasValidFuelConfiguration = false;
 		DisableFuelSimulation(TEXT("invalid explicit fuel configuration"));
 		return false;
 	}
@@ -87,6 +88,7 @@ bool UEdenFuelSystemComponent::InitializeFuelSimulation(const FEdenFuelConfig& F
 	ActiveFuelConfig = FuelConfig;
 	ConsumptionDemandNormalized = 0.0f;
 	bFuelSimulationEnabled = true;
+	bHasValidFuelConfiguration = true;
 	ApplySnapshot(FEdenFuelModel::MakeInitialSnapshot(ActiveFuelConfig), false);
 
 	return true;
@@ -244,6 +246,20 @@ FEdenFuelStateSnapshot UEdenFuelSystemComponent::GetFuelStateSnapshot() const
 	return CurrentSnapshot;
 }
 
+FEdenFuelDebugSnapshot UEdenFuelSystemComponent::GetFuelDebugSnapshot() const
+{
+	FEdenFuelDebugSnapshot Snapshot;
+	Snapshot.bComponentAvailable = true;
+	Snapshot.bConfigurationValid = bHasValidFuelConfiguration;
+	Snapshot.bRegisteredWithClock = RegisteredSimulationClock.IsValid();
+	Snapshot.FuelQuantityKilograms = CurrentSnapshot.FuelQuantityKilograms;
+	Snapshot.CapacityKilograms = ActiveFuelConfig.CapacityKilograms;
+	Snapshot.FuelPercent = CurrentSnapshot.FuelFraction * 100.0f;
+	Snapshot.PropulsionDemandNormalized = GetDebugPropulsionDemandNormalized();
+	Snapshot.FuelState = CurrentSnapshot.FuelState;
+	return Snapshot;
+}
+
 bool UEdenFuelSystemComponent::RegisterWithSimulationClock()
 {
 	if (!bFuelSimulationEnabled)
@@ -300,6 +316,7 @@ bool UEdenFuelSystemComponent::InitializeFromConfiguredDataAsset()
 {
 	if (!FuelConfigDataAsset)
 	{
+		bHasValidFuelConfiguration = false;
 		DisableFuelSimulation(TEXT("missing FuelConfigDataAsset"));
 		return false;
 	}
@@ -307,6 +324,7 @@ bool UEdenFuelSystemComponent::InitializeFromConfiguredDataAsset()
 	const FEdenFuelConfig& FuelConfig = FuelConfigDataAsset->FuelConfig;
 	if (!ValidateAndLogConfig(FuelConfig))
 	{
+		bHasValidFuelConfiguration = false;
 		DisableFuelSimulation(FString::Printf(TEXT("invalid FuelConfigDataAsset '%s'"), *GetNameSafe(FuelConfigDataAsset)));
 		return false;
 	}
@@ -408,6 +426,23 @@ float UEdenFuelSystemComponent::ResolveConsumptionDemandNormalized()
 	bLoggedSanitizedPropulsionDemand = bDemandWasSanitized;
 	ConsumptionDemandNormalized = DemandNormalized;
 	return DemandNormalized;
+}
+
+float UEdenFuelSystemComponent::GetDebugPropulsionDemandNormalized() const
+{
+	if (!bPropulsionDemandSourceDiscoveryComplete)
+	{
+		return ConsumptionDemandNormalized;
+	}
+
+	const UActorComponent* SourceComponent = PropulsionDemandSourceComponent.Get();
+	const IEdenPropulsionDemandSource* DemandSource = Cast<IEdenPropulsionDemandSource>(SourceComponent);
+	if (!DemandSource)
+	{
+		return 0.0f;
+	}
+
+	return FEdenFuelModel::SanitizeDemandNormalized(DemandSource->GetPropulsionDemandNormalized());
 }
 
 void UEdenFuelSystemComponent::ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents)

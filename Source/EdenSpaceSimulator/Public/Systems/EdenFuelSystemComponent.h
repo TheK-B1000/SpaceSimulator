@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
 #include "Systems/EdenFuelModel.h"
+#include "Systems/EdenResourceDebugTypes.h"
 
 #include "EdenFuelSystemComponent.generated.h"
 
@@ -58,6 +59,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Fuel")
 	FEdenFuelStateSnapshot GetFuelStateSnapshot() const;
 
+	FEdenFuelDebugSnapshot GetFuelDebugSnapshot() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Eden|Fuel")
 	bool RegisterWithSimulationClock();
 
@@ -79,6 +82,7 @@ private:
 	void DisableFuelSimulation(const FString& Reason);
 	bool ValidateAndLogConfig(const FEdenFuelConfig& FuelConfig) const;
 	float ResolveConsumptionDemandNormalized();
+	float GetDebugPropulsionDemandNormalized() const;
 	void ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents);
 	FString MakeLogContext() const;
 
@@ -102,6 +106,9 @@ private:
 
 	UPROPERTY(Transient)
 	bool bFuelSimulationEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bHasValidFuelConfiguration = false;
 
 	UPROPERTY(Transient)
 	bool bPropulsionDemandSourceDiscoveryComplete = false;

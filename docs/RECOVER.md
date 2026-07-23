@@ -9,14 +9,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-07-23 |
 | Branch | `feature/spacecraft-resource-simulation` |
 | Clean baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Checkpoint D source, integration tests, ExecPlan progress, and this recovery update are the expected pending changes. |
+| Working tree | Checkpoint E development-only debug visibility source, focused debug tests, ExecPlan progress, and this recovery update are the expected pending changes. |
 | Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Approved) |
 | Previous ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Flight shell status | Committed, PIE-verified, and tagged as `v0.1.0-flight-shell`. |
-| Resource implementation | Checkpoint A clock scope accepted and committed as `9bede83`. Checkpoint B fuel scope accepted and committed as `88788c0`. Checkpoint C power/thermal scope accepted and committed as `e410878`. Checkpoint D pawn resource composition, propulsion-demand integration, and integration tests are implemented and locally verified. ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, EDEN OS work, and fuel-based flight shutdown are not started. |
+| Resource implementation | Checkpoint A clock scope accepted and committed as `9bede83`. Checkpoint B fuel scope accepted and committed as `88788c0`. Checkpoint C power/thermal scope accepted and committed as `e410878`. Checkpoint D pawn resource composition, propulsion-demand integration, and integration tests accepted and committed as `5bce7ab`. Checkpoint E development-only `ShowDebug EdenSystems` visibility is implemented and locally verified through build and automation. Blueprint changes, Data Asset instances, Unreal assets, mission, HUD/widgets, alerts, telemetry, networking, EDEN OS work, and fuel-based flight shutdown are not started. |
 | Last successful validation | Repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`; build: `K:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; tests: `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecCmds=Automation RunTests Eden; Quit" "-TestExit=Automation Test Queue Empty" -Log` |
-| Last successful result | Repository validation passed. `EdenSpaceSimulatorEditor` Win64 Development build passed. Automation reported 96 `Eden` tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, existing `Eden.Unit.Systems.Power.*`, existing `Eden.Unit.Systems.Thermal.*`, and all new `Eden.Integration.Systems.*` tests passed. |
-| Next task | Review and accept Checkpoint D. Do not begin Checkpoint E yet. |
+| Last successful result | Repository validation passed. `git diff --check` passed. Project source search found no `LogTemp` usage in `Source`. `EdenSpaceSimulatorEditor` Win64 Development build passed. Automation log `Saved/Logs/EdenSpaceSimulator-backup-2026.07.23-02.16.20.log` reported 99 `Eden` tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, existing `Eden.Unit.Systems.Power.*`, existing `Eden.Unit.Systems.Thermal.*`, existing `Eden.Integration.Systems.*`, and new `Eden.Unit.Systems.Debug.*` tests passed. Command-line editor smoke accepted `Cmd: ShowDebug EdenSystems; Quit`, but visual PIE overlay verification remains pending. |
+| Next task | Review and accept Checkpoint E. Do not begin Checkpoint F yet. |
 
 ## Recovery protocol
 
@@ -38,8 +38,8 @@ Then:
 3. Read `docs/exec-plans/0003-spacecraft-resource-simulation.md`.
 4. Confirm the current branch is `feature/spacecraft-resource-simulation`.
 5. Confirm the clean baseline tag `v0.1.0-flight-shell` exists.
-6. Confirm Checkpoint D source/tests/docs are still the only implementation scope in the diff.
-7. Do not start Checkpoint E unless the maintainer explicitly authorizes it and `git status` is clean.
+6. Confirm Checkpoint E source/tests/docs are still the only implementation scope in the diff.
+7. Do not start Checkpoint F unless the maintainer explicitly accepts Checkpoint E, authorizes the next checkpoint, and `git status` is clean.
 
 ## Safe Restart Rules
 
@@ -53,7 +53,9 @@ Then:
 
 ## Current Known Risks
 
-- Checkpoint D is implemented but not yet reviewed or accepted by the maintainer.
+- Checkpoint E is implemented but not yet reviewed or accepted by the maintainer.
+- Visual PIE verification remains pending for `ShowDebug EdenSystems`: confirm the overlay renders over the possessed pawn, displays clock/fuel/power/thermal values, toggling it does not mutate simulation values, and the Output Log has no project `LogTemp` or per-frame resource spam.
+- `UnrealEditor-Cmd.exe ... "-ExecCmds=ShowDebug EdenSystems; Quit" -Log` accepted `Cmd: ShowDebug EdenSystems; Quit`, but the command-line editor process did not exit on `Quit`; the spawned process was manually stopped.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
 - The all-in-one `scripts/Validate-Project.ps1 -Build -RunTests ... -TestFilter Eden` command timed out twice at the `Build.bat ... -WaitMutex -FromMsBuild` step before compiler diagnostics. Direct repository validation, direct `Build.bat ... -NoMutex -FromMsBuild`, and direct `UnrealEditor-Cmd.exe` automation all passed.
@@ -117,6 +119,19 @@ Then:
   - missing clock safe-disable behavior for fuel, power, and thermal
   - `Eden.Integration.Systems.*` tests
 - Verified Checkpoint D through repository validation, Win64 Development Editor build, foundation smoke, existing flight tests, existing SimClock tests, existing Fuel/Power/Thermal tests, and new Systems integration tests.
+- Checkpoint D accepted and committed as `5bce7ab`.
+- Implemented Checkpoint E development-only debug visibility scope:
+  - `FEdenSimulationClockDebugSnapshot`
+  - `FEdenFuelDebugSnapshot`
+  - `FEdenPowerDebugSnapshot`
+  - `FEdenThermalDebugSnapshot`
+  - `FEdenSpacecraftSystemsDebugSnapshot`
+  - read-only debug query methods on the clock and resource system components
+  - pawn-level `GetEdenSystemsDebugSnapshot()`
+  - non-shipping `AEdenSpacecraftPawn::DisplayDebug()` support for `ShowDebug EdenSystems`
+  - `Eden.Unit.Systems.Debug.*` tests
+- Verified Checkpoint E through repository validation, `git diff --check`, source `LogTemp` search, Win64 Development Editor build, existing Eden tests, and new debug tests.
+- Command-line editor smoke accepted `ShowDebug EdenSystems`, but visual PIE overlay verification remains pending.
 
 ### Locked decisions recorded in ExecPlan 0003
 
@@ -135,10 +150,11 @@ Then:
 
 ### Remaining Work
 
-- Review and accept Checkpoint D.
-- Authorize Checkpoint E only when ready.
-- Keep ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, EDEN OS work, and fuel-based flight shutdown untouched until their planned checkpoints.
+- Review and accept Checkpoint E.
+- Complete visual PIE verification for `ShowDebug EdenSystems`.
+- Authorize Checkpoint F only when ready.
+- Keep Blueprints, Data Asset instances, Unreal assets, mission, HUD/widgets, alerts, telemetry, networking, EDEN OS work, and fuel-based flight shutdown untouched until their planned checkpoints.
 
 ### Next Clean Action
 
-Review Checkpoint D. Do not begin Checkpoint E yet.
+Review Checkpoint E. Do not begin Checkpoint F yet.

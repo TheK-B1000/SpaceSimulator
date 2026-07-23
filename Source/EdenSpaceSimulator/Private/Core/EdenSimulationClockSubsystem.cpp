@@ -244,6 +244,18 @@ int32 UEdenSimulationClockSubsystem::GetSubscriberCount() const
 	return Subscribers.Num();
 }
 
+FEdenSimulationClockDebugSnapshot UEdenSimulationClockSubsystem::GetSimulationClockDebugSnapshot() const
+{
+	FEdenSimulationClockDebugSnapshot Snapshot;
+	Snapshot.bClockAvailable = true;
+	Snapshot.ElapsedSimulationTimeSeconds = ElapsedSimulationTimeSeconds;
+	Snapshot.FixedStepSeconds = FixedStepSeconds;
+	Snapshot.bPaused = bPaused;
+	Snapshot.SubscriberCount = Subscribers.Num();
+	Snapshot.LastDroppedSteps = LastDroppedSteps;
+	return Snapshot;
+}
+
 bool UEdenSimulationClockSubsystem::IsClockConfigurationValid() const
 {
 	return FEdenFixedStepClockModel::IsValidFixedStepSeconds(FixedStepSeconds)

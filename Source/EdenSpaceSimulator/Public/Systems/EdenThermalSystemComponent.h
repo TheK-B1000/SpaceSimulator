@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
+#include "Systems/EdenResourceDebugTypes.h"
 #include "Systems/EdenThermalModel.h"
 
 #include "EdenThermalSystemComponent.generated.h"
@@ -55,6 +56,8 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Thermal")
 	FEdenThermalStateSnapshot GetThermalStateSnapshot() const;
 
+	FEdenThermalDebugSnapshot GetThermalDebugSnapshot() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
 	bool RegisterWithSimulationClock();
 
@@ -92,4 +95,7 @@ private:
 
 	UPROPERTY(Transient)
 	bool bThermalSimulationEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bHasValidThermalConfiguration = false;
 };
