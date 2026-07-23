@@ -1,21 +1,14 @@
 # Spacecraft Resource Simulation
 
 ## Status
-Draft — revised per review feedback, awaiting second review and approval
+Approved
 
 ## Implementation blocker
 
 > [!CAUTION]
-> The verified six-axis flight shell is uncommitted. Resource simulation **must not** begin until the flight shell is committed and the working tree is clean.
+> The verified six-axis flight shell baseline is committed and tagged as `v0.1.0-flight-shell` on commit `ed7fb55`, and resource work is on `feature/spacecraft-resource-simulation`.
 >
-> Required sequence before Checkpoint A:
-> ```powershell
-> git add .
-> git commit -m "feat(flight): add verified six-axis flight shell"
-> git tag -a v0.1.0-flight-shell -m "Verified six-axis flight shell"
-> git switch -c feature/spacecraft-resource-simulation
-> ```
-> Update this plan's repository state section with the actual branch, commit hash, and confirmation of a clean working tree before proceeding.
+> Checkpoint A remains blocked until the plan-only changes are reviewed, the working tree is clean, and the maintainer explicitly authorizes Checkpoint A implementation. Approval of this ExecPlan is not implementation authorization.
 
 ## Problem and outcome
 
@@ -76,13 +69,13 @@ The outcome is a simulation layer where every resource has one authoritative own
 
 ## Current repository state
 
-> [!WARNING]
-> This section must be updated after the flight shell commit and feature branch creation. The values below reflect the pre-commit state.
-
-- Branch: `main` → will be `feature/spacecraft-resource-simulation`
-- Commit baseline: `0047e41` → will be the flight shell commit hash
-- Working tree: uncommitted flight shell → must be clean before Checkpoint A
-- Active ExecPlan: `0002-six-axis-flight.md` (verified complete)
+- Branch: `feature/spacecraft-resource-simulation`
+- Clean flight-shell baseline: `v0.1.0-flight-shell` on commit `ed7fb55`
+- Recent plan-only branch commits observed before this approval update: `0383a87`, `3c7297a`
+- Working tree before this approval update: clean except for the external Git warning that `C:\Users\K-B/.config/git/ignore` cannot be accessed
+- Expected pending changes after this approval update: this ExecPlan and `docs/RECOVER.md` only
+- Active ExecPlan: `0003-spacecraft-resource-simulation.md` (Approved)
+- Previous ExecPlan: `0002-six-axis-flight.md` (verified complete)
 - `Source/EdenSpaceSimulator/Public/Systems/` does not exist yet
 - `Source/EdenSpaceSimulator/Private/Systems/` does not exist yet
 - No C++ subsystems have been implemented yet
@@ -240,6 +233,8 @@ Factor common threshold/transition logic into a base class.
 
 **Selected: weak UObject references with interface cast.** The clock stores `TArray<TWeakObjectPtr<UObject>>` and casts to `IEdenSimulationTickable` before each step. Invalid weak references are removed before stepping. This prevents dangling pointers during PIE teardown, level transitions, and unusual lifecycle ordering. Registration rejects duplicates. `Deinitialize` clears all subscribers.
 
+Subscriber-list mutation is locked out during fixed-step iteration. The implementation for this milestone uses deferred registration/unregistration requests plus a stable weak-reference snapshot: prune invalid subscribers, copy valid weak references into a local snapshot, iterate the snapshot, then flush deferred adds/removes and prune again after the current fixed-step batch completes.
+
 ### Alternative 7: Fuel-thrust coupling
 
 | Approach | Pros | Cons |
@@ -248,7 +243,7 @@ Factor common threshold/transition logic into a base class.
 | `AEdenSpacecraftPawn::GetCurrentThrustFraction()` | Simple, one method | **Fuel component depends on concrete pawn class** — violates architecture |
 | `UEdenFuelSystemComponent::SetConsumptionDemandNormalized(float)` | Pure command; no interface needed | Requires an external caller to drive consumption each step |
 
-**Selected: `IEdenPropulsionDemandSource`.** The flight movement component implements this interface and exposes `GetPropulsionDemandNormalized()`. The fuel component discovers the demand source on its owning actor during `BeginPlay` via `GetOwner()->FindComponentByInterface<>()` and stores a `TWeakObjectPtr<UObject>` reference. The fuel component never includes or depends on `AEdenSpacecraftPawn`, `UEdenFlightMovementComponent`, or any concrete flight class.
+**Selected: `IEdenPropulsionDemandSource`.** The flight movement component implements this interface and exposes `GetPropulsionDemandNormalized()`. The fuel component discovers propulsion demand sources on its owning actor during `BeginPlay`, requires exactly one valid source, and stores a `TWeakObjectPtr<UObject>` reference. The fuel component never includes or depends on `AEdenSpacecraftPawn`, `UEdenFlightMovementComponent`, or any concrete flight class.
 
 Ownership rule:
 - Flight owns movement and propulsion demand.
@@ -295,10 +290,15 @@ UEdenSimulationClockSubsystem::Tick(float DeltaTime)
     |
     Prune invalid weak references from subscriber list
     |
+    Create stable weak-reference snapshot for this fixed-step batch
+    |
     for i in [0, StepsTaken):
-        for each valid subscriber (cast TWeakObjectPtr to IEdenSimulationTickable):
+        for each valid subscriber in snapshot (cast TWeakObjectPtr to IEdenSimulationTickable):
             Subscriber->AdvanceSimulation(FixedStepSeconds)
         ElapsedSimulationTimeSeconds += FixedStepSeconds
+    |
+    Flush deferred registration/unregistration requests
+    Prune invalid weak references after stepping
     |
     if (DroppedSteps > 0)
         Log overrun warning with DroppedSteps (LogEdenSimClock)
@@ -324,8 +324,9 @@ GetStatId()
     Return STAT group identifier for profiling
 
 DoesSupportWorldType(const EWorldType::Type WorldType)
-    Return true for Game, PIE, Editor (if needed)
-    Return false for inactive or preview worlds
+    Return true for Game and PIE
+    Return true for GamePreview only if required for automated verification
+    Return false for Editor, EditorPreview, Inactive, and None
 ```
 
 ### Parameters
@@ -334,6 +335,10 @@ DoesSupportWorldType(const EWorldType::Type WorldType)
 |---|---|---|
 | `FixedStepSeconds` | 0.1 (10 Hz) | Per PROJECT_SPEC initial target |
 | `MaxCatchUpSteps` | 4 | Bounds worst-case to 0.4s of simulation per frame; prevents spiral of death |
+
+Validation:
+- `FixedStepSeconds` must be positive and finite.
+- `MaxCatchUpSteps` must be greater than zero.
 
 ### Clock semantics (locked)
 
@@ -367,7 +372,9 @@ Using a `UINTERFACE` enables Unreal's `Cast<>` and reflection. The `CannotImplem
 - Components register during `BeginPlay` and unregister during `EndPlay`.
 - The clock stores `TWeakObjectPtr<UObject>` — it does not own subscribers.
 - Duplicate registration is rejected silently or with a bounded log.
-- Invalid weak references are pruned before each stepping pass.
+- Invalid weak references are pruned before each stepping pass and after flushing deferred mutations.
+- Registration and unregistration requests made during fixed-step iteration are deferred until the current fixed-step batch completes.
+- Fixed-step iteration uses a stable weak-reference snapshot so the active subscriber list is not mutated while subscribers are being advanced.
 - `Deinitialize` clears all subscriber references.
 - A subscriber destroyed mid-iteration is safe because weak pointers detect invalidation.
 
@@ -392,18 +399,24 @@ public:
 
 `UEdenFlightMovementComponent` implements this interface. The implementation returns the magnitude of the last translation input vector, clamped to `[0, 1]`.
 
-`UEdenFuelSystemComponent` discovers the demand source on its owning actor during `BeginPlay`:
-1. `GetOwner()->FindComponentByInterface<UEdenPropulsionDemandSource>()`
-2. Store result as `TWeakObjectPtr<UObject> PropulsionDemandSource`.
-3. If not found, log a warning via `LogEdenSystems`. Fuel consumption proceeds with zero demand (no consumption from thrust).
+`UEdenFuelSystemComponent` discovers demand sources on its owning actor during `BeginPlay` without depending on the concrete pawn class:
+1. Inspect the owner actor's components for implementations of `UEdenPropulsionDemandSource`.
+2. Require exactly one valid `IEdenPropulsionDemandSource` on the spacecraft actor.
+3. No source: log a bounded warning via `LogEdenSystems` and use zero demand.
+4. One source: store a non-owning `TWeakObjectPtr<UObject> PropulsionDemandSource`.
+5. Multiple sources: report an ambiguity error via `LogEdenSystems`, do not select silently, and use zero demand until the configuration is corrected.
+6. Invalid source or expired weak reference: safely use zero demand.
 
 During `AdvanceSimulation`, the fuel component reads:
 ```cpp
 float Demand = 0.0f;
 if (PropulsionDemandSource.IsValid())
 {
-    Demand = Cast<IEdenPropulsionDemandSource>(PropulsionDemandSource.Get())
-        ->GetPropulsionDemandNormalized();
+    if (const IEdenPropulsionDemandSource* Source =
+        Cast<IEdenPropulsionDemandSource>(PropulsionDemandSource.Get()))
+    {
+        Demand = Source->GetPropulsionDemandNormalized();
+    }
 }
 ```
 
@@ -564,6 +577,13 @@ Validation ordering: `AbsoluteMinTemperatureCelsius <= AmbientTemperatureCelsius
 
 **Validation**: Each data asset implements `IsDataValid` for editor-time checking. Each component also validates its data asset during `BeginPlay`. Invalid configuration (missing asset, zero capacity, threshold ordering violation, etc.) produces an actionable `UE_LOG` with actor name, component name, asset name, and field context, and enters a safe failure state where the system does not advance simulation.
 
+Direct validation coverage is required for:
+- `InitialFuelFraction` in `[0, 1]`.
+- `InitialChargeFraction` in `[0, 1]`.
+- `InitialTemperatureCelsius` inside `[AbsoluteMinTemperatureCelsius, AbsoluteMaxTemperatureCelsius]`.
+- `FixedStepSeconds` positive and finite.
+- `MaxCatchUpSteps` greater than zero.
+
 ## Component composition (locked)
 
 `AEdenSpacecraftPawn` creates fuel, power, and thermal system components as **C++ default subobjects** in its constructor, alongside the existing `RequiredCollisionRoot` and `FlightMovementComponent`.
@@ -584,17 +604,23 @@ This guarantees the authoritative resource owners exist whenever the project spa
 |---|---|
 | Missing data asset reference | Log error with component, actor, and expected asset type. Do not advance simulation for that system. |
 | Zero or negative capacity | Reject during `IsDataValid` and `BeginPlay`. Log field name, value, and asset name. |
+| Initial fuel or charge fraction outside `[0, 1]` | Reject during `IsDataValid` and `BeginPlay`. Log field name, value, and expected range. |
+| Initial temperature outside absolute thermal bounds | Reject during `IsDataValid` and `BeginPlay`. Log initial value, absolute min, absolute max, and asset context. |
 | Fuel/power threshold ordering violation (`Critical >= Warning`) | Reject. Log both values, expected ordering, and asset context. |
 | Thermal threshold ordering violation | Reject. Log full ordering chain and asset context. |
 | NaN or Inf in resource value | Detect at start of fixed step. Log context with previous value. Clamp to safe value. |
+| Invalid clock configuration | Reject non-positive/non-finite `FixedStepSeconds` and `MaxCatchUpSteps <= 0`. Clock does not advance and logs actionable context. |
 | Fixed-step overrun (> MaxCatchUpSteps) | Drop excess accumulator time (does not increase elapsed time), log warning with dropped count via `LogEdenSimClock`, broadcast `OnSimulationClockOverrun`. |
 | Fuel reaches zero | Derive `EEdenFuelState::Depleted`. Fire `OnFuelStateChanged` + `OnFuelDepleted`. Log transition. Do not crash. |
 | Power reaches zero | Derive `EEdenPowerState::Depleted`. Fire `OnPowerStateChanged` + `OnPowerDepleted`. Log transition. |
 | Temperature reaches `AbsoluteMaxTemperatureCelsius` | Derive `EEdenThermalState::Overheated`. Fire `OnThermalStateChanged` + `OnThermalOverheated`. Log transition. |
 | Propulsion demand source not found on actor | Fuel component logs warning during `BeginPlay`. Consumption proceeds with zero demand. |
+| Multiple propulsion demand sources found on actor | Fuel component reports ambiguity via `LogEdenSystems`, does not choose silently, and uses zero demand until fixed. |
+| Propulsion demand source weak reference expires or no longer implements the interface | Fuel component safely uses zero demand. |
 | Clock subsystem unavailable | Resource components log error in `BeginPlay` and do not register. They remain inert. |
 | DeltaTime is zero, negative, NaN, or Inf | Clock rejects via `FEdenFixedStepClockModel::IsValidDeltaTime`. Does not advance. Logs bounded warning. |
-| Subscriber destroyed during stepping | Weak pointer detects invalidation. Pruned before or during iteration. |
+| Subscriber registers or unregisters during stepping | Clock defers mutation until the current fixed-step batch completes; active iteration uses a stable weak-reference snapshot. |
+| Subscriber destroyed during stepping | Weak pointer detects invalidation. Snapshot entry is skipped safely and pruned after stepping. |
 | PIE teardown | `Deinitialize` clears all subscriber weak references. `EndPlay` unregisters individual components. |
 
 ## Performance considerations
@@ -621,6 +647,10 @@ This guarantees the authoritative resource owners exist whenever the project spa
 | `Eden.Unit.SimClock.PausePreventsAdvance` | Paused state produces zero steps and no accumulator growth |
 | `Eden.Unit.SimClock.ResetClearsAccumulatorAndTime` | Reset zeroes elapsed time, accumulator, and step count |
 | `Eden.Unit.SimClock.InvalidDeltaTimeRejected` | Zero, negative, NaN, Inf rejected by `IsValidDeltaTime` |
+| `Eden.Unit.SimClock.InvalidFixedStepConfigRejected` | Non-positive, NaN, and Inf `FixedStepSeconds` rejected |
+| `Eden.Unit.SimClock.MaxCatchUpStepsRequiresPositiveValue` | `MaxCatchUpSteps <= 0` rejected |
+| `Eden.Unit.SimClock.WorldTypeSupportIsLocked` | `DoesSupportWorldType` supports Game/PIE, optionally GamePreview for automation, and excludes Editor, EditorPreview, Inactive, None |
+| `Eden.Unit.SimClock.SubscriberMutationDeferredDuringStep` | Registration/unregistration during stepping does not mutate the active iteration list |
 | `Eden.Unit.SimClock.ElapsedTimeAccumulatesCorrectly` | Elapsed time equals steps × step size (not raw DeltaTime sum) |
 | `Eden.Unit.SimClock.EquivalentTimeMatchesBelowCatchUpCap` | Different DeltaTime splits produce same elapsed time and step count when MaxCatchUpSteps is not exceeded |
 
@@ -640,6 +670,8 @@ This guarantees the authoritative resource owners exist whenever the project spa
 | `Eden.Unit.Systems.Fuel.NaNAndInfRejected` | Invalid values detected and clamped |
 | `Eden.Unit.Systems.Fuel.ZeroCapacityRejected` | Config validation rejects zero capacity |
 | `Eden.Unit.Systems.Fuel.ThresholdOrderingValidated` | `Critical >= Warning` rejected; `Critical < Warning` accepted |
+| `Eden.Unit.Systems.Fuel.InitialFuelFractionValidated` | `InitialFuelFraction` outside `[0, 1]` rejected |
+| `Eden.Unit.Systems.Fuel.PropulsionDemandSourceCardinalityHandled` | Zero source uses zero demand, exactly one source is retained weakly, multiple sources report ambiguity, invalid source uses zero demand |
 | `Eden.Unit.Systems.Fuel.NoConsumptionWhenDepleted` | Depleted state does not subtract further |
 
 ### Unit tests (`Eden.Unit.Systems.Power.*`)
@@ -658,6 +690,7 @@ This guarantees the authoritative resource owners exist whenever the project spa
 | `Eden.Unit.Systems.Power.ResetRestoresInitialValue` | Reset returns to `Capacity * InitialFraction` and Normal state |
 | `Eden.Unit.Systems.Power.NaNAndInfRejected` | Invalid values detected and clamped |
 | `Eden.Unit.Systems.Power.ThresholdOrderingValidated` | Ordering violation rejected |
+| `Eden.Unit.Systems.Power.InitialChargeFractionValidated` | `InitialChargeFraction` outside `[0, 1]` rejected |
 
 ### Unit tests (`Eden.Unit.Systems.Thermal.*`)
 
@@ -675,6 +708,7 @@ This guarantees the authoritative resource owners exist whenever the project spa
 | `Eden.Unit.Systems.Thermal.ResetRestoresInitialTemperature` | Reset returns to configured initial temperature and Normal |
 | `Eden.Unit.Systems.Thermal.NaNAndInfRejected` | Invalid values detected and clamped |
 | `Eden.Unit.Systems.Thermal.ThresholdOrderingValidated` | `AbsMin <= Ambient < Warning < Critical <= AbsMax` enforced |
+| `Eden.Unit.Systems.Thermal.InitialTemperatureInsideAbsoluteBoundsValidated` | `InitialTemperatureCelsius` outside absolute min/max bounds rejected |
 
 ### Integration tests (`Eden.Integration.Systems.*`)
 
@@ -682,6 +716,7 @@ This guarantees the authoritative resource owners exist whenever the project spa
 |---|---|
 | `Eden.Integration.Systems.ClockAdvancesAllResources` | Clock drives fuel, power, thermal simultaneously via weak subscribers |
 | `Eden.Integration.Systems.FuelDepletionFromDemand` | Sustained propulsion demand depletes fuel through clock |
+| `Eden.Integration.Systems.FuelUsesExactlyOneDemandSource` | Component discovery does not depend on pawn class and rejects multiple demand sources without selecting silently |
 | `Eden.Integration.Systems.ResourceResetClearsAllState` | Full reset restores all systems to configured initial values |
 | `Eden.Integration.Systems.MissingDataAssetHandledGracefully` | Missing config does not crash, system remains inert |
 | `Eden.Integration.Systems.PIERestartResetsClockAndResources` | Simulated PIE restart (Deinitialize + Initialize) resets all state |
@@ -698,7 +733,9 @@ This guarantees the authoritative resource owners exist whenever the project spa
 6. Create DA_TestFuelConfig, DA_TestPowerConfig, DA_TestThermalConfig data assets
    in Content/Eden/Config/ with reasonable test values.
 7. Validate data assets using Edit > Data Validation. Confirm valid assets pass and
-   intentionally invalid assets (e.g., Critical >= Warning) produce actionable errors.
+   intentionally invalid assets (e.g., Critical >= Warning, InitialFuelFraction > 1,
+   InitialChargeFraction < 0, InitialTemperatureCelsius outside absolute bounds)
+   produce actionable errors.
 8. Assign data assets to the resource components on BP_EdenSpacecraftPawn.
 9. Press Play.
 10. Fly with W to apply thrust. Run ShowDebug EdenSystems. Observe fuel decreasing.
@@ -794,46 +831,47 @@ Each checkpoint must build and pass tests before continuing.
    - `Initialize` / `Deinitialize` calling parent implementations.
    - `Tick` using `FEdenFixedStepClockModel`.
    - `GetStatId` for profiling.
-   - `DoesSupportWorldType` filtering.
-   - Weak-pointer subscriber storage; duplicate rejection; invalid-reference pruning; full cleanup in `Deinitialize`.
+   - `DoesSupportWorldType` filtering: Game and PIE only, with GamePreview only if required by automated verification; Editor, EditorPreview, Inactive, and None excluded.
+   - Weak-pointer subscriber storage; duplicate rejection; invalid-reference pruning; deferred mutation during stepping; stable weak-reference snapshot iteration; full cleanup in `Deinitialize`.
+   - Config validation for positive finite `FixedStepSeconds` and `MaxCatchUpSteps > 0`.
    - Pause, resume, reset.
 5. Add `IEdenPropulsionDemandSource` UInterface in `Public/Flight/EdenPropulsionDemandSource.h`.
 6. Implement `IEdenPropulsionDemandSource` on `UEdenFlightMovementComponent`.
 7. Add `Eden.Unit.SimClock.*` tests in `Private/Tests/EdenSimClockTests.cpp` — testing `FEdenFixedStepClockModel` directly for most tests.
 8. Build and run tests.
 
-**Exit criteria**: Clock subsystem and pure model build. All `Eden.Unit.SimClock.*` tests pass. Existing `Eden.Unit.Flight.*` and `Eden.Unit.Foundation.Smoke` tests still pass.
+**Exit criteria**: Clock subsystem and pure model build. All `Eden.Unit.SimClock.*` tests pass, including world-type filtering, clock config validation, and subscriber mutation safety. Existing `Eden.Unit.Flight.*` and `Eden.Unit.Foundation.Smoke` tests still pass.
 
 ### Checkpoint B: Resource types, fuel model, and fuel system
 
 1. Add `EEdenFuelState`, `EEdenPowerState`, `EEdenThermalState` enums in `Public/Systems/EdenResourceTypes.h`.
 2. Add `FEdenFuelModel` pure production model in `Public/Systems/EdenFuelModel.h` + `.cpp`.
 3. Add `UEdenFuelConfigDataAsset` with `IsDataValid` editor-time validation in `Public/Systems/EdenFuelConfigDataAsset.h` + `.cpp`.
-4. Add `UEdenFuelSystemComponent` implementing `IEdenSimulationTickable` in `Public/Systems/EdenFuelSystemComponent.h` + `.cpp`. Component discovers `IEdenPropulsionDemandSource` on its owning actor during `BeginPlay` via weak reference.
+4. Add `UEdenFuelSystemComponent` implementing `IEdenSimulationTickable` in `Public/Systems/EdenFuelSystemComponent.h` + `.cpp`. Component discovers `IEdenPropulsionDemandSource` implementations on its owning actor during `BeginPlay`, requires exactly one valid source, retains it as a weak non-owning component reference, logs and uses zero demand for no source, reports ambiguity and uses zero demand for multiple sources, and safely uses zero demand for invalid/expired sources.
 5. Add `Eden.Unit.Systems.Fuel.*` tests in `Private/Tests/EdenFuelSystemTests.cpp` — testing `FEdenFuelModel` directly for pure arithmetic, component for lifecycle.
 6. Build and run all `Eden` tests.
 
-**Exit criteria**: Fuel model and system build. All `Eden.Unit.Systems.Fuel.*` tests pass including threshold ordering validation. Existing tests still pass.
+**Exit criteria**: Fuel model and system build. All `Eden.Unit.Systems.Fuel.*` tests pass including threshold ordering validation, `InitialFuelFraction` validation, and propulsion demand source cardinality handling. Existing tests still pass.
 
 ### Checkpoint C: Power model, thermal model, and their systems
 
 1. Add `FEdenPowerModel` and `UEdenPowerConfigDataAsset` (with `IsDataValid`) and `UEdenPowerSystemComponent`.
 2. Add `FEdenThermalModel` and `UEdenThermalConfigDataAsset` (with `IsDataValid`) and `UEdenThermalSystemComponent`.
 3. Thermal model implements dissipation toward ambient (cannot cross ambient in a single step).
-4. Add `Eden.Unit.Systems.Power.*` and `Eden.Unit.Systems.Thermal.*` tests including threshold ordering and dissipation-does-not-cross-ambient tests.
+4. Add `Eden.Unit.Systems.Power.*` and `Eden.Unit.Systems.Thermal.*` tests including threshold ordering, `InitialChargeFraction`, `InitialTemperatureCelsius`, and dissipation-does-not-cross-ambient tests.
 5. Build and run all `Eden` tests.
 
-**Exit criteria**: All three pure models and resource systems build and pass unit tests.
+**Exit criteria**: All three pure models and resource systems build and pass unit tests, including initial value validation for fuel, power, and thermal configuration.
 
 ### Checkpoint D: Pawn integration and clock wiring
 
 1. Add fuel, power, thermal component default subobjects to `AEdenSpacecraftPawn` constructor.
 2. Wire resource components to register with `UEdenSimulationClockSubsystem` during `BeginPlay` and unregister during `EndPlay`.
-3. Fuel system discovers `IEdenPropulsionDemandSource` on its owning actor.
+3. Fuel system discovers exactly one valid `IEdenPropulsionDemandSource` on its owning actor without depending on the concrete pawn class.
 4. Add `Eden.Integration.Systems.*` integration tests including PIE restart simulation.
 5. Build and run all `Eden` tests.
 
-**Exit criteria**: All unit and integration tests pass. Resource components advance through the clock. Fuel consumption scales with propulsion demand. PIE restart resets all state.
+**Exit criteria**: All unit and integration tests pass. Resource components advance through the clock. Fuel consumption scales with a single valid propulsion demand source, ambiguous sources fail safely, and PIE restart resets all state.
 
 ### Checkpoint E: ShowDebug EdenSystems
 
@@ -905,10 +943,11 @@ Expected: only planned files appear. No generated files tracked. No unrelated as
 
 ## Acceptance evidence
 
-This section will be populated after implementation and verification.
+Current pre-implementation evidence:
 
-Required evidence:
-- [ ] Implementation blocker cleared: flight shell committed, feature branch created, clean working tree
+- [x] Implementation blocker cleared: flight shell committed, `v0.1.0-flight-shell` tag exists on `ed7fb55`, feature branch `feature/spacecraft-resource-simulation` exists, and resource implementation has not started.
+
+Required implementation evidence:
 - [ ] Build log: `EdenSpaceSimulatorEditor` Win64 Development passes
 - [ ] Test log: all `Eden.Unit.SimClock.*` tests pass (including `FEdenFixedStepClockModel` tests)
 - [ ] Test log: all `Eden.Unit.Systems.Fuel.*` tests pass (including threshold ordering)
@@ -947,12 +986,22 @@ Required evidence:
   12. Defined configured initial values (`InitialFuelFraction`, `InitialChargeFraction`, `InitialTemperatureCelsius`) and reset semantics.
   13. Locked debug visibility to `ShowDebug EdenSystems`.
   14. Clarified clock semantics: paused frames do not accumulate, dropped time does not increase elapsed, equivalent-partition tests apply below catch-up cap, overrun tests use return values not log strings.
+2026-07-22: Applied final approval clarifications:
+  1. `UEdenSimulationClockSubsystem::DoesSupportWorldType` is locked to Game and PIE, with GamePreview only where automated verification requires it, and Editor, EditorPreview, Inactive, and None excluded.
+  2. `UEdenFuelSystemComponent` requires exactly one valid `IEdenPropulsionDemandSource` on the owning actor; no source and invalid source use zero demand, one source is retained weakly, and multiple sources report ambiguity without silent selection.
+  3. Clock subscriber-list mutation during fixed-step iteration is prevented through deferred registration/unregistration plus stable weak-reference snapshot iteration.
+  4. Validation and tests must directly cover `InitialFuelFraction`, `InitialChargeFraction`, `InitialTemperatureCelsius`, `FixedStepSeconds`, and `MaxCatchUpSteps`.
+2026-07-22: Updated repository baseline after the flight shell commit: `v0.1.0-flight-shell` on `ed7fb55`; resource work proceeds on `feature/spacecraft-resource-simulation`.
+2026-07-22: ExecPlan 0003 status changed to Approved. No implementation performed.
 
 ## Progress log
 
 2026-07-22: Drafted ExecPlan 0003 for review. No implementation performed.
 2026-07-22: Revised ExecPlan 0003 per review feedback (14 corrections). No implementation performed.
+2026-07-22: Applied final approval clarifications, updated the committed flight-shell baseline, and marked the plan Approved. No implementation performed.
 
 ## Handoff
 
-Awaiting second review and explicit approval before implementation begins. Flight shell must be committed first.
+ExecPlan 0003 is approved as the implementation contract.
+
+Do not begin Checkpoint A until the maintainer explicitly authorizes Checkpoint A implementation. Before Checkpoint A starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.

@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-07-22 |
 | Branch | `feature/spacecraft-resource-simulation` |
 | Clean baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Draft ExecPlan `0003` and this recovery update are the only expected pending docs changes until Checkpoint A is approved. |
-| Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Draft — awaiting approval) |
+| Working tree | Approved ExecPlan `0003` and this recovery update are the only expected pending docs changes until Checkpoint A is explicitly authorized. |
+| Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Approved) |
 | Previous ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Flight shell status | Committed, PIE-verified, and tagged as `v0.1.0-flight-shell`. |
-| Resource implementation | Not started. Checkpoint A is blocked until the revised Draft is explicitly approved and the working tree is clean. |
-| Next task | Review and approve ExecPlan 0003. Do not begin Checkpoint A yet. |
+| Resource implementation | Not started. Checkpoint A is blocked until the maintainer explicitly authorizes Checkpoint A and the working tree is clean. |
+| Next task | Wait for explicit Checkpoint A authorization. Do not begin implementation yet. |
 
 ## Recovery protocol
 
@@ -36,7 +36,7 @@ Then:
 3. Read `docs/exec-plans/0003-spacecraft-resource-simulation.md`.
 4. Confirm the current branch is `feature/spacecraft-resource-simulation`.
 5. Confirm the clean baseline tag `v0.1.0-flight-shell` exists.
-6. Do not start Checkpoint A unless the Draft plan is explicitly approved and `git status` is clean.
+6. Do not start Checkpoint A unless the maintainer explicitly authorizes Checkpoint A implementation and `git status` is clean.
 
 ## Safe Restart Rules
 
@@ -50,7 +50,7 @@ Then:
 
 ## Current Known Risks
 
-- ExecPlan 0003 is still Draft; implementation authorization has not been granted.
+- ExecPlan 0003 is Approved, but Checkpoint A implementation authorization has not been granted.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
 - Engine `LogConsoleManager` may warn about `r.MotionVectorSimulation` on the render thread; that is residual engine noise, not Eden flight-shell ownership.
@@ -62,12 +62,16 @@ Then:
 - Verified six-axis flight shell on `main` through build, automation, asset/runtime commandlets, and interactive PIE.
 - Annotated tag `v0.1.0-flight-shell` created on `ed7fb55`.
 - Branch `feature/spacecraft-resource-simulation` created from that baseline.
-- ExecPlan 0003 revised with locked review decisions and kept in Draft status.
+- ExecPlan 0003 revised with locked review decisions, final approval clarifications, and Approved status.
 
 ### Locked decisions recorded in ExecPlan 0003
 
 - `IEdenPropulsionDemandSource` on flight movement; fuel holds a weak non-owning reference.
+- Fuel requires exactly one valid `IEdenPropulsionDemandSource` on the owning actor; no source or invalid source uses zero demand, and multiple sources are an ambiguity error.
 - No pawn `LastThrustFraction` / `GetCurrentThrustFraction` API.
+- `UEdenSimulationClockSubsystem` supports Game and PIE worlds, with GamePreview only if automated verification requires it; Editor, EditorPreview, Inactive, and None are excluded.
+- Clock subscriber-list mutation during stepping is prevented through deferred registration/unregistration and stable weak-reference snapshot iteration.
+- Validation directly covers `InitialFuelFraction`, `InitialChargeFraction`, `InitialTemperatureCelsius`, positive finite `FixedStepSeconds`, and `MaxCatchUpSteps > 0`.
 - Fuel/Power/Thermal created as C++ default subobjects; Blueprint assigns Data Assets/tuning only.
 - No `UEdenResourceComponentBase`.
 - Linear thermal model with `DegreesCelsiusPerSecond`; dissipation cannot cross ambient.
@@ -77,10 +81,9 @@ Then:
 
 ### Remaining Work
 
-- Review and explicitly approve the revised ExecPlan 0003.
 - Ensure a clean working tree.
-- Only then authorize Checkpoint A.
+- Wait for explicit Checkpoint A authorization.
 
 ### Next Clean Action
 
-Approve or revise ExecPlan 0003. Do not begin Checkpoint A yet.
+Wait for explicit Checkpoint A authorization. Do not begin implementation yet.
