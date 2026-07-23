@@ -9,14 +9,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-07-23 |
 | Branch | `feature/spacecraft-resource-simulation` |
 | Clean baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Checkpoint F resource Data Assets, `BP_EdenSpacecraftPawn` assignment changes, resource asset verifier, ExecPlan progress, and this recovery update are the expected pending changes. |
-| Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Approved) |
+| Working tree | Checkpoint G documentation-only closeout changes are expected pending changes: `docs/ARCHITECTURE.md`, `docs/REMEMBER.md`, `docs/RECOVER.md`, and `docs/exec-plans/0003-spacecraft-resource-simulation.md`. |
+| Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Blocked pending hands-on PIE verification) |
 | Previous ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Flight shell status | Committed, PIE-verified, and tagged as `v0.1.0-flight-shell`. |
-| Resource implementation | Checkpoint A clock scope accepted and committed as `9bede83`. Checkpoint B fuel scope accepted and committed as `88788c0`. Checkpoint C power/thermal scope accepted and committed as `e410878`. Checkpoint D pawn resource composition, propulsion-demand integration, and integration tests accepted and committed as `5bce7ab`. Checkpoint E development-only `ShowDebug EdenSystems` visibility accepted and committed as `9a4eca0`. Checkpoint F Blueprint composition and configuration assets are implemented and locally verified through asset commandlets, build, and automation. Mission, HUD/widgets, alerts, telemetry, networking, EDEN OS work, and fuel-based flight shutdown are not started. |
-| Last successful validation | Resource asset verifier: `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecutePythonScript=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\scripts\Editor\VerifyResourceAssets.py" -Log`; flight asset verifier: same command with `scripts\Editor\VerifyFlightAssets.py`; repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`; build: `K:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; tests: `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecCmds=Automation RunTests Eden; Quit" "-TestExit=Automation Test Queue Empty" -Log` |
-| Last successful result | Resource asset verifier passed and logged `Resource asset verification passed.` Flight asset verifier passed and logged `Flight asset verification passed.` Repository validation passed. `EdenSpaceSimulatorEditor` Win64 Development build passed. Automation log `Saved/Logs/EdenSpaceSimulator.log` reported 99 automation tests found for `Eden` and `**** TEST COMPLETE. EXIT CODE: 0 ****`; `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, existing `Eden.Unit.Systems.Power.*`, existing `Eden.Unit.Systems.Thermal.*`, existing `Eden.Integration.Systems.*`, and existing `Eden.Unit.Systems.Debug.*` tests passed. LFS-filter-disabled `git diff --check` passed, and final status showed only planned Checkpoint F assets, verifier, ExecPlan, and RECOVER changes. |
-| Next task | Review and accept Checkpoint F. Do not begin Checkpoint G yet. |
+| Resource implementation | Checkpoints A-F are accepted and committed: A `9bede83`, B `88788c0`, C `e410878`, D `5bce7ab`, E `9a4eca0`, F `867da77`. Checkpoint G automated validation, editor script verification, source-control review, and documentation updates are done. Mission, HUD/widgets, alerts, telemetry, networking, EDEN OS work, save/load, oxygen, additional resources, and fuel-based flight shutdown are not started. |
+| Last successful validation | Repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`; build: `K:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; tests: `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecCmds=Automation RunTests Eden; Quit" "-TestExit=Automation Test Queue Empty" -Log`; editor scripts: same command with `scripts\Editor\VerifyFlightAssets.py`, `scripts\Editor\VerifyFlightRuntimeSmoke.py`, and `scripts\Editor\VerifyResourceAssets.py`; source search: `Get-ChildItem Source -Recurse -File | Select-String -Pattern 'LogTemp'`. |
+| Last successful result | Repository validation passed. `Source` search found no `LogTemp`. `EdenSpaceSimulatorEditor` Win64 Development build passed. Automation log `Saved/Logs/EdenSpaceSimulator.log` reported 99 automation tests found for `Eden` and `**** TEST COMPLETE. EXIT CODE: 0 ****`; foundation, flight, simulation clock, fuel, power, thermal, systems integration, and debug tests reported success. `VerifyFlightAssets.py` logged `Flight asset verification passed.` `VerifyFlightRuntimeSmoke.py` logged `Flight runtime smoke passed` and showed the transient pawn stopped before the sandbox blocker with inward X velocity removed. `VerifyResourceAssets.py` logged `Resource asset verification passed.` |
+| Next task | Complete hands-on PIE verification for ExecPlan 0003, then mark the plan Complete and commit/tag the milestone if the manual evidence passes. Do not begin the next gameplay milestone yet. |
 
 ## Recovery protocol
 
@@ -38,8 +38,9 @@ Then:
 3. Read `docs/exec-plans/0003-spacecraft-resource-simulation.md`.
 4. Confirm the current branch is `feature/spacecraft-resource-simulation`.
 5. Confirm the clean baseline tag `v0.1.0-flight-shell` exists.
-6. Confirm Checkpoint F Data Assets, `BP_EdenSpacecraftPawn`, `scripts/Editor/VerifyResourceAssets.py`, ExecPlan progress, and RECOVER updates are still the only implementation scope in the diff.
-7. Do not start Checkpoint G unless the maintainer explicitly accepts Checkpoint F, authorizes the next checkpoint, and `git status` is clean.
+6. Confirm Checkpoints A-F are committed through `867da77`.
+7. Confirm the only pending files are Checkpoint G documentation updates unless a later session has added manual PIE evidence.
+8. Do not begin the next gameplay milestone until the required hands-on PIE verification is completed and ExecPlan 0003 is marked Complete or explicitly accepted with documented residual risk.
 
 ## Safe Restart Rules
 
@@ -53,8 +54,8 @@ Then:
 
 ## Current Known Risks
 
-- Checkpoint F is implemented and locally verified, but not yet reviewed or accepted by the maintainer.
-- Manual PIE verification remains pending for live configured resource behavior: confirm `ShowDebug EdenSystems` renders over the possessed pawn, displays clock/fuel/power/thermal values from the assigned Data Assets, fuel consumption is visible during thrust, power and thermal values change over time, threshold transitions log previous/new state, PIE stop/start resets configured initial values, and the Output Log has no project `LogTemp` or per-frame resource spam.
+- ExecPlan 0003 is blocked from Complete status only by hands-on PIE verification. Automated validation, editor script verification, documentation updates, and source-control review have been completed.
+- Manual PIE verification remains pending for live configured resource behavior: confirm `ShowDebug EdenSystems` renders over the possessed pawn, displays clock/fuel/power/thermal values from the assigned Data Assets, sustained thrust consumes fuel, zero thrust does not consume propulsion fuel, power and thermal values change over time, threshold/recovery transitions are observable where reachable with current config, PIE stop/start resets clock/resource/flight state, no duplicate components exist, and the Output Log has no unexpected errors, project `LogTemp`, or per-frame resource spam.
 - `UnrealEditor-Cmd.exe ... "-ExecCmds=ShowDebug EdenSystems; Quit" -Log` accepted `Cmd: ShowDebug EdenSystems; Quit`, but the command-line editor process did not exit on `Quit`; the spawned process was manually stopped.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
@@ -141,6 +142,14 @@ Then:
   - assigned those assets to inherited `FuelSystem`, `PowerSystem`, and `ThermalSystem` on `BP_EdenSpacecraftPawn`
   - added `scripts/Editor/VerifyResourceAssets.py`
 - Verified Checkpoint F through resource asset commandlet validation, existing flight asset commandlet regression validation, repository validation, Win64 Development Editor build, and full `Automation RunTests Eden`.
+- Checkpoint F accepted and committed as `867da77`.
+- Completed Checkpoint G automated closeout:
+  - repository validation passed
+  - Win64 Development Editor build passed
+  - full `Automation RunTests Eden` passed with 99 tests
+  - `VerifyFlightAssets.py`, `VerifyFlightRuntimeSmoke.py`, and `VerifyResourceAssets.py` passed
+  - `Source` search found no `LogTemp`
+  - `docs/ARCHITECTURE.md`, `docs/REMEMBER.md`, `docs/RECOVER.md`, and ExecPlan 0003 were updated
 
 ### Locked decisions recorded in ExecPlan 0003
 
@@ -159,11 +168,10 @@ Then:
 
 ### Remaining Work
 
-- Review and accept Checkpoint F.
 - Complete manual PIE verification for live configured resource behavior and `ShowDebug EdenSystems`.
-- Authorize Checkpoint G only when ready.
+- If manual verification passes, mark ExecPlan 0003 Complete, commit the Checkpoint G docs, and create a milestone tag.
 - Keep mission, HUD/widgets, alerts, telemetry, networking, EDEN OS work, fuel-based flight shutdown, additional resources, and unrelated tuning untouched until their planned checkpoints.
 
 ### Next Clean Action
 
-Review Checkpoint F. Do not begin Checkpoint G yet.
+Complete the manual PIE verification gate for ExecPlan 0003. Do not begin the next milestone yet.

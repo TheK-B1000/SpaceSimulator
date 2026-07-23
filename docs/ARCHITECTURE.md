@@ -72,11 +72,12 @@ Rules:
 Responsibilities:
 
 - Represents the controllable spacecraft actor.
-- Owns or references the flight and resource-system components.
+- Owns spacecraft component composition.
+- Creates the required collision root, flight movement component, and resource-system components as C++ default subobjects.
 - Routes high-level input commands.
 - Exposes a narrow state-query surface for orchestration and presentation.
 
-It does not own mission progression, telemetry delivery, or widget logic.
+It does not own mission progression, telemetry delivery, widget logic, fuel quantity, battery charge, temperature, or resource simulation rules.
 
 ### `UEdenFlightMovementComponent`
 
@@ -85,9 +86,10 @@ Responsibilities:
 - Applies translation and rotation commands.
 - Owns velocity and movement-related configuration that is not already authoritative in Unreal physics.
 - Implements flight stabilization policy.
+- Implements `IEdenPropulsionDemandSource` and exposes normalized propulsion demand for resource systems.
 - Produces movement state for snapshots.
 
-It does not consume UI widgets or mission assets.
+It does not consume UI widgets, mission assets, or fuel directly.
 
 ### `UEdenFuelSystemComponent`
 
@@ -95,8 +97,11 @@ Responsibilities:
 
 - Owns fuel quantity.
 - Validates fuel configuration.
-- Applies consumption commands.
+- Discovers exactly one valid `IEdenPropulsionDemandSource` on the owning actor and reads it through a weak non-owning component reference.
+- Applies propulsion fuel consumption from normalized demand on fixed simulation steps.
 - Emits meaningful state transitions.
+
+It does not depend on the concrete spacecraft pawn class and does not change flight behavior when fuel is depleted.
 
 ### `UEdenPowerSystemComponent`
 
@@ -104,7 +109,8 @@ Responsibilities:
 
 - Owns generation, storage, demand, and power availability.
 - Resolves a deterministic power budget.
-- Exposes commands for enabling or disabling loads.
+- Converts kilowatts to kilowatt-hours using fixed-step duration.
+- Exposes narrow commands for generation, demand, battery reset, and future load control.
 - Emits shortage and depletion transitions.
 
 ### `UEdenThermalSystemComponent`
@@ -113,12 +119,13 @@ Responsibilities:
 
 - Owns temperature or thermal-energy state.
 - Applies heat generation and dissipation.
+- Moves dissipation toward ambient without crossing ambient.
 - Detects warning and critical thresholds.
 - Does not directly trigger UI.
 
 ### `UEdenSimulationClockSubsystem`
 
-Recommended form: a world-scoped tickable subsystem or another explicit world-owned coordinator.
+Implemented form: a `UTickableWorldSubsystem` world-owned coordinator.
 
 Responsibilities:
 
@@ -127,6 +134,7 @@ Responsibilities:
 - Defines catch-up limits and overrun behavior.
 - Supports pause and reset.
 - Keeps resource and mission simulation independent from render frame rate.
+- Stores subscribers as weak `UObject` references, rejects duplicates, handles invalid subscribers safely, and defers subscriber-list mutation while stepping.
 
 Initial fixed step: 0.1 seconds, subject to validation and profiling.
 
@@ -166,20 +174,28 @@ Responsibilities:
 - Send commands through controller, pawn, or explicit application APIs.
 - Never become the source of truth.
 
+Development-only `ShowDebug EdenSystems` is a read-only debug surface. It reads immutable debug snapshots through narrow query methods and must not mutate clock, flight, fuel, power, or thermal state. Active debug drawing is compiled out of shipping builds.
+
 ## 5. State ownership matrix
 
 | State | Owner | Readers | Writers |
 |---|---|---|---|
-| Actor transform | Movement/physics owner | Camera, UI, telemetry, mission | Movement component / physics |
-| Linear and angular velocity | Movement component or physics body | UI, telemetry, docking logic | Movement component / physics |
-| Input intent | Controller/command layer | Pawn or movement | Input bindings |
-| Fuel quantity | Fuel component | Pawn, mission, UI, telemetry | Fuel component only |
-| Battery charge and power budget | Power component | Mission, UI, telemetry, thermal coordination | Power component only |
-| Temperature | Thermal component | Mission, UI, telemetry | Thermal component only |
+| Actor transform | `UEdenFlightMovementComponent` / Unreal movement owner | Camera, UI, telemetry, mission | Movement component |
+| Linear velocity | `UEdenFlightMovementComponent` inherited `Velocity` | UI, telemetry, docking logic, fuel demand calculation | Movement component only |
+| Angular velocity | `UEdenFlightMovementComponent` | UI, telemetry, docking logic | Movement component only |
+| Input intent | `AEdenFlightPlayerController` / command layer | Pawn or movement | Input bindings |
+| Propulsion demand | `UEdenFlightMovementComponent` via `IEdenPropulsionDemandSource` | Fuel system | Movement component only |
+| Fuel quantity and fuel state | `UEdenFuelSystemComponent` | Pawn, mission, UI/debug, telemetry | Fuel component only |
+| Fuel configuration | `UEdenFuelConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Fuel component, editor validation | Content author only |
+| Battery charge, power budget, and power state | `UEdenPowerSystemComponent` | Mission, UI/debug, telemetry, thermal coordination | Power component only |
+| Power configuration | `UEdenPowerConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Power component, editor validation | Content author only |
+| Temperature and thermal state | `UEdenThermalSystemComponent` | Mission, UI/debug, telemetry | Thermal component only |
+| Thermal configuration | `UEdenThermalConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Thermal component, editor validation | Content author only |
 | Mission phase | Mission subsystem | UI, telemetry | Mission subsystem only |
-| Fixed simulation time | Clock subsystem | Systems, mission, telemetry | Clock subsystem only |
+| Fixed simulation time, accumulator, pause state, and dropped-step count | `UEdenSimulationClockSubsystem` | Systems, mission, telemetry, UI/debug | Clock subsystem only |
 | Active failures | Mission/failure orchestrator | Systems, UI, telemetry | Mission/failure orchestrator |
 | Telemetry sequence/history | Telemetry subsystem | Local tools/adapters | Telemetry subsystem |
+| Debug display values | `ShowDebug EdenSystems` / view layer | Developer | Derived from immutable debug snapshots |
 | Widget display values | Widget/view model | Widget | Derived from snapshots |
 
 Any change to this table requires architecture review and usually an ADR.
