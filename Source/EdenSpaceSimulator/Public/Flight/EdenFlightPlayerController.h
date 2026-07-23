@@ -63,7 +63,13 @@ private:
 	void HandleRotateReleased(const FInputActionValue& Value);
 	void HandleStabilizeStarted(const FInputActionValue& Value);
 	void LogMissingInputAssetState();
+#if !UE_BUILD_SHIPPING
+	void TryEnableEdenSystemsDebugDisplay();
+#endif
 
 	bool bLoggedMissingInputAssetState = false;
 	bool bLoggedUnexpectedPawnState = false;
+#if !UE_BUILD_SHIPPING
+	bool bEdenSystemsDebugDisplayEnabled = false;
+#endif
 };

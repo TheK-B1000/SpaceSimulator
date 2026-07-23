@@ -17,7 +17,15 @@ void UEdenThermalSystemComponent::BeginPlay()
 
 	if (InitializeFromConfiguredDataAsset())
 	{
-		RegisterWithSimulationClock();
+		if (RegisterWithSimulationClock())
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Log,
+				TEXT("%s thermal simulation active (%.2f C). Inspect live values with ShowDebug EdenSystems."),
+				*MakeLogContext(),
+				CurrentSnapshot.TemperatureCelsius);
+		}
 	}
 }
 

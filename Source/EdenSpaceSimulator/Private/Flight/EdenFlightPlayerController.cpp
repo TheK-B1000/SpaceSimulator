@@ -7,6 +7,7 @@
 #include "EnhancedInputSubsystems.h"
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenSpacecraftPawn.h"
+#include "GameFramework/HUD.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 
@@ -27,6 +28,10 @@ void AEdenFlightPlayerController::BeginPlay()
 void AEdenFlightPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
+
+#if !UE_BUILD_SHIPPING
+	TryEnableEdenSystemsDebugDisplay();
+#endif
 
 	AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
 	if (!SpacecraftPawn)
@@ -63,6 +68,10 @@ void AEdenFlightPlayerController::OnPossess(APawn* InPawn)
 	{
 		SpacecraftPawn->ResetFlightState();
 	}
+
+#if !UE_BUILD_SHIPPING
+	TryEnableEdenSystemsDebugDisplay();
+#endif
 }
 
 void AEdenFlightPlayerController::OnUnPossess()
@@ -217,3 +226,29 @@ void AEdenFlightPlayerController::LogMissingInputAssetState()
 		bLoggedMissingInputAssetState = true;
 	}
 }
+
+#if !UE_BUILD_SHIPPING
+void AEdenFlightPlayerController::TryEnableEdenSystemsDebugDisplay()
+{
+	if (bEdenSystemsDebugDisplayEnabled)
+	{
+		return;
+	}
+
+	AHUD* HUD = GetHUD();
+	if (!HUD)
+	{
+		return;
+	}
+
+	static const FName EdenSystemsDebugName(TEXT("EdenSystems"));
+	HUD->ShowDebug(EdenSystemsDebugName);
+	bEdenSystemsDebugDisplayEnabled = true;
+
+	UE_LOG(
+		LogEdenSystems,
+		Log,
+		TEXT("%s enabled ShowDebug EdenSystems. Resource values appear on the viewport overlay, not as per-frame Output Log spam. Toggle with `ShowDebug EdenSystems`."),
+		*GetNameSafe(this));
+}
+#endif

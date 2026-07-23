@@ -17,7 +17,17 @@ void UEdenPowerSystemComponent::BeginPlay()
 
 	if (InitializeFromConfiguredDataAsset())
 	{
-		RegisterWithSimulationClock();
+		if (RegisterWithSimulationClock())
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Log,
+				TEXT("%s power simulation active (%.3f / %.3f kWh, net %.2f kW). Inspect live values with ShowDebug EdenSystems."),
+				*MakeLogContext(),
+				CurrentSnapshot.BatteryChargeKilowattHours,
+				ActivePowerConfig.BatteryCapacityKilowattHours,
+				CurrentSnapshot.NetPowerKilowatts);
+		}
 	}
 }
 
