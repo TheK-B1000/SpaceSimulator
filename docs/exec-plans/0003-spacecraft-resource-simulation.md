@@ -8,7 +8,7 @@ Approved
 > [!CAUTION]
 > The verified six-axis flight shell baseline is committed and tagged as `v0.1.0-flight-shell` on commit `ed7fb55`, and resource work is on `feature/spacecraft-resource-simulation`.
 >
-> Checkpoint A clock implementation was explicitly authorized and completed. Do not begin Checkpoint B or later resource, asset, Blueprint, debug-visibility, pawn resource-component, or propulsion-demand integration work until separately authorized.
+> Checkpoint A clock implementation was accepted and committed as `9bede83`. Checkpoint B fuel implementation was explicitly authorized and completed. Do not begin Checkpoint C or later power, thermal, asset, Blueprint, debug-visibility, pawn resource-component, propulsion-demand integration, mission, UI, telemetry, or EDEN OS work until separately authorized.
 
 ## Problem and outcome
 
@@ -71,15 +71,14 @@ The outcome is a simulation layer where every resource has one authoritative own
 
 - Branch: `feature/spacecraft-resource-simulation`
 - Clean flight-shell baseline: `v0.1.0-flight-shell` on commit `ed7fb55`
-- Recent plan-only branch commits observed before this approval update: `0383a87`, `3c7297a`
-- Working tree before this approval update: clean except for the external Git warning that `C:\Users\K-B/.config/git/ignore` cannot be accessed
-- Expected pending changes after this approval update: this ExecPlan and `docs/RECOVER.md` only
+- Checkpoint A accepted commit: `9bede83`
+- Expected pending changes after Checkpoint B implementation: fuel source, fuel tests, this ExecPlan, and `docs/RECOVER.md` only
 - Active ExecPlan: `0003-spacecraft-resource-simulation.md` (Approved)
 - Previous ExecPlan: `0002-six-axis-flight.md` (verified complete)
-- `Source/EdenSpaceSimulator/Public/Systems/` does not exist yet
-- `Source/EdenSpaceSimulator/Private/Systems/` does not exist yet
-- No C++ subsystems have been implemented yet
-- Existing log categories: `LogEden`, `LogEdenFlight`, `LogEdenSystems`, `LogEdenMission`, `LogEdenTelemetry`
+- `Source/EdenSpaceSimulator/Public/Systems/` contains Checkpoint B fuel types, fuel model, fuel config data asset, and fuel system component headers
+- `Source/EdenSpaceSimulator/Private/Systems/` contains Checkpoint B fuel implementation files
+- C++ simulation clock and fuel system checkpoints have been implemented; power, thermal, pawn resource composition, propulsion-demand integration, debug visibility, Blueprints, and Unreal assets are not implemented
+- Existing log categories: `LogEden`, `LogEdenFlight`, `LogEdenSystems`, `LogEdenSimClock`, `LogEdenMission`, `LogEdenTelemetry`
 - Module dependencies (`EdenSpaceSimulator.Build.cs`): `Core`, `CoreUObject`, `Engine`, `InputCore`, `EnhancedInput`
 - C++ standard: C++20, IWYU enforced
 - Test patterns: `IMPLEMENT_SIMPLE_AUTOMATION_TEST` with `EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter`, `#if WITH_DEV_AUTOMATION_TESTS` guard, `Eden.Unit.*` naming hierarchy
@@ -953,7 +952,9 @@ Required implementation evidence:
 - [x] Repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1` passed.
 - [x] Build log: `EdenSpaceSimulatorEditor` Win64 Development passed through `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`.
 - [x] Test log: all `Eden.Unit.SimClock.*` tests passed, including `FEdenFixedStepClockModel` accumulator tests, equivalent partitions below the catch-up cap, overrun dropped-step state, world-type filtering, invalid config, invalid subscriber handling, duplicate rejection, and deferred subscriber mutation.
-- [ ] Test log: all `Eden.Unit.Systems.Fuel.*` tests pass (including threshold ordering)
+- [x] Checkpoint B source: `EEdenFuelState`, `FEdenFuelConfig`, `FEdenFuelStateSnapshot`, `FEdenFuelModel`, `UEdenFuelConfigDataAsset`, and `UEdenFuelSystemComponent` implemented without propulsion-demand, pawn, asset, Blueprint, power, thermal, debug, mission, UI, telemetry, or EDEN OS work.
+- [x] Checkpoint B behavior: configured initial fuel fraction, reset, positive finite capacity validation, nonnegative finite consumption-rate validation, initial fraction validation, strict critical/warning threshold ordering, quantity clamping, one final state derivation per step, `OnFuelStateChanged`, `OnFuelDepleted` only on entering Depleted, NaN/infinity/excessive consumption handling, recovery, safe missing/invalid config disable, and safe clock register/unregister paths.
+- [x] Test log: all `Eden.Unit.Systems.Fuel.*` tests passed, including threshold ordering, `InitialFuelFraction`, NaN/infinity demand, excessive consumption, reset, recovery, missing/invalid config disable, one direct multi-threshold transition, and depleted-entry semantics.
 - [ ] Test log: all `Eden.Unit.Systems.Power.*` tests pass (including threshold ordering)
 - [ ] Test log: all `Eden.Unit.Systems.Thermal.*` tests pass (including dissipation-does-not-cross-ambient and threshold ordering)
 - [ ] Test log: all `Eden.Integration.Systems.*` tests pass (including PIE restart)
@@ -966,10 +967,10 @@ Required implementation evidence:
 - [ ] Manual PIE: no LogTemp, no per-frame spam
 - [ ] Manual PIE: `ShowDebug EdenSystems` shows fuel, power, and thermal values
 - [ ] Manual: Data Validation in editor catches invalid threshold ordering
-- [ ] Documentation: RECOVER.md updated
+- [x] Documentation: RECOVER.md updated
 - [ ] Documentation: REMEMBER.md updated with new durable facts
 - [ ] Documentation: ARCHITECTURE.md state ownership table updated
-- [ ] Git: diff reviewed, no unrelated changes
+- [x] Git: diff reviewed, no unrelated changes
 
 ## Decision log
 
@@ -1004,9 +1005,12 @@ Required implementation evidence:
 2026-07-22: Applied final approval clarifications, updated the committed flight-shell baseline, and marked the plan Approved. No implementation performed.
 2026-07-23: Implemented Checkpoint A clock scope only. Added `FEdenFixedStepClockModel`, `UEdenSimulationTickable` / `IEdenSimulationTickable`, `UEdenSimulationClockSubsystem`, `LogEdenSimClock`, and `Eden.Unit.SimClock.*` automation coverage. Did not implement fuel, power, thermal systems, resource Data Assets, propulsion-demand integration, pawn resource components, debug visibility, Blueprints, or Unreal assets.
 2026-07-23: Validation passed: repository validation, `EdenSpaceSimulatorEditor` Win64 Development build, `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, and all new `Eden.Unit.SimClock.*` tests through `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`.
+2026-07-23: Checkpoint A accepted and committed as `9bede83`.
+2026-07-23: Implemented Checkpoint B fuel scope only. Added `EEdenFuelState`, `FEdenFuelConfig`, `FEdenFuelStateSnapshot`, `FEdenFuelModel`, `UEdenFuelConfigDataAsset`, `UEdenFuelSystemComponent`, and `Eden.Unit.Systems.Fuel.*` automation coverage. Did not implement propulsion-demand integration, pawn fuel component composition, power, thermal, debug visibility, Blueprint or Data Asset instances, Unreal map/config changes, mission, UI, telemetry, or EDEN OS work.
+2026-07-23: Validation passed: repository validation, `EdenSpaceSimulatorEditor` Win64 Development build, `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, and all new `Eden.Unit.Systems.Fuel.*` tests through `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`. Automation log reported 54 tests found for `Eden` and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
 
 ## Handoff
 
-Checkpoint A clock implementation is ready for review and acceptance.
+Checkpoint B fuel implementation is ready for review and acceptance.
 
-Do not begin Checkpoint B or any fuel, power, thermal, resource Data Asset, propulsion-demand integration, pawn resource component, debug visibility, Blueprint, or Unreal asset work until separately authorized. Before the next checkpoint starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
+Do not begin Checkpoint C or any power, thermal, propulsion-demand integration, pawn resource component composition, debug visibility, Blueprint, Unreal asset, map/config, mission, UI, telemetry, or EDEN OS work until separately authorized. Before the next checkpoint starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
