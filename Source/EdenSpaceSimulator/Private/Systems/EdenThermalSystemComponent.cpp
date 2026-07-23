@@ -240,6 +240,7 @@ bool UEdenThermalSystemComponent::RegisterWithSimulationClock()
 	if (!World)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; no world is available."), *MakeLogContext());
+		DisableThermalSimulation(TEXT("missing world for simulation clock registration"));
 		return false;
 	}
 
@@ -247,12 +248,14 @@ bool UEdenThermalSystemComponent::RegisterWithSimulationClock()
 	if (!SimulationClock)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; subsystem is unavailable."), *MakeLogContext());
+		DisableThermalSimulation(TEXT("simulation clock subsystem unavailable"));
 		return false;
 	}
 
 	if (!SimulationClock->RegisterSimulationTickable(this))
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s failed to register with simulation clock."), *MakeLogContext());
+		DisableThermalSimulation(TEXT("simulation clock registration failed"));
 		return false;
 	}
 

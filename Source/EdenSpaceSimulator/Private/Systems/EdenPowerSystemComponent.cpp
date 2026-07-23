@@ -232,6 +232,7 @@ bool UEdenPowerSystemComponent::RegisterWithSimulationClock()
 	if (!World)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; no world is available."), *MakeLogContext());
+		DisablePowerSimulation(TEXT("missing world for simulation clock registration"));
 		return false;
 	}
 
@@ -239,12 +240,14 @@ bool UEdenPowerSystemComponent::RegisterWithSimulationClock()
 	if (!SimulationClock)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; subsystem is unavailable."), *MakeLogContext());
+		DisablePowerSimulation(TEXT("simulation clock subsystem unavailable"));
 		return false;
 	}
 
 	if (!SimulationClock->RegisterSimulationTickable(this))
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s failed to register with simulation clock."), *MakeLogContext());
+		DisablePowerSimulation(TEXT("simulation clock registration failed"));
 		return false;
 	}
 

@@ -9,6 +9,9 @@
 #include "EdenSpacecraftPawn.generated.h"
 
 class UEdenFlightMovementComponent;
+class UEdenFuelSystemComponent;
+class UEdenPowerSystemComponent;
+class UEdenThermalSystemComponent;
 class USphereComponent;
 
 UCLASS(BlueprintType, Blueprintable)
@@ -34,6 +37,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	UEdenFlightMovementComponent* GetFlightMovementComponent() const;
 
+	UFUNCTION(BlueprintPure, Category = "Eden|Systems")
+	UEdenFuelSystemComponent* GetFuelSystemComponent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Systems")
+	UEdenPowerSystemComponent* GetPowerSystemComponent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Systems")
+	UEdenThermalSystemComponent* GetThermalSystemComponent() const;
+
 private:
 	void RestoreRequiredCollisionRoot();
 
@@ -42,4 +54,13 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEdenFlightMovementComponent> FlightMovementComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Systems", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEdenFuelSystemComponent> FuelSystemComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Systems", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEdenPowerSystemComponent> PowerSystemComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Systems", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEdenThermalSystemComponent> ThermalSystemComponent;
 };

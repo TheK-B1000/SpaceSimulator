@@ -9,14 +9,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-07-23 |
 | Branch | `feature/spacecraft-resource-simulation` |
 | Clean baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Checkpoint C power/thermal source, tests, ExecPlan progress, and this recovery update are the expected pending changes. |
+| Working tree | Checkpoint D source, integration tests, ExecPlan progress, and this recovery update are the expected pending changes. |
 | Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Approved) |
 | Previous ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Flight shell status | Committed, PIE-verified, and tagged as `v0.1.0-flight-shell`. |
-| Resource implementation | Checkpoint A clock scope accepted and committed as `9bede83`. Checkpoint B fuel scope accepted and committed as `88788c0`. Checkpoint C power/thermal scope implemented and locally verified. Pawn resource component composition, propulsion-demand integration, integration tests, ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, and EDEN OS work are not started. |
-| Last successful validation | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden` |
-| Last successful result | Repository validation passed, `EdenSpaceSimulatorEditor` Win64 Development build passed, automation reported 86 `Eden` tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, and all new `Eden.Unit.Systems.Power.*` / `Eden.Unit.Systems.Thermal.*` tests passed. |
-| Next task | Review and accept Checkpoint C. Do not begin Checkpoint D yet. |
+| Resource implementation | Checkpoint A clock scope accepted and committed as `9bede83`. Checkpoint B fuel scope accepted and committed as `88788c0`. Checkpoint C power/thermal scope accepted and committed as `e410878`. Checkpoint D pawn resource composition, propulsion-demand integration, and integration tests are implemented and locally verified. ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, EDEN OS work, and fuel-based flight shutdown are not started. |
+| Last successful validation | Repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`; build: `K:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; tests: `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecCmds=Automation RunTests Eden; Quit" "-TestExit=Automation Test Queue Empty" -Log` |
+| Last successful result | Repository validation passed. `EdenSpaceSimulatorEditor` Win64 Development build passed. Automation reported 96 `Eden` tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, existing `Eden.Unit.Systems.Power.*`, existing `Eden.Unit.Systems.Thermal.*`, and all new `Eden.Integration.Systems.*` tests passed. |
+| Next task | Review and accept Checkpoint D. Do not begin Checkpoint E yet. |
 
 ## Recovery protocol
 
@@ -38,8 +38,8 @@ Then:
 3. Read `docs/exec-plans/0003-spacecraft-resource-simulation.md`.
 4. Confirm the current branch is `feature/spacecraft-resource-simulation`.
 5. Confirm the clean baseline tag `v0.1.0-flight-shell` exists.
-6. Confirm Checkpoint C power/thermal source/tests/docs are still the only implementation scope in the diff.
-7. Do not start Checkpoint D unless the maintainer explicitly authorizes it and `git status` is clean.
+6. Confirm Checkpoint D source/tests/docs are still the only implementation scope in the diff.
+7. Do not start Checkpoint E unless the maintainer explicitly authorizes it and `git status` is clean.
 
 ## Safe Restart Rules
 
@@ -53,13 +53,16 @@ Then:
 
 ## Current Known Risks
 
-- Checkpoint C is implemented but not yet reviewed or accepted by the maintainer.
+- Checkpoint D is implemented but not yet reviewed or accepted by the maintainer.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
+- The all-in-one `scripts/Validate-Project.ps1 -Build -RunTests ... -TestFilter Eden` command timed out twice at the `Build.bat ... -WaitMutex -FromMsBuild` step before compiler diagnostics. Direct repository validation, direct `Build.bat ... -NoMutex -FromMsBuild`, and direct `UnrealEditor-Cmd.exe` automation all passed.
 - Engine `LogConsoleManager` may warn about `r.MotionVectorSimulation` on the render thread; that is residual engine noise, not Eden flight-shell ownership.
 - Automation logs include expected `LogEdenSimClock` warnings from tests that intentionally exercise invalid fixed-step config, invalid subscribers, and overrun reporting.
 - Automation logs include expected `LogEdenSystems` warnings and one expected invalid-config error from tests that intentionally exercise fuel sanitization and safe disable paths.
 - Automation logs include expected `LogEdenSystems` warnings and expected invalid-config errors from tests that intentionally exercise power and thermal sanitization and safe disable paths.
+- Automation logs include expected `LogEdenSystems` warnings and one expected multiple-source ambiguity error from Checkpoint D integration tests that intentionally exercise missing config, missing clock, missing propulsion source, and ambiguous propulsion source safe paths.
+- The broad `Automation RunTests Eden` filter also listed a few engine/plugin tests whose names contain `Eden`/matching text and emitted engine/tooling `LogTemp` lines. Project source search found no `LogTemp` usage in `Source`.
 - Unreal platform validation still reports non-Win64 SDK gaps for Android, Linux, LinuxArm64, and VisionOS; Win64 is valid and the requested build/tests passed.
 
 ## Session Handoff
@@ -104,6 +107,16 @@ Then:
   - `Eden.Unit.Systems.Power.*` tests
   - `Eden.Unit.Systems.Thermal.*` tests
 - Verified Checkpoint C through repository validation, Win64 Development Editor build, foundation smoke, existing flight tests, existing SimClock tests, existing Fuel tests, and new Power/Thermal tests.
+- Checkpoint C accepted and committed as `e410878`.
+- Implemented Checkpoint D resource integration scope:
+  - `IEdenPropulsionDemandSource`
+  - `UEdenFlightMovementComponent::GetPropulsionDemandNormalized()`
+  - fuel, power, and thermal C++ default subobjects on `AEdenSpacecraftPawn`
+  - fuel demand source discovery by interface with weak non-owning component reference
+  - missing, invalid, and ambiguous propulsion source safe-zero behavior
+  - missing clock safe-disable behavior for fuel, power, and thermal
+  - `Eden.Integration.Systems.*` tests
+- Verified Checkpoint D through repository validation, Win64 Development Editor build, foundation smoke, existing flight tests, existing SimClock tests, existing Fuel/Power/Thermal tests, and new Systems integration tests.
 
 ### Locked decisions recorded in ExecPlan 0003
 
@@ -122,10 +135,10 @@ Then:
 
 ### Remaining Work
 
-- Review and accept Checkpoint C.
-- Authorize Checkpoint D only when ready.
-- Keep pawn resource component composition, propulsion-demand integration, integration tests, ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, and EDEN OS work untouched until their planned checkpoints.
+- Review and accept Checkpoint D.
+- Authorize Checkpoint E only when ready.
+- Keep ShowDebug, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, EDEN OS work, and fuel-based flight shutdown untouched until their planned checkpoints.
 
 ### Next Clean Action
 
-Review Checkpoint C. Do not begin Checkpoint D yet.
+Review Checkpoint D. Do not begin Checkpoint E yet.

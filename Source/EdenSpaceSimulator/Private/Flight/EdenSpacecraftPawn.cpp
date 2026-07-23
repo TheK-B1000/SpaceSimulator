@@ -7,6 +7,9 @@
 #include "Engine/CollisionProfile.h"
 #include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenFlightTypes.h"
+#include "Systems/EdenFuelSystemComponent.h"
+#include "Systems/EdenPowerSystemComponent.h"
+#include "Systems/EdenThermalSystemComponent.h"
 
 AEdenSpacecraftPawn::AEdenSpacecraftPawn()
 {
@@ -22,6 +25,10 @@ AEdenSpacecraftPawn::AEdenSpacecraftPawn()
 
 	FlightMovementComponent = CreateDefaultSubobject<UEdenFlightMovementComponent>(TEXT("FlightMovementComponent"));
 	FlightMovementComponent->SetUpdatedComponent(RequiredCollisionRoot);
+
+	FuelSystemComponent = CreateDefaultSubobject<UEdenFuelSystemComponent>(TEXT("FuelSystem"));
+	PowerSystemComponent = CreateDefaultSubobject<UEdenPowerSystemComponent>(TEXT("PowerSystem"));
+	ThermalSystemComponent = CreateDefaultSubobject<UEdenThermalSystemComponent>(TEXT("ThermalSystem"));
 }
 
 UPawnMovementComponent* AEdenSpacecraftPawn::GetMovementComponent() const
@@ -70,6 +77,21 @@ USphereComponent* AEdenSpacecraftPawn::GetRequiredCollisionRoot() const
 UEdenFlightMovementComponent* AEdenSpacecraftPawn::GetFlightMovementComponent() const
 {
 	return FlightMovementComponent;
+}
+
+UEdenFuelSystemComponent* AEdenSpacecraftPawn::GetFuelSystemComponent() const
+{
+	return FuelSystemComponent;
+}
+
+UEdenPowerSystemComponent* AEdenSpacecraftPawn::GetPowerSystemComponent() const
+{
+	return PowerSystemComponent;
+}
+
+UEdenThermalSystemComponent* AEdenSpacecraftPawn::GetThermalSystemComponent() const
+{
+	return ThermalSystemComponent;
 }
 
 void AEdenSpacecraftPawn::RestoreRequiredCollisionRoot()

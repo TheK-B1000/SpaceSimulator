@@ -4,6 +4,8 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "Flight/EdenPropulsionDemandSource.h"
+#include "GameFramework/Actor.h"
 #include "Systems/EdenFuelConfigDataAsset.h"
 
 UEdenFuelSystemComponent::UEdenFuelSystemComponent()
@@ -17,6 +19,7 @@ void UEdenFuelSystemComponent::BeginPlay()
 
 	if (InitializeFromConfiguredDataAsset())
 	{
+		RefreshPropulsionDemandSource();
 		RegisterWithSimulationClock();
 	}
 }
@@ -35,10 +38,11 @@ void UEdenFuelSystemComponent::AdvanceSimulation(float FixedDeltaSeconds)
 		return;
 	}
 
+	const float DemandNormalized = ResolveConsumptionDemandNormalized();
 	const FEdenFuelStepResult StepResult = FEdenFuelModel::Step(
 		ActiveFuelConfig,
 		CurrentSnapshot,
-		ConsumptionDemandNormalized,
+		DemandNormalized,
 		FixedDeltaSeconds);
 
 	if (!StepResult.bConfigWasValid)
@@ -154,6 +158,72 @@ bool UEdenFuelSystemComponent::SetFuelQuantityKilograms(float FuelQuantityKilogr
 	return !bQuantityWasSanitized;
 }
 
+bool UEdenFuelSystemComponent::RefreshPropulsionDemandSource()
+{
+	bPropulsionDemandSourceDiscoveryComplete = true;
+	bLoggedExpiredPropulsionDemandSource = false;
+	bLoggedSanitizedPropulsionDemand = false;
+	PropulsionDemandSourceComponent.Reset();
+	ConsumptionDemandNormalized = 0.0f;
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s could not discover propulsion demand source; no owning actor is available. Using zero demand."),
+			*MakeLogContext());
+		return false;
+	}
+
+	TInlineComponentArray<UActorComponent*> OwnerComponents(OwnerActor);
+	TArray<UActorComponent*> ValidDemandSources;
+	for (UActorComponent* Component : OwnerComponents)
+	{
+		if (!IsValid(Component))
+		{
+			continue;
+		}
+
+		if (Cast<IEdenPropulsionDemandSource>(Component))
+		{
+			ValidDemandSources.Add(Component);
+		}
+	}
+
+	if (ValidDemandSources.Num() == 0)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s found no propulsion demand source on owner '%s'. Using zero demand."),
+			*MakeLogContext(),
+			*GetNameSafe(OwnerActor));
+		return false;
+	}
+
+	if (ValidDemandSources.Num() > 1)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Error,
+			TEXT("%s found multiple propulsion demand sources on owner '%s'. Resolve ambiguity before enabling fuel consumption."),
+			*MakeLogContext(),
+			*GetNameSafe(OwnerActor));
+		return false;
+	}
+
+	PropulsionDemandSourceComponent = ValidDemandSources[0];
+	UE_LOG(
+		LogEdenSystems,
+		Verbose,
+		TEXT("%s discovered propulsion demand source '%s'."),
+		*MakeLogContext(),
+		*GetNameSafe(PropulsionDemandSourceComponent.Get()));
+	return true;
+}
+
 bool UEdenFuelSystemComponent::IsFuelSimulationEnabled() const
 {
 	return bFuelSimulationEnabled;
@@ -190,6 +260,7 @@ bool UEdenFuelSystemComponent::RegisterWithSimulationClock()
 	if (!World)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; no world is available."), *MakeLogContext());
+		DisableFuelSimulation(TEXT("missing world for simulation clock registration"));
 		return false;
 	}
 
@@ -197,12 +268,14 @@ bool UEdenFuelSystemComponent::RegisterWithSimulationClock()
 	if (!SimulationClock)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot register with simulation clock; subsystem is unavailable."), *MakeLogContext());
+		DisableFuelSimulation(TEXT("simulation clock subsystem unavailable"));
 		return false;
 	}
 
 	if (!SimulationClock->RegisterSimulationTickable(this))
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s failed to register with simulation clock."), *MakeLogContext());
+		DisableFuelSimulation(TEXT("simulation clock registration failed"));
 		return false;
 	}
 
@@ -247,6 +320,10 @@ void UEdenFuelSystemComponent::DisableFuelSimulation(const FString& Reason)
 
 	bFuelSimulationEnabled = false;
 	ConsumptionDemandNormalized = 0.0f;
+	PropulsionDemandSourceComponent.Reset();
+	bPropulsionDemandSourceDiscoveryComplete = false;
+	bLoggedExpiredPropulsionDemandSource = false;
+	bLoggedSanitizedPropulsionDemand = false;
 	CurrentSnapshot = FEdenFuelStateSnapshot();
 
 	UE_LOG(LogEdenSystems, Warning, TEXT("%s disabled fuel simulation: %s."), *MakeLogContext(), *Reason);
@@ -266,6 +343,71 @@ bool UEdenFuelSystemComponent::ValidateAndLogConfig(const FEdenFuelConfig& FuelC
 	}
 
 	return false;
+}
+
+float UEdenFuelSystemComponent::ResolveConsumptionDemandNormalized()
+{
+	if (!bPropulsionDemandSourceDiscoveryComplete)
+	{
+		return ConsumptionDemandNormalized;
+	}
+
+	UActorComponent* SourceComponent = PropulsionDemandSourceComponent.Get();
+	if (!SourceComponent)
+	{
+		if (!bLoggedExpiredPropulsionDemandSource)
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Warning,
+				TEXT("%s has no valid propulsion demand source. Using zero demand."),
+				*MakeLogContext());
+			bLoggedExpiredPropulsionDemandSource = true;
+		}
+
+		ConsumptionDemandNormalized = 0.0f;
+		return 0.0f;
+	}
+
+	const IEdenPropulsionDemandSource* DemandSource = Cast<IEdenPropulsionDemandSource>(SourceComponent);
+	if (!DemandSource)
+	{
+		if (!bLoggedExpiredPropulsionDemandSource)
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Warning,
+				TEXT("%s propulsion demand source '%s' is invalid. Using zero demand."),
+				*MakeLogContext(),
+				*GetNameSafe(SourceComponent));
+			bLoggedExpiredPropulsionDemandSource = true;
+		}
+
+		PropulsionDemandSourceComponent.Reset();
+		ConsumptionDemandNormalized = 0.0f;
+		return 0.0f;
+	}
+
+	bool bDemandWasSanitized = false;
+	const float DemandNormalized = FEdenFuelModel::SanitizeDemandNormalized(
+		DemandSource->GetPropulsionDemandNormalized(),
+		&bDemandWasSanitized);
+
+	if (bDemandWasSanitized && !bLoggedSanitizedPropulsionDemand)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s sanitized propulsion demand from source '%s' to %f."),
+			*MakeLogContext(),
+			*GetNameSafe(SourceComponent),
+			DemandNormalized);
+	}
+
+	bLoggedExpiredPropulsionDemandSource = false;
+	bLoggedSanitizedPropulsionDemand = bDemandWasSanitized;
+	ConsumptionDemandNormalized = DemandNormalized;
+	return DemandNormalized;
 }
 
 void UEdenFuelSystemComponent::ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents)

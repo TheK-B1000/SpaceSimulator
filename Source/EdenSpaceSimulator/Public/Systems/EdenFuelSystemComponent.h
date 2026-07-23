@@ -43,6 +43,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Fuel")
 	bool SetFuelQuantityKilograms(float FuelQuantityKilograms);
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Fuel")
+	bool RefreshPropulsionDemandSource();
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Fuel")
 	bool IsFuelSimulationEnabled() const;
 
@@ -75,6 +78,7 @@ private:
 	bool InitializeFromConfiguredDataAsset();
 	void DisableFuelSimulation(const FString& Reason);
 	bool ValidateAndLogConfig(const FEdenFuelConfig& FuelConfig) const;
+	float ResolveConsumptionDemandNormalized();
 	void ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents);
 	FString MakeLogContext() const;
 
@@ -91,8 +95,20 @@ private:
 	TWeakObjectPtr<UEdenSimulationClockSubsystem> RegisteredSimulationClock;
 
 	UPROPERTY(Transient)
+	TWeakObjectPtr<UActorComponent> PropulsionDemandSourceComponent;
+
+	UPROPERTY(Transient)
 	float ConsumptionDemandNormalized = 0.0f;
 
 	UPROPERTY(Transient)
 	bool bFuelSimulationEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bPropulsionDemandSourceDiscoveryComplete = false;
+
+	UPROPERTY(Transient)
+	bool bLoggedExpiredPropulsionDemandSource = false;
+
+	UPROPERTY(Transient)
+	bool bLoggedSanitizedPropulsionDemand = false;
 };

@@ -8,7 +8,7 @@ Approved
 > [!CAUTION]
 > The verified six-axis flight shell baseline is committed and tagged as `v0.1.0-flight-shell` on commit `ed7fb55`, and resource work is on `feature/spacecraft-resource-simulation`.
 >
-> Checkpoint A clock implementation was accepted and committed as `9bede83`. Checkpoint B fuel implementation was accepted and committed as `88788c0`. Checkpoint C power and thermal implementation was explicitly authorized and completed. Do not begin Checkpoint D or later pawn resource-component composition, propulsion-demand integration, integration tests, debug visibility, Blueprint assets, Data Asset instances, mission, HUD, telemetry, networking, or EDEN OS work until separately authorized.
+> Checkpoint A clock implementation was accepted and committed as `9bede83`. Checkpoint B fuel implementation was accepted and committed as `88788c0`. Checkpoint C power and thermal implementation was accepted and committed as `e410878`. Checkpoint D pawn integration, propulsion-demand coupling, and integration tests were explicitly authorized, implemented, and locally verified. Do not begin Checkpoint E or later debug visibility, Blueprint assets, Data Asset instances, mission, HUD, telemetry, networking, or EDEN OS work until separately authorized.
 
 ## Problem and outcome
 
@@ -73,12 +73,13 @@ The outcome is a simulation layer where every resource has one authoritative own
 - Clean flight-shell baseline: `v0.1.0-flight-shell` on commit `ed7fb55`
 - Checkpoint A accepted commit: `9bede83`
 - Checkpoint B accepted commit: `88788c0`
-- Expected pending changes after Checkpoint C implementation: power and thermal source, power and thermal tests, this ExecPlan, and `docs/RECOVER.md` only
+- Checkpoint C accepted commit: `e410878`
+- Expected pending changes after Checkpoint D implementation: propulsion-demand interface, flight movement read-only demand implementation, pawn resource default subobjects, fuel source discovery and missing-clock safe disable updates, integration tests, this ExecPlan, and `docs/RECOVER.md` only
 - Active ExecPlan: `0003-spacecraft-resource-simulation.md` (Approved)
 - Previous ExecPlan: `0002-six-axis-flight.md` (verified complete)
 - `Source/EdenSpaceSimulator/Public/Systems/` contains Checkpoint B fuel types, fuel model, fuel config data asset, and fuel system component headers
 - `Source/EdenSpaceSimulator/Private/Systems/` contains Checkpoint B fuel implementation files
-- C++ simulation clock, fuel, power, and thermal checkpoints have been implemented; pawn resource composition, propulsion-demand integration, integration tests, debug visibility, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, and EDEN OS work are not implemented
+- C++ simulation clock, fuel, power, thermal, pawn resource composition, propulsion-demand integration, and integration tests have been implemented; debug visibility, Blueprints, Data Asset instances, Unreal assets, mission, HUD, telemetry, networking, and EDEN OS work are not implemented
 - Existing log categories: `LogEden`, `LogEdenFlight`, `LogEdenSystems`, `LogEdenSimClock`, `LogEdenMission`, `LogEdenTelemetry`
 - Module dependencies (`EdenSpaceSimulator.Build.cs`): `Core`, `CoreUObject`, `Engine`, `InputCore`, `EnhancedInput`
 - C++ standard: C++20, IWYU enforced
@@ -945,7 +946,7 @@ Expected: only planned files appear. No generated files tracked. No unrelated as
 
 Current pre-implementation evidence:
 
-- [x] Implementation blocker cleared: flight shell committed, `v0.1.0-flight-shell` tag exists on `ed7fb55`, feature branch `feature/spacecraft-resource-simulation` exists, and resource implementation has not started.
+- [x] Implementation blocker cleared: flight shell committed, `v0.1.0-flight-shell` tag exists on `ed7fb55`, feature branch `feature/spacecraft-resource-simulation` exists, and resource implementation is proceeding by explicitly accepted checkpoints.
 
 Required implementation evidence:
 - [x] Checkpoint A source: `LogEdenSimClock`, `FEdenFixedStepClockModel`, `UEdenSimulationTickable` / `IEdenSimulationTickable`, and `UEdenSimulationClockSubsystem` implemented.
@@ -960,7 +961,9 @@ Required implementation evidence:
 - [x] Checkpoint C behavior: power owns generation, baseline demand, battery capacity, battery charge, and power state; converts kilowatts to kilowatt-hours using `FixedDeltaSeconds / 3600`; clamps charge; validates capacity, generation, demand, initial charge, and thresholds; emits `OnPowerStateChanged` and `OnPowerDepleted` only on entering Depleted; thermal owns temperature and state; heat generation raises temperature; dissipation moves toward ambient without crossing it; clamps absolute bounds; validates `AbsoluteMin <= Ambient < Warning < Critical <= AbsoluteMax` and initial temperature; emits `OnThermalStateChanged` and `OnThermalOverheated` only on entering Overheated.
 - [x] Test log: all `Eden.Unit.Systems.Power.*` tests passed, including threshold ordering, initial charge fraction, kW to kWh conversion, clamping, NaN/infinity sanitization, invalid delta, transitions, recovery, reset, missing/invalid config disable, direct multi-threshold transition, depleted-entry semantics, and equivalent simulated-time partitions.
 - [x] Test log: all `Eden.Unit.Systems.Thermal.*` tests passed, including threshold ordering, initial temperature, heat generation, dissipation-does-not-cross-ambient, clamping, NaN/infinity sanitization, invalid delta, transitions, recovery, reset, missing/invalid config disable, direct multi-threshold transition, overheated-entry semantics, and equivalent simulated-time partitions.
-- [ ] Test log: all `Eden.Integration.Systems.*` tests pass (including PIE restart)
+- [x] Checkpoint D source: `IEdenPropulsionDemandSource` added; `UEdenFlightMovementComponent` implements read-only propulsion demand; `AEdenSpacecraftPawn` creates fuel, power, and thermal C++ default subobjects; `UEdenFuelSystemComponent` discovers demand sources by interface without concrete pawn dependency; fuel, power, and thermal components safely disable when the clock is unavailable.
+- [x] Checkpoint D behavior: fuel reads exactly one weak non-owning propulsion demand source after discovery; no source and expired/invalid source use zero demand; multiple sources report ambiguity and use zero demand; fuel consumption remains owned by `UEdenFuelSystemComponent`; flight never subtracts fuel or changes behavior on depletion; all resource systems advance only through the simulation clock, not Actor Tick.
+- [x] Test log: all `Eden.Integration.Systems.*` tests passed, including clock advancement of all resources, sustained demand consumption, zero demand, missing demand source, multiple-source ambiguity, pawn default subobjects, reset, registration/unregistration safety, missing config or clock safety, and simulated restart reset.
 - [x] Test log: existing `Eden.Unit.Flight.*` and `Eden.Unit.Foundation.Smoke` tests still pass under the `Eden` automation filter.
 - [ ] Manual PIE: fuel consumption visible during flight via `ShowDebug EdenSystems`
 - [ ] Manual PIE: state transitions logged on threshold crossings with previous/new state
@@ -1014,9 +1017,12 @@ Required implementation evidence:
 2026-07-23: Checkpoint B accepted and committed as `88788c0`.
 2026-07-23: Implemented Checkpoint C power and thermal scope only. Added power and thermal domain state enums, pure production models, config data assets, system components implementing `IEdenSimulationTickable`, and `Eden.Unit.Systems.Power.*` / `Eden.Unit.Systems.Thermal.*` automation coverage. Did not implement pawn resource component composition, propulsion-demand integration, integration tests, debug visibility, Blueprint assets, Data Asset instances, mission, HUD, telemetry, networking, or EDEN OS work.
 2026-07-23: Validation passed: repository validation, `EdenSpaceSimulatorEditor` Win64 Development build, `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, existing `Eden.Unit.SimClock.*`, existing `Eden.Unit.Systems.Fuel.*`, and all new `Eden.Unit.Systems.Power.*` / `Eden.Unit.Systems.Thermal.*` tests through `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`. Automation log reported 86 tests found for `Eden` and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
+2026-07-23: Checkpoint C accepted and committed as `e410878`.
+2026-07-23: Implemented Checkpoint D pawn integration and clock wiring scope only. Added `IEdenPropulsionDemandSource`, implemented read-only propulsion demand on `UEdenFlightMovementComponent`, created fuel/power/thermal resource components as `AEdenSpacecraftPawn` C++ default subobjects, added fuel source discovery by interface with weak non-owning component storage and ambiguity handling, hardened missing-clock registration failure to disable resource simulation safely, and added `Eden.Integration.Systems.*` tests. Did not implement ShowDebug, Blueprint assets, Data Asset instances, mission logic, HUD, alerts, telemetry, networking, EDEN OS integration, or fuel-based flight shutdown.
+2026-07-23: Validation passed for Checkpoint D. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. `EdenSpaceSimulatorEditor` Win64 Development build passed via `K:\Program Files\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`. Automation passed via `K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject -Unattended -NoSplash -NullRHI -NoP4 "-ExecCmds=Automation RunTests Eden; Quit" "-TestExit=Automation Test Queue Empty" -Log`; automation log reported 96 tests found for `Eden`, all new `Eden.Integration.Systems.*` tests passed, and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
 
 ## Handoff
 
-Checkpoint C power and thermal implementation is ready for review and acceptance.
+Checkpoint D spacecraft resource integration and propulsion-demand coupling implementation is ready for review and acceptance.
 
-Do not begin Checkpoint D or any pawn resource component composition, propulsion-demand integration, integration test, debug visibility, Blueprint asset, Data Asset instance, map/config, mission, HUD, telemetry, networking, or EDEN OS work until separately authorized. Before the next checkpoint starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
+Do not begin Checkpoint E or any debug visibility, Blueprint asset, Data Asset instance, map/config, mission, HUD, telemetry, networking, or EDEN OS work until separately authorized. Before the next checkpoint starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
