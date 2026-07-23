@@ -38,7 +38,18 @@ void UEdenFlightMovementComponent::StopMovementImmediately()
 {
 	Super::StopMovementImmediately();
 	AngularVelocityLocalDegreesPerSecond = FVector::ZeroVector;
+	PropulsionDemandNormalized = 0.0f;
 	bWasBlockedLastMove = false;
+}
+
+float UEdenFlightMovementComponent::GetPropulsionDemandNormalized() const
+{
+	if (!FMath::IsFinite(PropulsionDemandNormalized))
+	{
+		return 0.0f;
+	}
+
+	return FMath::Clamp(PropulsionDemandNormalized, 0.0f, 1.0f);
 }
 
 void UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputCommand& Command, float DeltaTimeSeconds)
@@ -66,6 +77,7 @@ void UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputCommand
 
 	LogInvalidInputState(IntegrationResult.bInputWasSanitized);
 
+	PropulsionDemandNormalized = FMath::Clamp(IntegrationResult.SanitizedCommand.TranslationInput.Size(), 0.0f, 1.0f);
 	Velocity = IntegrationResult.VelocityState.LinearVelocityWorldCmPerSecond;
 	AngularVelocityLocalDegreesPerSecond = IntegrationResult.VelocityState.AngularVelocityLocalDegreesPerSecond;
 

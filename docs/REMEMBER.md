@@ -23,6 +23,15 @@ This file stores durable, verified project facts that future Codex sessions must
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
 - Flight automation tests use the `Eden.Unit.Flight` prefix.
 - Interactive PIE verification of the six-axis flight shell passed on 2026-07-22, including startup map, possession, camera, six-axis input, stabilization, blocker collision, PIE restart reset, and clean Output Log checks.
+- Verified six-axis flight shell baseline tag: `v0.1.0-flight-shell` on commit `ed7fb55`.
+- Resource simulation work proceeds on branch `feature/spacecraft-resource-simulation` from that tagged baseline.
+- Resource simulation uses `UEdenSimulationClockSubsystem` as the world-scoped fixed-step simulation clock for Game and PIE worlds.
+- `AEdenSpacecraftPawn` creates `FuelSystem`, `PowerSystem`, and `ThermalSystem` as inherited C++ default subobjects.
+- `UEdenFuelSystemComponent`, `UEdenPowerSystemComponent`, and `UEdenThermalSystemComponent` are the authoritative owners for fuel, power, and thermal runtime state.
+- `UEdenFlightMovementComponent` implements `IEdenPropulsionDemandSource`; fuel reads propulsion demand through that interface instead of depending on the concrete pawn class.
+- Resource configuration Data Assets exist under `/Game/Eden/Data/Systems`: `DA_EdenFuelConfig`, `DA_EdenPowerConfig`, and `DA_EdenThermalConfig`.
+- `BP_EdenSpacecraftPawn` assigns those resource Data Assets to the inherited C++ resource components.
+- Development builds expose read-only resource visibility through `ShowDebug EdenSystems`.
 - The first vertical slice is a docking and emergency-response trainer.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.
