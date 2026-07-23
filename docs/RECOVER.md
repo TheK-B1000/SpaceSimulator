@@ -6,15 +6,17 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 
 | Field | Value |
 |---|---|
-| Date | 2026-07-22 |
+| Date | 2026-07-23 |
 | Branch | `feature/spacecraft-resource-simulation` |
 | Clean baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Approved ExecPlan `0003` and this recovery update are the only expected pending docs changes until Checkpoint A is explicitly authorized. |
+| Working tree | Checkpoint A source, tests, ExecPlan progress, and this recovery update are the expected pending changes. |
 | Active ExecPlan | `docs/exec-plans/0003-spacecraft-resource-simulation.md` (Approved) |
 | Previous ExecPlan | `docs/exec-plans/0002-six-axis-flight.md` (verified complete) |
 | Flight shell status | Committed, PIE-verified, and tagged as `v0.1.0-flight-shell`. |
-| Resource implementation | Not started. Checkpoint A is blocked until the maintainer explicitly authorizes Checkpoint A and the working tree is clean. |
-| Next task | Wait for explicit Checkpoint A authorization. Do not begin implementation yet. |
+| Resource implementation | Checkpoint A clock scope implemented and locally verified. Fuel, power, thermal, Data Assets, pawn resource components, propulsion-demand integration, ShowDebug, Blueprints, and Unreal assets are not started. |
+| Last successful validation | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden` |
+| Last successful result | Repository validation passed, `EdenSpaceSimulatorEditor` Win64 Development build passed, `Eden.Unit.Foundation.Smoke` passed, existing `Eden.Unit.Flight.*` tests passed, and all new `Eden.Unit.SimClock.*` tests passed. |
+| Next task | Review and accept Checkpoint A. Do not begin Checkpoint B yet. |
 
 ## Recovery protocol
 
@@ -36,7 +38,8 @@ Then:
 3. Read `docs/exec-plans/0003-spacecraft-resource-simulation.md`.
 4. Confirm the current branch is `feature/spacecraft-resource-simulation`.
 5. Confirm the clean baseline tag `v0.1.0-flight-shell` exists.
-6. Do not start Checkpoint A unless the maintainer explicitly authorizes Checkpoint A implementation and `git status` is clean.
+6. Confirm Checkpoint A is still the only implementation scope in the diff.
+7. Do not start Checkpoint B unless the maintainer explicitly authorizes it and `git status` is clean.
 
 ## Safe Restart Rules
 
@@ -50,10 +53,11 @@ Then:
 
 ## Current Known Risks
 
-- ExecPlan 0003 is Approved, but Checkpoint A implementation authorization has not been granted.
+- Checkpoint A is implemented but not yet reviewed or accepted by the maintainer.
 - Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
 - Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
 - Engine `LogConsoleManager` may warn about `r.MotionVectorSimulation` on the render thread; that is residual engine noise, not Eden flight-shell ownership.
+- Automation logs include expected `LogEdenSimClock` warnings from tests that intentionally exercise invalid fixed-step config, invalid subscribers, and overrun reporting.
 
 ## Session Handoff
 
@@ -63,6 +67,13 @@ Then:
 - Annotated tag `v0.1.0-flight-shell` created on `ed7fb55`.
 - Branch `feature/spacecraft-resource-simulation` created from that baseline.
 - ExecPlan 0003 revised with locked review decisions, final approval clarifications, and Approved status.
+- Implemented Checkpoint A clock scope:
+  - `LogEdenSimClock`
+  - `FEdenFixedStepClockModel`
+  - `UEdenSimulationTickable` / `IEdenSimulationTickable`
+  - `UEdenSimulationClockSubsystem`
+  - `Eden.Unit.SimClock.*` tests
+- Verified Checkpoint A through repository validation, Win64 Development Editor build, foundation smoke, existing flight tests, and new SimClock tests.
 
 ### Locked decisions recorded in ExecPlan 0003
 
@@ -81,9 +92,10 @@ Then:
 
 ### Remaining Work
 
-- Ensure a clean working tree.
-- Wait for explicit Checkpoint A authorization.
+- Review and accept Checkpoint A.
+- Authorize Checkpoint B only when ready.
+- Keep fuel, power, thermal, resource Data Assets, pawn resource components, propulsion-demand integration, ShowDebug, Blueprints, and Unreal assets untouched until their planned checkpoints.
 
 ### Next Clean Action
 
-Wait for explicit Checkpoint A authorization. Do not begin implementation yet.
+Review Checkpoint A. Do not begin Checkpoint B yet.

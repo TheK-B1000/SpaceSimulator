@@ -8,7 +8,7 @@ Approved
 > [!CAUTION]
 > The verified six-axis flight shell baseline is committed and tagged as `v0.1.0-flight-shell` on commit `ed7fb55`, and resource work is on `feature/spacecraft-resource-simulation`.
 >
-> Checkpoint A remains blocked until the plan-only changes are reviewed, the working tree is clean, and the maintainer explicitly authorizes Checkpoint A implementation. Approval of this ExecPlan is not implementation authorization.
+> Checkpoint A clock implementation was explicitly authorized and completed. Do not begin Checkpoint B or later resource, asset, Blueprint, debug-visibility, pawn resource-component, or propulsion-demand integration work until separately authorized.
 
 ## Problem and outcome
 
@@ -948,13 +948,16 @@ Current pre-implementation evidence:
 - [x] Implementation blocker cleared: flight shell committed, `v0.1.0-flight-shell` tag exists on `ed7fb55`, feature branch `feature/spacecraft-resource-simulation` exists, and resource implementation has not started.
 
 Required implementation evidence:
-- [ ] Build log: `EdenSpaceSimulatorEditor` Win64 Development passes
-- [ ] Test log: all `Eden.Unit.SimClock.*` tests pass (including `FEdenFixedStepClockModel` tests)
+- [x] Checkpoint A source: `LogEdenSimClock`, `FEdenFixedStepClockModel`, `UEdenSimulationTickable` / `IEdenSimulationTickable`, and `UEdenSimulationClockSubsystem` implemented.
+- [x] Checkpoint A behavior: Game and PIE world support; Editor, EditorPreview, GamePreview, Inactive, and None excluded; fixed-step and catch-up config validation; pause/resume/reset; elapsed time; dropped-step reporting; weak subscribers; duplicate rejection; invalid subscriber handling; deferred mutation; stable snapshot iteration; `Deinitialize` cleanup.
+- [x] Repository validation: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1` passed.
+- [x] Build log: `EdenSpaceSimulatorEditor` Win64 Development passed through `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`.
+- [x] Test log: all `Eden.Unit.SimClock.*` tests passed, including `FEdenFixedStepClockModel` accumulator tests, equivalent partitions below the catch-up cap, overrun dropped-step state, world-type filtering, invalid config, invalid subscriber handling, duplicate rejection, and deferred subscriber mutation.
 - [ ] Test log: all `Eden.Unit.Systems.Fuel.*` tests pass (including threshold ordering)
 - [ ] Test log: all `Eden.Unit.Systems.Power.*` tests pass (including threshold ordering)
 - [ ] Test log: all `Eden.Unit.Systems.Thermal.*` tests pass (including dissipation-does-not-cross-ambient and threshold ordering)
 - [ ] Test log: all `Eden.Integration.Systems.*` tests pass (including PIE restart)
-- [ ] Test log: existing `Eden.Unit.Flight.*` and `Eden.Unit.Foundation.Smoke` tests still pass
+- [x] Test log: existing `Eden.Unit.Flight.*` and `Eden.Unit.Foundation.Smoke` tests still pass under the `Eden` automation filter.
 - [ ] Manual PIE: fuel consumption visible during flight via `ShowDebug EdenSystems`
 - [ ] Manual PIE: state transitions logged on threshold crossings with previous/new state
 - [ ] Manual PIE: power drain visible over time
@@ -999,9 +1002,11 @@ Required implementation evidence:
 2026-07-22: Drafted ExecPlan 0003 for review. No implementation performed.
 2026-07-22: Revised ExecPlan 0003 per review feedback (14 corrections). No implementation performed.
 2026-07-22: Applied final approval clarifications, updated the committed flight-shell baseline, and marked the plan Approved. No implementation performed.
+2026-07-23: Implemented Checkpoint A clock scope only. Added `FEdenFixedStepClockModel`, `UEdenSimulationTickable` / `IEdenSimulationTickable`, `UEdenSimulationClockSubsystem`, `LogEdenSimClock`, and `Eden.Unit.SimClock.*` automation coverage. Did not implement fuel, power, thermal systems, resource Data Assets, propulsion-demand integration, pawn resource components, debug visibility, Blueprints, or Unreal assets.
+2026-07-23: Validation passed: repository validation, `EdenSpaceSimulatorEditor` Win64 Development build, `Eden.Unit.Foundation.Smoke`, existing `Eden.Unit.Flight.*`, and all new `Eden.Unit.SimClock.*` tests through `scripts/Validate-Project.ps1 -Build -RunTests -EngineRoot "K:\Program Files\Epic Games\UE_5.8" -TestFilter Eden`.
 
 ## Handoff
 
-ExecPlan 0003 is approved as the implementation contract.
+Checkpoint A clock implementation is ready for review and acceptance.
 
-Do not begin Checkpoint A until the maintainer explicitly authorizes Checkpoint A implementation. Before Checkpoint A starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
+Do not begin Checkpoint B or any fuel, power, thermal, resource Data Asset, propulsion-demand integration, pawn resource component, debug visibility, Blueprint, or Unreal asset work until separately authorized. Before the next checkpoint starts, confirm the working tree is clean and still on `feature/spacecraft-resource-simulation`.
