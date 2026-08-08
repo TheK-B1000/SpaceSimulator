@@ -15,7 +15,9 @@
 
 #include "EdenOsAdapterSubsystem.generated.h"
 
+class UEdenExternalCommandExecutor;
 class UEdenExternalCommandRouter;
+class UEdenOperatorControlComponent;
 class UEdenSimulationClockSubsystem;
 
 UCLASS()
@@ -59,11 +61,20 @@ public:
 	/**
 	 * Checkpoint J: validate a typed external command proposal. Never executes.
 	 * Uses active telemetry session + latest accepted advisory evaluation for correlation.
+	 * On Valid, Outcome.ValidatedCommand binds exact typed parameters for Checkpoint K.
 	 */
 	FEdenExternalCommandValidationOutcome ValidateExternalCommandProposal(
 		const FEdenExternalCommandProposal& Proposal);
 
+	/**
+	 * Checkpoint K: execute a previously validated artifact through operator control.
+	 * Does not accept raw proposals. Does not auto-run after validation.
+	 */
+	FEdenExternalCommandExecutionResult ExecuteValidatedExternalCommand(
+		const FEdenValidatedExternalCommand& Command);
+
 	TArray<FEdenExternalCommandValidationRecord> GetExternalCommandValidationHistory() const;
+	TArray<FEdenExternalCommandExecutionRecord> GetExternalCommandExecutionHistory() const;
 
 	/** Test seam: install an accepted advisory without HTTP (validation-only proofs). */
 	void SetLatestAcceptedAdvisoryForTesting(const FEdenOsAcceptedAdvisory& Advisory);
@@ -95,7 +106,13 @@ private:
 	bool HasSessionCompletedOrCompletionQueued() const;
 	void ResetAdvisoryRuntimeState();
 	void EnsureExternalCommandRouter();
+	void EnsureExternalCommandExecutor();
 	FEdenExternalCommandValidationContext BuildExternalCommandValidationContext() const;
+	FEdenExternalCommandExecutionContext BuildExternalCommandExecutionContext() const;
+	UEdenOperatorControlComponent* ResolveOperatorControlComponent() const;
+	void EmitExternalCommandExecutedTelemetry(
+		const FEdenValidatedExternalCommand& Command,
+		const FEdenExternalCommandExecutionResult& Result);
 
 	void RefreshSnapshotFromRuntimeConfig();
 	void RegisterTelemetrySinkIfNeeded();
@@ -149,6 +166,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UEdenExternalCommandRouter> ExternalCommandRouter;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEdenExternalCommandExecutor> ExternalCommandExecutor;
 
 public:
 	/** Settled steps observed. Distinguishes "not ticking" from "ticking but gated" in diagnostics. */

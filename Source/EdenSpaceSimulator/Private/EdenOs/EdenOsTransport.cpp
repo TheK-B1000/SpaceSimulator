@@ -81,6 +81,7 @@ FEdenOsConnectionSnapshot FEdenOsTransportModel::MakeSnapshotForOutcome(
 	Snapshot.bEnabled = Config.bEnabled;
 	Snapshot.AuthorityMode = Config.AuthorityMode;
 	Snapshot.bExternalCommandValidationEnabled = Config.bExternalCommandValidationEnabled;
+	Snapshot.bExternalCommandExecutionEnabled = Config.bExternalCommandExecutionEnabled;
 	Snapshot.bHasBearerJwt = !Config.RuntimeBearerJwt.IsEmpty();
 	Snapshot.PendingMessageCount = PendingMessageCount + (bHasInFlightRequest ? 1 : 0);
 	Snapshot.DroppedMessageCount = DroppedMessageCount;

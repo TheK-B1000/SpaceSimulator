@@ -4,15 +4,18 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "EdenOs/EdenExternalCommandExecutor.h"
 #include "EdenOs/EdenExternalCommandRouter.h"
 #include "EdenOs/EdenOsAdvisoryModel.h"
 #include "EdenOs/EdenOsConnectionSettings.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsUnrealHttpTransport.h"
 #include "EdenOs/EdenOsWireTypes.h"
+#include "Operations/EdenOperatorControlComponent.h"
 #include "Telemetry/EdenTelemetryExportModel.h"
 #include "Telemetry/EdenTelemetrySubsystem.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "HAL/PlatformMisc.h"
 
 bool UEdenOsAdapterSubsystem::ShouldCreateSubsystem(UObject* Outer) const
@@ -35,6 +38,7 @@ void UEdenOsAdapterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	ActiveHttpTransport = OwnedHttpTransport.Get();
 	bAcceptTransportCallbacks = true;
 	EnsureExternalCommandRouter();
+	EnsureExternalCommandExecutor();
 
 	const UEdenOsConnectionSettings* Settings = GetDefault<UEdenOsConnectionSettings>();
 	ApplyRuntimeConfig(Settings ? Settings->MakeConnectionConfig() : FEdenOsConnectionConfig());
@@ -53,6 +57,7 @@ void UEdenOsAdapterSubsystem::Deinitialize()
 	LastValidationResult = FEdenOsValidationResult();
 	ConnectionSnapshot = FEdenOsConnectionSnapshot();
 	ExternalCommandRouter = nullptr;
+	ExternalCommandExecutor = nullptr;
 	OwnedHttpTransport.Reset();
 	ActiveHttpTransport = nullptr;
 
@@ -138,6 +143,7 @@ FEdenTelemetrySinkResult UEdenOsAdapterSubsystem::EnqueueOutboundRequest(FEdenOs
 	ConnectionSnapshot.bEnabled = RuntimeConfig.bEnabled;
 	ConnectionSnapshot.AuthorityMode = RuntimeConfig.AuthorityMode;
 	ConnectionSnapshot.bExternalCommandValidationEnabled = RuntimeConfig.bExternalCommandValidationEnabled;
+	ConnectionSnapshot.bExternalCommandExecutionEnabled = RuntimeConfig.bExternalCommandExecutionEnabled;
 	ConnectionSnapshot.bHasBearerJwt = !RuntimeConfig.RuntimeBearerJwt.IsEmpty();
 	if (!RuntimeConfig.bEnabled)
 	{
@@ -829,6 +835,10 @@ void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
 	{
 		ExternalCommandRouter->ResetValidationState();
 	}
+	if (ExternalCommandExecutor)
+	{
+		ExternalCommandExecutor->ResetExecutionState();
+	}
 }
 
 void UEdenOsAdapterSubsystem::EnsureExternalCommandRouter()
@@ -836,6 +846,14 @@ void UEdenOsAdapterSubsystem::EnsureExternalCommandRouter()
 	if (!ExternalCommandRouter)
 	{
 		ExternalCommandRouter = NewObject<UEdenExternalCommandRouter>(this);
+	}
+}
+
+void UEdenOsAdapterSubsystem::EnsureExternalCommandExecutor()
+{
+	if (!ExternalCommandExecutor)
+	{
+		ExternalCommandExecutor = NewObject<UEdenExternalCommandExecutor>(this);
 	}
 }
 
@@ -865,11 +883,128 @@ FEdenExternalCommandValidationContext UEdenOsAdapterSubsystem::BuildExternalComm
 	return Context;
 }
 
+FEdenExternalCommandExecutionContext UEdenOsAdapterSubsystem::BuildExternalCommandExecutionContext() const
+{
+	FEdenExternalCommandExecutionContext Context;
+	Context.bExternalCommandExecutionEnabled = RuntimeConfig.bExternalCommandExecutionEnabled;
+	Context.bExternalCommandValidationEnabled = RuntimeConfig.bExternalCommandValidationEnabled;
+	Context.AuthorityMode = RuntimeConfig.AuthorityMode;
+
+	if (const UWorld* World = GetWorld())
+	{
+		if (const UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
+		{
+			Context.ActiveSessionId = Telemetry->GetSessionId();
+		}
+		if (const UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>())
+		{
+			Context.AttemptSimulationTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
+		}
+	}
+
+	if (LatestAcceptedAdvisory.bIsValid)
+	{
+		Context.bHasAcceptedEvaluation = true;
+		Context.LatestAcceptedEvaluationId = LatestAcceptedAdvisory.EvaluationId;
+	}
+
+	return Context;
+}
+
+UEdenOperatorControlComponent* UEdenOsAdapterSubsystem::ResolveOperatorControlComponent() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (UEdenOperatorControlComponent* Operator = It->FindComponentByClass<UEdenOperatorControlComponent>())
+		{
+			if (Operator->IsOperatorControlEnabled())
+			{
+				return Operator;
+			}
+		}
+	}
+	return nullptr;
+}
+
+void UEdenOsAdapterSubsystem::EmitExternalCommandExecutedTelemetry(
+	const FEdenValidatedExternalCommand& Command,
+	const FEdenExternalCommandExecutionResult& Result)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+	if (!Telemetry)
+	{
+		return;
+	}
+
+	const FString CommandTypeLabel = StaticEnum<EEdenExternalCommandType>()
+		? StaticEnum<EEdenExternalCommandType>()->GetNameStringByValue(static_cast<int64>(Command.CommandType))
+		: TEXT("Unknown");
+	const int32 ColonIndex =
+		CommandTypeLabel.Find(TEXT("::"), ESearchCase::CaseSensitive, ESearchDir::FromEnd);
+	const FString ShortCommandType =
+		ColonIndex == INDEX_NONE ? CommandTypeLabel : CommandTypeLabel.Mid(ColonIndex + 2);
+
+	const FString Detail = FString::Printf(
+		TEXT(
+			"{"
+			"\"ProposalId\":\"%s\","
+			"\"SessionId\":\"%s\","
+			"\"EvaluationId\":\"%s\","
+			"\"CommandType\":\"%s\","
+			"\"PreviousMode\":\"%s\","
+			"\"RequestedMode\":\"%s\","
+			"\"ResultingMode\":\"%s\","
+			"\"Source\":\"eden_authorized_control\""
+			"}"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Command.ProposalId),
+		*FEdenTelemetryExportModel::EscapeJsonString(Command.SessionId),
+		*FEdenTelemetryExportModel::EscapeJsonString(Command.EvaluationId),
+		*FEdenTelemetryExportModel::EscapeJsonString(ShortCommandType),
+		*FEdenTelemetryExportModel::EscapeJsonString(Result.PreviousModeLabel),
+		*FEdenTelemetryExportModel::EscapeJsonString(Result.RequestedModeLabel),
+		*FEdenTelemetryExportModel::EscapeJsonString(Result.ResultingModeLabel));
+
+	Telemetry->RecordObservationEvent(
+		EEdenTelemetryEventType::EdenExternalCommandExecuted,
+		TEXT("EdenOs"),
+		FName(*Command.ProposalId),
+		Detail);
+}
+
 FEdenExternalCommandValidationOutcome UEdenOsAdapterSubsystem::ValidateExternalCommandProposal(
 	const FEdenExternalCommandProposal& Proposal)
 {
 	EnsureExternalCommandRouter();
 	return ExternalCommandRouter->ValidateProposal(Proposal, BuildExternalCommandValidationContext());
+}
+
+FEdenExternalCommandExecutionResult UEdenOsAdapterSubsystem::ExecuteValidatedExternalCommand(
+	const FEdenValidatedExternalCommand& Command)
+{
+	EnsureExternalCommandExecutor();
+	const FEdenExternalCommandExecutionResult Result = ExternalCommandExecutor->ExecuteValidatedCommand(
+		Command,
+		BuildExternalCommandExecutionContext(),
+		ResolveOperatorControlComponent());
+
+	if (Result.IsExecuted())
+	{
+		EmitExternalCommandExecutedTelemetry(Command, Result);
+	}
+
+	return Result;
 }
 
 TArray<FEdenExternalCommandValidationRecord> UEdenOsAdapterSubsystem::GetExternalCommandValidationHistory() const
@@ -879,6 +1014,15 @@ TArray<FEdenExternalCommandValidationRecord> UEdenOsAdapterSubsystem::GetExterna
 		return TArray<FEdenExternalCommandValidationRecord>();
 	}
 	return ExternalCommandRouter->GetValidationHistory();
+}
+
+TArray<FEdenExternalCommandExecutionRecord> UEdenOsAdapterSubsystem::GetExternalCommandExecutionHistory() const
+{
+	if (!ExternalCommandExecutor)
+	{
+		return TArray<FEdenExternalCommandExecutionRecord>();
+	}
+	return ExternalCommandExecutor->GetExecutionHistory();
 }
 
 void UEdenOsAdapterSubsystem::SetLatestAcceptedAdvisoryForTesting(const FEdenOsAcceptedAdvisory& Advisory)

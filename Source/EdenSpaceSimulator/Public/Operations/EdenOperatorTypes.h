@@ -29,6 +29,14 @@ enum class EEdenPropulsionPriorityMode : uint8
 	Reduced UMETA(DisplayName = "Reduced")
 };
 
+/** Provenance for operator-control mutations. EDEN must not masquerade as human input. */
+UENUM(BlueprintType)
+enum class EEdenOperatorCommandSource : uint8
+{
+	HumanOperator UMETA(DisplayName = "Human Operator"),
+	EdenAuthorizedControl UMETA(DisplayName = "EDEN Authorized Control")
+};
+
 USTRUCT(BlueprintType)
 struct EDENSPACESIMULATOR_API FEdenOperatorControlConfig
 {

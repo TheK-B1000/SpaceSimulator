@@ -75,13 +75,16 @@ public:
 
 	/**
 	 * Records an observation-only telemetry event from an external adapter.
-	 * Allowed for EdenAdvisoryIssued only — adapters must not invent mission/resource events.
+	 * Allowed for EdenAdvisoryIssued and EdenExternalCommandExecuted only.
 	 */
 	bool RecordObservationEvent(
 		EEdenTelemetryEventType EventType,
 		FName SourceSystem,
 		FName EventId,
 		const FString& Detail);
+
+	/** Test seam: bind an operator component when no player pawn is available. */
+	void BindOperatorControlForTesting(UEdenOperatorControlComponent* Operator);
 
 private:
 	void BindSources();

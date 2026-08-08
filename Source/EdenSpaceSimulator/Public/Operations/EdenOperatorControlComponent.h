@@ -35,13 +35,19 @@ public:
 	bool ResetOperatorControl();
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Operations")
-	bool SetThermalControlMode(EEdenThermalControlMode NewMode);
+	bool SetThermalControlMode(
+		EEdenThermalControlMode NewMode,
+		EEdenOperatorCommandSource Source = EEdenOperatorCommandSource::HumanOperator);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Operations")
-	bool SetLoadShedMode(EEdenLoadShedMode NewMode);
+	bool SetLoadShedMode(
+		EEdenLoadShedMode NewMode,
+		EEdenOperatorCommandSource Source = EEdenOperatorCommandSource::HumanOperator);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Operations")
-	bool SetPropulsionPriorityMode(EEdenPropulsionPriorityMode NewMode);
+	bool SetPropulsionPriorityMode(
+		EEdenPropulsionPriorityMode NewMode,
+		EEdenOperatorCommandSource Source = EEdenOperatorCommandSource::HumanOperator);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Operations")
 	bool CycleThermalControlMode();
@@ -60,6 +66,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
 	FEdenOperatorStateSnapshot GetOperatorStateSnapshot() const;
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
+	EEdenOperatorCommandSource GetLastCommandSource() const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Eden|Operations")
 	FEdenOperatorIntentChangedSignature OnOperatorIntentChanged;
@@ -96,4 +105,7 @@ private:
 
 	UPROPERTY(Transient)
 	bool bOperatorControlEnabled = false;
+
+	UPROPERTY(Transient)
+	EEdenOperatorCommandSource LastCommandSource = EEdenOperatorCommandSource::HumanOperator;
 };

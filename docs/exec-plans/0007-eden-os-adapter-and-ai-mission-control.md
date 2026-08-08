@@ -2,9 +2,9 @@
 
 ## Status
 
-**In Progress - Checkpoint J accepted; Checkpoint K authorized next pending contract lock; L–M remain locked.**
+**In Progress - Checkpoint K READY FOR ACCEPTANCE; L–M remain locked.**
 
-Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J are accepted. Checkpoint J (`22f8bb9`) is the validated-command airlock: proposals may become `Valid` under AuthorizedControl with an explicit enable flag, but **never execute**. Checkpoint K (authorized execution) is authorized next only after its execution contract is locked. Do not begin K implementation until the maintainer sends the locked K brief.
+Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J are accepted. Checkpoint J (`22f8bb9`) is the validated-command airlock. Checkpoint K builds the authorized execution bridge: validated artifact → `UEdenOperatorControlComponent` → optional `EdenExternalCommandExecuted`. Validation alone still never mutates the ship. L (cross-project control transport) and M remain locked.
 
 Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`; its corrective wire-contract alignment was accepted at `3f69f9b`. Checkpoint E implementation was committed at `32c8f9a`; the follow-up mission-level failure-isolation proof was accepted at `75fcd90`. Checkpoint F implementation commit `63768ab` plus corrective proof commit `5249a6a` are accepted.
 
@@ -662,6 +662,8 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 
 2026-08-08: Checkpoint J accepted at `22f8bb9 feat(eden): add validated command boundary`. Final architecture audit confirmed validation audit records, deterministic rejection precedence, session/evaluation ownership from existing telemetry/accepted-advisory state (no shadow mission history), duplicate/replay ownership on `UEdenExternalCommandRouter`, and zero-execution Valid path termination. Soft non-blocking coverage notes (ValidationHistory field asserts; Duplicate in multi-gate peel) do not block acceptance. Checkpoint K (authorized execution boundary) is authorized next pending a locked K contract covering executable allowlist, authorization, rate/cooldown, stale-command protection, exactly-once execution, operator-control convergence, execution telemetry, failure behavior, and human-confirmation policy. Do not begin K implementation until that contract is locked.
 
+2026-08-08: Checkpoint K implemented for review (READY FOR ACCEPTANCE). Locked contract: same three allowlisted commands; `bExternalCommandExecutionEnabled` defaults false; triple gate `AuthorizedControl ∧ validation ∧ execution`; no per-command confirm dialog; execution consumes immutable `FEdenValidatedExternalCommand` only (J Valid path now binds typed parameters); evaluation-scoped cooldown (one apply per EvaluationId×CommandType); execution-time stale revalidation; at-most-one operator apply attempt per ProposalId; NoOpAlreadySatisfied without setter/Executed event; convergence only via `UEdenOperatorControlComponent`; EDEN provenance `EdenAuthorizedControl` does not emit human `OperatorCommandIssued` / `operator_action`; success emits exactly one `EdenExternalCommandExecuted`; no automatic Valid→Execute; no ProjectEden command HTTP (L locked). Owner: `UEdenExternalCommandExecutor`. Focused ExternalCommand unit 32/32; Integration ExternalCommand 25/25; Unit EdenOs 94/94; Integration EdenOs 31/31; full `Eden.` **322/322** exit 0. Win64 Development Editor build + Validate-Project passed. Source inspection: executor mutates only through operator setters; Validate path still does not execute. **L remains locked.** See §21.
+
 ---
 
 ## 17. Checkpoint acceptance protocol
@@ -1049,3 +1051,73 @@ BoundaryDisabled → WrongAuthorityMode → UnsupportedSchemaVersion → Invalid
 ### 20.4 Rate limiting
 
 **Deferred to K.** J does not invent cooldowns. ExecPlan wording that previously implied router-owned rate state is superseded: J owns allowlist/identity/correlation/replay/typed validation only.
+
+---
+
+## 21. Checkpoint K — authorized execution boundary (locked contract)
+
+### 21.1 Architectural cliff
+
+```text
+ValidateProposal → Valid → FEdenValidatedExternalCommand → STOP
+
+ExecuteValidatedCommand(ValidatedArtifact)
+  → re-authorize NOW (execution ∧ validation ∧ AuthorizedControl)
+  → re-check session / latest accepted evaluation NOW
+  → ProposalId + (EvaluationId, CommandType) guards
+  → UEdenOperatorControlComponent setter (EdenAuthorizedControl)
+  → read back authoritative mode
+  → Executed → EdenExternalCommandExecuted
+     or NoOpAlreadySatisfied / ConvergenceFailed / Rejected
+```
+
+Invariant: `VALIDATED ≠ EXECUTED` until an explicit, current, authorized execution call crosses the K boundary. One ProposalId → at most one operator apply attempt.
+
+### 21.2 Executable allowlist (exact J catalog)
+
+- `SetThermalControlMode` / `EEdenThermalControlMode`
+- `SetLoadShedMode` / `EEdenLoadShedMode`
+- `SetPropulsionPriorityMode` / `EEdenPropulsionPriorityMode`
+
+No new command types. No ProjectEden command HTTP (L owns transport). No natural-language conversion.
+
+### 21.3 Authorization gate
+
+Execution requires all three:
+
+1. `AuthorityMode == AuthorizedControl`
+2. `ExternalCommandValidationEnabled == true`
+3. `ExternalCommandExecutionEnabled == true` (runtime default **false**; never auto-enabled by authority entry, advisory, validation, mission start, or config load alone)
+
+No per-command human confirmation dialog in 0007. Deliberate human authorization is (1) enter AuthorizedControl and (2) explicitly enable execution.
+
+### 21.4 Validated artifact
+
+Execution accepts only `FEdenValidatedExternalCommand` (ProposalId, SessionId, EvaluationId, CommandType, typed Parameters). J Valid outcomes populate this artifact. Do not execute from `FEdenExternalCommandValidationRecord` or raw `FEdenExternalCommandProposal`.
+
+### 21.5 Stale protection / evaluation-scoped cooldown
+
+Before apply: re-check session, latest accepted evaluation, authority, both enable flags. Newer accepted evaluation invalidates older validated commands. Per EvaluationId, each command type may reach apply at most once; a new EvaluationId reopens eligibility. No wall-clock cooldown.
+
+### 21.6 Exactly-once apply / no-op / convergence
+
+- Pre-apply rejection does **not** consume the apply attempt.
+- Immediately before setter (or on no-op): mark ProposalId and (EvaluationId, CommandType).
+- Requested == current → `NoOpAlreadySatisfied` (no setter, no `EdenExternalCommandExecuted`, slots consumed).
+- Else invoke operator setter once → read back → equal → `Executed`; else `ConvergenceFailed` (terminal; no retry of same ProposalId).
+
+### 21.7 Provenance and telemetry
+
+EDEN execution uses `EEdenOperatorCommandSource::EdenAuthorizedControl` and must not emit human `OperatorCommandIssued` / advisory `operator_action`. Successful convergence emits exactly one `EdenExternalCommandExecuted` with Detail facts (ProposalId, SessionId, EvaluationId, CommandType, Previous/Requested/ResultingMode, `Source=eden_authorized_control`). Bounded execution-attempt audit history is diagnostic only.
+
+### 21.8 Outcome taxonomy (precedence)
+
+ExecutionDisabled → ValidationBoundaryDisabled → WrongAuthorityMode → InvalidValidatedCommand → NoActiveSession → SessionMismatch → NoAcceptedEvaluation → EvaluationMismatch → ProposalAlreadyAttempted → EvaluationCommandTypeAlreadyAttempted → OperatorControlUnavailable → NoOpAlreadySatisfied → apply once → Executed | ConvergenceFailed.
+
+### 21.9 Owner
+
+`UEdenExternalCommandExecutor` owns apply-attempted ProposalIds, evaluation/command-type keys, and execution audit history. Clears/rebinds on session identity change. Does not duplicate mission/advisory/operator truth.
+
+### 21.10 L remains locked
+
+No cross-project command transport in K.

@@ -33,7 +33,12 @@ enum class EEdenTelemetryEventType : uint8
 	 * The event's SimulationTimeSeconds is the ISSUANCE time — when the validated response was
 	 * accepted — not the evaluation time that produced the request. See ExecPlan 0007 §5.9.
 	 */
-	EdenAdvisoryIssued
+	EdenAdvisoryIssued,
+	/**
+	 * An authorized validated EDEN external command converged through operator control.
+	 * SimulationTimeSeconds is the time when resulting operator mode matched the request.
+	 */
+	EdenExternalCommandExecuted
 };
 
 USTRUCT(BlueprintType)

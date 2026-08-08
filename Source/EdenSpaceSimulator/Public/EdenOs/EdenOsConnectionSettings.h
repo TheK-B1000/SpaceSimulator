@@ -44,6 +44,10 @@ public:
 	/** Checkpoint J validation airlock. Default false — never enables execution. */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
 	bool bExternalCommandValidationEnabled = false;
+
+	/** Checkpoint K execution airlock. Default false — never auto-enabled. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
+	bool bExternalCommandExecutionEnabled = false;
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsConnectionConfigModel

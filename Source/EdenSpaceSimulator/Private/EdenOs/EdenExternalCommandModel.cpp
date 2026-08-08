@@ -106,6 +106,28 @@ FEdenExternalCommandParameters FEdenExternalCommandModel::MakePropulsionPriority
 	return Parameters;
 }
 
+FEdenValidatedExternalCommand FEdenExternalCommandModel::MakeValidatedCommand(
+	const FEdenExternalCommandProposal& Proposal)
+{
+	FEdenValidatedExternalCommand Command;
+	Command.ProposalId = Proposal.ProposalId;
+	Command.SessionId = Proposal.SessionId;
+	Command.EvaluationId = Proposal.EvaluationId;
+	Command.CommandType = Proposal.CommandType;
+	Command.Parameters = Proposal.Parameters;
+	return Command;
+}
+
+bool FEdenExternalCommandModel::IsValidValidatedCommand(const FEdenValidatedExternalCommand& Command)
+{
+	using namespace EdenExternalCommandModelPrivate;
+	return HasIdentifier(Command.ProposalId)
+		&& HasIdentifier(Command.SessionId)
+		&& HasIdentifier(Command.EvaluationId)
+		&& IsAllowlistedCommand(Command.CommandType)
+		&& ParametersMatchCommand(Command.CommandType, Command.Parameters);
+}
+
 FEdenExternalCommandValidationOutcome FEdenExternalCommandModel::ValidateProposal(
 	const FEdenExternalCommandProposal& Proposal,
 	const FEdenExternalCommandValidationContext& Context,

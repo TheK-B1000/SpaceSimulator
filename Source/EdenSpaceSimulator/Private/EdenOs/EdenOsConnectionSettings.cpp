@@ -72,6 +72,7 @@ FEdenOsConnectionConfig UEdenOsConnectionSettings::MakeConnectionConfig() const
 	Config.AdvisoryHeartbeatSimulationSeconds = AdvisoryHeartbeatSimulationSeconds;
 	Config.AuthorityMode = AuthorityMode;
 	Config.bExternalCommandValidationEnabled = bExternalCommandValidationEnabled;
+	Config.bExternalCommandExecutionEnabled = bExternalCommandExecutionEnabled;
 	return Config;
 }
 
@@ -98,7 +99,7 @@ FEdenOsValidationResult FEdenOsConnectionConfigModel::Validate(const FEdenOsConn
 	if (Config.AuthorityMode == EEdenOsAuthorityMode::AuthorizedControl)
 	{
 		Result.AddWarning(
-			TEXT("AuthorizedControl is defined for the contract; Checkpoint J may validate when ExternalCommandValidationEnabled is true, but execution remains Checkpoint K."));
+			TEXT("AuthorizedControl is defined for the contract; execution still requires ExternalCommandValidationEnabled and ExternalCommandExecutionEnabled (Checkpoint K)."));
 	}
 
 	if (Config.bEnabled)
@@ -129,6 +130,7 @@ FEdenOsConnectionSnapshot FEdenOsConnectionConfigModel::MakeInitialSnapshot(
 	Snapshot.bEnabled = Config.bEnabled;
 	Snapshot.AuthorityMode = Config.AuthorityMode;
 	Snapshot.bExternalCommandValidationEnabled = Config.bExternalCommandValidationEnabled;
+	Snapshot.bExternalCommandExecutionEnabled = Config.bExternalCommandExecutionEnabled;
 	Snapshot.bHasBearerJwt = !Config.RuntimeBearerJwt.IsEmpty();
 	Snapshot.LastErrorSummary = Validation.GetFirstErrorOrEmpty();
 
@@ -154,7 +156,7 @@ FString FEdenOsConnectionConfigModel::DescribeForLog(
 	const FEdenOsValidationResult& Validation)
 {
 	return FString::Printf(
-		TEXT("Enabled=%s BaseUrl=%s ConnectionTimeoutSeconds=%.3f RequestTimeoutSeconds=%.3f MaxQueueDepth=%d AdvisoryHeartbeatSimulationSeconds=%.3f AuthorityMode=%s ExternalCommandValidationEnabled=%s BearerJwt=%s ConnectionState=%s ErrorCount=%d WarningCount=%d"),
+		TEXT("Enabled=%s BaseUrl=%s ConnectionTimeoutSeconds=%.3f RequestTimeoutSeconds=%.3f MaxQueueDepth=%d AdvisoryHeartbeatSimulationSeconds=%.3f AuthorityMode=%s ExternalCommandValidationEnabled=%s ExternalCommandExecutionEnabled=%s BearerJwt=%s ConnectionState=%s ErrorCount=%d WarningCount=%d"),
 		Config.bEnabled ? TEXT("true") : TEXT("false"),
 		Config.BaseUrl.IsEmpty() ? TEXT("empty") : TEXT("set"),
 		Config.ConnectionTimeoutSeconds,
@@ -163,6 +165,7 @@ FString FEdenOsConnectionConfigModel::DescribeForLog(
 		Config.AdvisoryHeartbeatSimulationSeconds,
 		*GetEnumName(Config.AuthorityMode),
 		Config.bExternalCommandValidationEnabled ? TEXT("true") : TEXT("false"),
+		Config.bExternalCommandExecutionEnabled ? TEXT("true") : TEXT("false"),
 		Config.RuntimeBearerJwt.IsEmpty() ? TEXT("absent") : TEXT("set"),
 		*GetEnumName(Snapshot.ConnectionState),
 		Validation.Errors.Num(),

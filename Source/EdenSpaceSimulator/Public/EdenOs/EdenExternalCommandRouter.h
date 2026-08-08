@@ -9,8 +9,8 @@
 #include "EdenExternalCommandRouter.generated.h"
 
 /**
- * Checkpoint J validation boundary. Owns consumed ProposalIds and validation audit history.
- * Never mutates simulation state. Execution remains Checkpoint K.
+ * Checkpoint J validation boundary. Owns consumed ProposalIds, validation audit history,
+ * and validated artifacts for Checkpoint K. Never mutates simulation state.
  */
 UCLASS()
 class EDENSPACESIMULATOR_API UEdenExternalCommandRouter : public UObject
@@ -21,6 +21,8 @@ public:
 	FEdenExternalCommandValidationOutcome ValidateProposal(
 		const FEdenExternalCommandProposal& Proposal,
 		const FEdenExternalCommandValidationContext& Context);
+
+	bool TryGetValidatedCommand(const FString& ProposalId, FEdenValidatedExternalCommand& OutCommand) const;
 
 	TArray<FEdenExternalCommandValidationRecord> GetValidationHistory() const;
 	TSet<FString> GetConsumedProposalIdsForTesting() const;
@@ -33,6 +35,9 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<FEdenExternalCommandValidationRecord> ValidationHistory;
+
+	UPROPERTY(Transient)
+	TMap<FString, FEdenValidatedExternalCommand> ValidatedArtifactsByProposalId;
 
 	TSet<FString> ConsumedProposalIds;
 	FString BoundSessionId;

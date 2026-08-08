@@ -12,22 +12,38 @@ FEdenExternalCommandValidationOutcome UEdenExternalCommandRouter::ValidatePropos
 	if (BoundSessionId != Context.ActiveSessionId)
 	{
 		ConsumedProposalIds.Reset();
+		ValidatedArtifactsByProposalId.Reset();
 		BoundSessionId = Context.ActiveSessionId;
 	}
 
 	const bool bAlreadyConsumed =
 		!Proposal.ProposalId.IsEmpty() && ConsumedProposalIds.Contains(Proposal.ProposalId);
 
-	const FEdenExternalCommandValidationOutcome Outcome =
+	FEdenExternalCommandValidationOutcome Outcome =
 		FEdenExternalCommandModel::ValidateProposal(Proposal, Context, bAlreadyConsumed);
 
 	if (Outcome.IsValid())
 	{
 		ConsumedProposalIds.Add(Proposal.ProposalId);
+		const FEdenValidatedExternalCommand Artifact = FEdenExternalCommandModel::MakeValidatedCommand(Proposal);
+		ValidatedArtifactsByProposalId.Add(Proposal.ProposalId, Artifact);
+		Outcome = FEdenExternalCommandValidationOutcome::MakeValid(Artifact);
 	}
 
 	AppendValidationRecord(Proposal, Outcome);
 	return Outcome;
+}
+
+bool UEdenExternalCommandRouter::TryGetValidatedCommand(
+	const FString& ProposalId,
+	FEdenValidatedExternalCommand& OutCommand) const
+{
+	if (const FEdenValidatedExternalCommand* Found = ValidatedArtifactsByProposalId.Find(ProposalId))
+	{
+		OutCommand = *Found;
+		return true;
+	}
+	return false;
 }
 
 TArray<FEdenExternalCommandValidationRecord> UEdenExternalCommandRouter::GetValidationHistory() const
@@ -43,6 +59,7 @@ TSet<FString> UEdenExternalCommandRouter::GetConsumedProposalIdsForTesting() con
 void UEdenExternalCommandRouter::ResetValidationState()
 {
 	ValidationHistory.Reset();
+	ValidatedArtifactsByProposalId.Reset();
 	ConsumedProposalIds.Reset();
 	BoundSessionId.Reset();
 }

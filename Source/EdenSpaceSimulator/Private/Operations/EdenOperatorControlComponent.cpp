@@ -59,7 +59,9 @@ bool UEdenOperatorControlComponent::ResetOperatorControl()
 	return ApplyCurrentIntent(PreviousIntent, true);
 }
 
-bool UEdenOperatorControlComponent::SetThermalControlMode(EEdenThermalControlMode NewMode)
+bool UEdenOperatorControlComponent::SetThermalControlMode(
+	EEdenThermalControlMode NewMode,
+	EEdenOperatorCommandSource Source)
 {
 	if (!bOperatorControlEnabled)
 	{
@@ -71,6 +73,7 @@ bool UEdenOperatorControlComponent::SetThermalControlMode(EEdenThermalControlMod
 		return true;
 	}
 
+	LastCommandSource = Source;
 	const FEdenOperatorIntent PreviousIntent = CurrentIntent;
 	CurrentIntent.ThermalMode = NewMode;
 	if (!ApplyCurrentIntent(PreviousIntent, true))
@@ -82,7 +85,9 @@ bool UEdenOperatorControlComponent::SetThermalControlMode(EEdenThermalControlMod
 	return true;
 }
 
-bool UEdenOperatorControlComponent::SetLoadShedMode(EEdenLoadShedMode NewMode)
+bool UEdenOperatorControlComponent::SetLoadShedMode(
+	EEdenLoadShedMode NewMode,
+	EEdenOperatorCommandSource Source)
 {
 	if (!bOperatorControlEnabled)
 	{
@@ -94,6 +99,7 @@ bool UEdenOperatorControlComponent::SetLoadShedMode(EEdenLoadShedMode NewMode)
 		return true;
 	}
 
+	LastCommandSource = Source;
 	const FEdenOperatorIntent PreviousIntent = CurrentIntent;
 	CurrentIntent.LoadShedMode = NewMode;
 	if (!ApplyCurrentIntent(PreviousIntent, true))
@@ -105,7 +111,9 @@ bool UEdenOperatorControlComponent::SetLoadShedMode(EEdenLoadShedMode NewMode)
 	return true;
 }
 
-bool UEdenOperatorControlComponent::SetPropulsionPriorityMode(EEdenPropulsionPriorityMode NewMode)
+bool UEdenOperatorControlComponent::SetPropulsionPriorityMode(
+	EEdenPropulsionPriorityMode NewMode,
+	EEdenOperatorCommandSource Source)
 {
 	if (!bOperatorControlEnabled)
 	{
@@ -117,6 +125,7 @@ bool UEdenOperatorControlComponent::SetPropulsionPriorityMode(EEdenPropulsionPri
 		return true;
 	}
 
+	LastCommandSource = Source;
 	const FEdenOperatorIntent PreviousIntent = CurrentIntent;
 	CurrentIntent.PropulsionPriority = NewMode;
 	if (!ApplyCurrentIntent(PreviousIntent, true))
@@ -156,6 +165,11 @@ bool UEdenOperatorControlComponent::IsOperatorControlEnabled() const
 FEdenOperatorIntent UEdenOperatorControlComponent::GetOperatorIntent() const
 {
 	return CurrentIntent;
+}
+
+EEdenOperatorCommandSource UEdenOperatorControlComponent::GetLastCommandSource() const
+{
+	return LastCommandSource;
 }
 
 FEdenOperatorStateSnapshot UEdenOperatorControlComponent::GetOperatorStateSnapshot() const

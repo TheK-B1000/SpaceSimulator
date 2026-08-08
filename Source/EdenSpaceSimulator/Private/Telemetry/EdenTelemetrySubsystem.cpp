@@ -390,19 +390,34 @@ bool UEdenTelemetrySubsystem::RecordObservationEvent(
 	FName EventId,
 	const FString& Detail)
 {
-	// Checkpoint I: only EdenAdvisoryIssued may enter through the adapter observation path.
-	if (EventType != EEdenTelemetryEventType::EdenAdvisoryIssued)
+	// Observation path: advisory issuance and authorized external-command execution only.
+	if (EventType != EEdenTelemetryEventType::EdenAdvisoryIssued
+		&& EventType != EEdenTelemetryEventType::EdenExternalCommandExecuted)
 	{
 		UE_LOG(
 			LogEdenTelemetry,
 			Warning,
-			TEXT("RecordObservationEvent rejected EventType=%d; only EdenAdvisoryIssued is allowed."),
+			TEXT("RecordObservationEvent rejected EventType=%d; only EdenAdvisoryIssued and EdenExternalCommandExecuted are allowed."),
 			static_cast<int32>(EventType));
 		return false;
 	}
 
 	RecordEvent(EventType, SourceSystem, EventId, Detail);
 	return true;
+}
+
+void UEdenTelemetrySubsystem::BindOperatorControlForTesting(UEdenOperatorControlComponent* Operator)
+{
+	if (UEdenOperatorControlComponent* Previous = BoundOperator.Get())
+	{
+		Previous->OnOperatorIntentChanged.RemoveDynamic(this, &UEdenTelemetrySubsystem::HandleOperatorIntentChanged);
+	}
+
+	BoundOperator = Operator;
+	if (Operator)
+	{
+		Operator->OnOperatorIntentChanged.AddDynamic(this, &UEdenTelemetrySubsystem::HandleOperatorIntentChanged);
+	}
 }
 
 void UEdenTelemetrySubsystem::UpdateAggregates(const FEdenTelemetrySnapshot& Snapshot)
@@ -571,6 +586,16 @@ void UEdenTelemetrySubsystem::HandleObjectiveStateChanged(
 void UEdenTelemetrySubsystem::HandleOperatorIntentChanged(FEdenOperatorIntent PreviousIntent, FEdenOperatorIntent NewIntent)
 {
 	(void)PreviousIntent;
+
+	// EDEN authorized control must not fabricate human operator_action telemetry (Checkpoint K).
+	if (const UEdenOperatorControlComponent* Operator = BoundOperator.Get())
+	{
+		if (Operator->GetLastCommandSource() == EEdenOperatorCommandSource::EdenAuthorizedControl)
+		{
+			return;
+		}
+	}
+
 	RecordEvent(
 		EEdenTelemetryEventType::OperatorCommandIssued,
 		TEXT("Operator"),
