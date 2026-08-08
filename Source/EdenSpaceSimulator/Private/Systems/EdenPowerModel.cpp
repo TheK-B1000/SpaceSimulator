@@ -115,6 +115,26 @@ float FEdenPowerModel::SanitizeNonnegativeKilowatts(float Kilowatts, bool* bOutW
 	return SanitizedKilowatts;
 }
 
+
+float FEdenPowerModel::SanitizeFiniteKilowatts(float Kilowatts, bool* bOutWasSanitized)
+{
+	bool bWasSanitized = false;
+	float SanitizedKilowatts = Kilowatts;
+
+	if (!FMath::IsFinite(SanitizedKilowatts))
+	{
+		SanitizedKilowatts = 0.0f;
+		bWasSanitized = true;
+	}
+
+	if (bOutWasSanitized)
+	{
+		*bOutWasSanitized = bWasSanitized;
+	}
+
+	return SanitizedKilowatts;
+}
+
 float FEdenPowerModel::ClampBatteryChargeKilowattHours(
 	float BatteryChargeKilowattHours,
 	float BatteryCapacityKilowattHours,
@@ -176,7 +196,8 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeSnapshot(
 	float BatteryChargeKilowattHours,
 	float GenerationKilowatts,
 	float BaselineDemandKilowatts,
-	float ExternalDemandKilowatts)
+	float ExternalDemandKilowatts,
+	float OperatorDemandKilowatts)
 {
 	FEdenPowerStateSnapshot Snapshot;
 
@@ -188,10 +209,17 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeSnapshot(
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
 	bool bExternalDemandWasSanitized = false;
+	bool bOperatorDemandWasSanitized = false;
 	Snapshot.GenerationKilowatts = SanitizeNonnegativeKilowatts(GenerationKilowatts, &bGenerationWasSanitized);
 	Snapshot.BaselineDemandKilowatts = SanitizeNonnegativeKilowatts(BaselineDemandKilowatts, &bBaselineDemandWasSanitized);
 	Snapshot.ExternalDemandKilowatts = SanitizeNonnegativeKilowatts(ExternalDemandKilowatts, &bExternalDemandWasSanitized);
-	Snapshot.NetPowerKilowatts = Snapshot.GenerationKilowatts - (Snapshot.BaselineDemandKilowatts + Snapshot.ExternalDemandKilowatts);
+	Snapshot.OperatorDemandKilowatts = SanitizeFiniteKilowatts(OperatorDemandKilowatts, &bOperatorDemandWasSanitized);
+	const double RawTotalDemand =
+		static_cast<double>(Snapshot.BaselineDemandKilowatts)
+		+ static_cast<double>(Snapshot.ExternalDemandKilowatts)
+		+ static_cast<double>(Snapshot.OperatorDemandKilowatts);
+	Snapshot.TotalDemandKilowatts = static_cast<float>(FMath::Max(0.0, RawTotalDemand));
+	Snapshot.NetPowerKilowatts = Snapshot.GenerationKilowatts - Snapshot.TotalDemandKilowatts;
 	Snapshot.BatteryChargeKilowattHours =
 		ClampBatteryChargeKilowattHours(BatteryChargeKilowattHours, Config.BatteryCapacityKilowattHours);
 	Snapshot.ChargeFraction = Config.BatteryCapacityKilowattHours > 0.0f
@@ -214,6 +242,7 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeInitialSnapshot(const FEdenPowerCon
 		Config.BatteryCapacityKilowattHours * Config.InitialChargeFraction,
 		Config.GenerationKilowatts,
 		Config.BaselineDemandKilowatts,
+		0.0f,
 		0.0f);
 }
 
@@ -228,7 +257,8 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 		CurrentSnapshot.BatteryChargeKilowattHours,
 		CurrentSnapshot.GenerationKilowatts,
 		CurrentSnapshot.BaselineDemandKilowatts,
-		CurrentSnapshot.ExternalDemandKilowatts);
+		CurrentSnapshot.ExternalDemandKilowatts,
+		CurrentSnapshot.OperatorDemandKilowatts);
 
 	if (!ValidateConfig(Config))
 	{
@@ -239,15 +269,19 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
 	bool bExternalDemandWasSanitized = false;
+	bool bOperatorDemandWasSanitized = false;
 	const float GenerationKilowatts =
 		SanitizeNonnegativeKilowatts(CurrentSnapshot.GenerationKilowatts, &bGenerationWasSanitized);
 	const float BaselineDemandKilowatts =
 		SanitizeNonnegativeKilowatts(CurrentSnapshot.BaselineDemandKilowatts, &bBaselineDemandWasSanitized);
 	const float ExternalDemandKilowatts =
 		SanitizeNonnegativeKilowatts(CurrentSnapshot.ExternalDemandKilowatts, &bExternalDemandWasSanitized);
+	const float OperatorDemandKilowatts =
+		SanitizeFiniteKilowatts(CurrentSnapshot.OperatorDemandKilowatts, &bOperatorDemandWasSanitized);
 	Result.bGenerationWasSanitized = bGenerationWasSanitized;
 	Result.bBaselineDemandWasSanitized = bBaselineDemandWasSanitized;
 	Result.bExternalDemandWasSanitized = bExternalDemandWasSanitized;
+	Result.bOperatorDemandWasSanitized = bOperatorDemandWasSanitized;
 
 	if (!IsValidDeltaTime(DeltaTimeSeconds))
 	{
@@ -257,12 +291,16 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			GenerationKilowatts,
 			BaselineDemandKilowatts,
-			ExternalDemandKilowatts);
+			ExternalDemandKilowatts,
+			OperatorDemandKilowatts);
 		return Result;
 	}
 
-	const double TotalDemandKilowatts =
-		static_cast<double>(BaselineDemandKilowatts) + static_cast<double>(ExternalDemandKilowatts);
+	const double RawTotalDemandKilowatts =
+		static_cast<double>(BaselineDemandKilowatts)
+		+ static_cast<double>(ExternalDemandKilowatts)
+		+ static_cast<double>(OperatorDemandKilowatts);
+	const double TotalDemandKilowatts = FMath::Max(0.0, RawTotalDemandKilowatts);
 	const double NetPowerKilowatts =
 		static_cast<double>(GenerationKilowatts) - TotalDemandKilowatts;
 	const double EnergyDeltaKilowattHours =
@@ -271,7 +309,13 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 	if (!FMath::IsFinite(EnergyDeltaKilowattHours))
 	{
 		Result.EnergyDeltaKilowattHours = 0.0f;
-		Result.Snapshot = MakeSnapshot(Config, 0.0f, GenerationKilowatts, BaselineDemandKilowatts, ExternalDemandKilowatts);
+		Result.Snapshot = MakeSnapshot(
+			Config,
+			0.0f,
+			GenerationKilowatts,
+			BaselineDemandKilowatts,
+			ExternalDemandKilowatts,
+			OperatorDemandKilowatts);
 		return Result;
 	}
 
@@ -283,7 +327,8 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 		static_cast<float>(NextChargeKilowattHours),
 		GenerationKilowatts,
 		BaselineDemandKilowatts,
-		ExternalDemandKilowatts);
+		ExternalDemandKilowatts,
+		OperatorDemandKilowatts);
 
 	return Result;
 }

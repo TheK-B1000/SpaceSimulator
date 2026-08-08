@@ -11,6 +11,7 @@
 
 class UEdenFlightMovementComponent;
 class UEdenFuelSystemComponent;
+class UEdenOperatorControlComponent;
 class UEdenPowerSystemComponent;
 class UEdenThermalSystemComponent;
 class UCanvas;
@@ -51,6 +52,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Systems")
 	UEdenThermalSystemComponent* GetThermalSystemComponent() const;
 
+	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
+	UEdenOperatorControlComponent* GetOperatorControlComponent() const;
+
 	FEdenSpacecraftSystemsDebugSnapshot GetEdenSystemsDebugSnapshot() const;
 
 private:
@@ -70,4 +74,7 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Systems", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEdenThermalSystemComponent> ThermalSystemComponent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Operations", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UEdenOperatorControlComponent> OperatorControlComponent;
 };

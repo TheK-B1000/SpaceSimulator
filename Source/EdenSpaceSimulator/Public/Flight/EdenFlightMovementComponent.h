@@ -28,6 +28,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
 	void ResetFlightMovement();
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
+	bool SetThrustAuthority(float NewThrustAuthority);
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
+	void ResetThrustAuthority();
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
+	float GetThrustAuthority() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
+	void SetStabilizationAssistAvailable(bool bAvailable);
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
+	bool IsStabilizationAssistAvailable() const;
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	FVector GetAngularVelocityLocalDegreesPerSecond() const;
 
@@ -48,6 +63,12 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	float PropulsionDemandNormalized = 0.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
+	float ThrustAuthority = 1.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
+	bool bStabilizationAssistAvailable = true;
 
 	bool bLoggedInvalidInputState = false;
 	bool bWasBlockedLastMove = false;

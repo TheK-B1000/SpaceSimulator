@@ -8,6 +8,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenFlightTypes.h"
+#include "Operations/EdenOperatorControlComponent.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
@@ -123,6 +124,7 @@ AEdenSpacecraftPawn::AEdenSpacecraftPawn()
 	FuelSystemComponent = CreateDefaultSubobject<UEdenFuelSystemComponent>(TEXT("FuelSystem"));
 	PowerSystemComponent = CreateDefaultSubobject<UEdenPowerSystemComponent>(TEXT("PowerSystem"));
 	ThermalSystemComponent = CreateDefaultSubobject<UEdenThermalSystemComponent>(TEXT("ThermalSystem"));
+	OperatorControlComponent = CreateDefaultSubobject<UEdenOperatorControlComponent>(TEXT("OperatorControl"));
 }
 
 UPawnMovementComponent* AEdenSpacecraftPawn::GetMovementComponent() const
@@ -177,6 +179,11 @@ void AEdenSpacecraftPawn::ResetFlightState()
 	{
 		FlightMovementComponent->ResetFlightMovement();
 	}
+
+	if (OperatorControlComponent)
+	{
+		OperatorControlComponent->ResetOperatorControl();
+	}
 }
 
 USphereComponent* AEdenSpacecraftPawn::GetRequiredCollisionRoot() const
@@ -202,6 +209,11 @@ UEdenPowerSystemComponent* AEdenSpacecraftPawn::GetPowerSystemComponent() const
 UEdenThermalSystemComponent* AEdenSpacecraftPawn::GetThermalSystemComponent() const
 {
 	return ThermalSystemComponent;
+}
+
+UEdenOperatorControlComponent* AEdenSpacecraftPawn::GetOperatorControlComponent() const
+{
+	return OperatorControlComponent;
 }
 
 FEdenSpacecraftSystemsDebugSnapshot AEdenSpacecraftPawn::GetEdenSystemsDebugSnapshot() const

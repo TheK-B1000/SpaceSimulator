@@ -53,6 +53,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
 	bool ClearExternalHeatingRate();
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
+	bool SetOperatorDissipationDegreesCelsiusPerSecond(float OperatorDissipationDegreesCelsiusPerSecond);
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
+	bool ClearOperatorDissipation();
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Thermal")
 	bool IsThermalSimulationEnabled() const;
 

@@ -53,6 +53,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
 	bool ClearExternalDemand();
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
+	bool SetOperatorDemandKilowatts(float OperatorDemandKilowatts);
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
+	bool ClearOperatorDemand();
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Power")
 	bool IsPowerSimulationEnabled() const;
 

@@ -142,7 +142,8 @@ bool UEdenThermalSystemComponent::SetTemperatureCelsius(float TemperatureCelsius
 			ClampedTemperatureCelsius,
 			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
 			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
-			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+			CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
 		true);
 
 	return !bTemperatureWasSanitized;
@@ -179,7 +180,8 @@ bool UEdenThermalSystemComponent::SetHeatGenerationDegreesCelsiusPerSecond(float
 			CurrentSnapshot.TemperatureCelsius,
 			SanitizedHeatGenerationDegreesCelsiusPerSecond,
 			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
-			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+			CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
 		true);
 
 	return !bHeatGenerationWasSanitized;
@@ -216,7 +218,8 @@ bool UEdenThermalSystemComponent::SetDissipationDegreesCelsiusPerSecond(float Di
 			CurrentSnapshot.TemperatureCelsius,
 			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
 			SanitizedDissipationDegreesCelsiusPerSecond,
-			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+			CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
 		true);
 
 	return !bDissipationWasSanitized;
@@ -252,7 +255,8 @@ bool UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond(
 			CurrentSnapshot.TemperatureCelsius,
 			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
 			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
-			SanitizedRate),
+			SanitizedRate,
+			CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
 		true);
 
 	return !bWasSanitized;
@@ -262,6 +266,50 @@ bool UEdenThermalSystemComponent::ClearExternalHeatingRate()
 {
 	return SetExternalHeatingRateDegreesCelsiusPerSecond(0.0f);
 }
+
+bool UEdenThermalSystemComponent::SetOperatorDissipationDegreesCelsiusPerSecond(
+	float OperatorDissipationDegreesCelsiusPerSecond)
+{
+	if (!bThermalSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set operator dissipation; thermal simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+
+	bool bWasSanitized = false;
+	const float SanitizedOperatorDissipation = FEdenThermalModel::SanitizeFiniteDegreesCelsiusPerSecond(
+		OperatorDissipationDegreesCelsiusPerSecond,
+		&bWasSanitized);
+
+	if (bWasSanitized)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s sanitized requested operator dissipation from %f C/s to %f C/s."),
+			*MakeLogContext(),
+			OperatorDissipationDegreesCelsiusPerSecond,
+			SanitizedOperatorDissipation);
+	}
+
+	ApplySnapshot(
+		FEdenThermalModel::MakeSnapshot(
+			ActiveThermalConfig,
+			CurrentSnapshot.TemperatureCelsius,
+			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
+			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+			SanitizedOperatorDissipation),
+		true);
+
+	return !bWasSanitized;
+}
+
+bool UEdenThermalSystemComponent::ClearOperatorDissipation()
+{
+	return SetOperatorDissipationDegreesCelsiusPerSecond(0.0f);
+}
+
 
 bool UEdenThermalSystemComponent::IsThermalSimulationEnabled() const
 {

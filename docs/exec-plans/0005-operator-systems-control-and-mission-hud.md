@@ -2,20 +2,16 @@
 
 ## Status
 
-**Draft — design only, not approved, not started.**
+**Approved — implementing (core spine + automation green; HUD Blueprint / input assets / PIE pending).**
 
-No implementation may begin until ExecPlan 0004 is genuinely closed (see Prerequisite status).
+Design locks L1–L5 (section 12) are accepted via ADR-0002. Implementation proceeds on `main`. ExecPlan 0004 Complete/tag remains gated on human PIE evidence; do not reopen Checkpoint F.
 
 ## Prerequisite status
 
-> [!CAUTION]
-> As of this draft, branch `plan/emergency-mission-shell` at `4a12241` **does not compile**:
-> - `EdenMissionSubsystem.cpp:88-90` call `FindThermalComponent` / `FindPowerComponent` / `FindFuelComponent`, which no longer exist (superseded by `GetThermalTarget` / `GetPowerTarget` / `GetFuelTarget` in `9662bea`).
-> - `UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition()` is declared and called twice from `EdenFlightPlayerController.cpp` but never defined.
+> [!NOTE]
+> 0004 automated remediation is on `main`. Manual PIE for 0004 H (+ delayed 0003) remains outstanding for Complete/tag only. 0005 implementation is authorized without waiting for that PIE closeout.
 >
-> Checkpoints G and H are marked ✅ in ExecPlan 0004 with recorded test evidence that cannot be reproduced. Checkpoint F retains four known deviations from locked decisions (objective units, typed phase payload, `LoadMission` previous-state broadcast, fixed-step evaluation order).
->
-> 0005 **design** does not depend on that repair. 0005 **implementation** does. This plan targets the public command/snapshot surfaces, which are stable regardless.
+> 0006 implementation remains blocked until 0005 Checkpoint H scenario tests are green.
 
 ---
 
@@ -82,8 +78,8 @@ Operator commands need the same treatment. If the operator writes `SetDissipatio
 ### 3.1 Three additive modifier channels, one owner each
 
 ```text
-Effective dissipation = ConfigBaseline + MissionExternal + OperatorCooling
-Effective demand      = ConfigBaseline + MissionExternal + OperatorLoad
+EffectiveDemand      = max(0, BaselineDemand + MissionExternalDemand + OperatorDemand)
+EffectiveDissipation = max(0, BaselineDissipation + OperatorDissipation)
 ```
 
 | Channel | Written by | Cleared by |
@@ -285,9 +281,32 @@ Telemetry transport and after-action review (0006); EDEN OS adapter (0007); netw
 
 ---
 
-## 12. Open questions for approval
+## 12. Locked design resolutions (approved)
 
-1. **Load shedding's second-order effect.** Shedding reducing thermal dissipation is what makes the choice interesting rather than free — but it couples power and thermal through the operator layer. Confirm this coupling is wanted before Checkpoint A.
-2. **Thrust authority ownership.** Proposed on `UEdenFlightMovementComponent` as a scalar the operator layer commands. Alternative is a propulsion-demand multiplier on the fuel side. Movement is the better owner, but it means 0005 touches flight code that has been stable since `v0.1.0-flight-shell`.
-3. **HUD refresh cadence.** 10 Hz proposed. Needs confirmation against the 0.1 s fixed step so the HUD never appears to lead or lag simulation by a visible margin.
-4. **Alert cap.** A fixed cap is required to keep the list bounded; the number should be set from what fits the HUD legibly.
+See also `docs/decisions/ADR-0002-operator-modifier-channels-and-thrust-authority.md`.
+
+### L1 — Additive channels; corrected dissipation formula
+
+```text
+EffectiveDemand      = max(0, BaselineDemand + MissionExternalDemand + OperatorDemand)
+EffectiveHeatGen     = BaselineHeatGen + MissionExternalHeating
+EffectiveDissipation = max(0, BaselineDissipation + OperatorDissipation)
+```
+
+Mission keeps `External*` only. Operator writes `OperatorDemandKilowatts` / `OperatorDissipationDegreesCelsiusPerSecond` only.
+
+### L2 — Load-shed ↔ cooling coupling: YES, in the operator trade-off table only
+
+Shed reduces demand and dissipation and disables stabilization assist. Boost/Emergency add dissipation and cooling demand. Power and thermal never call each other.
+
+### L3 — Thrust authority ownership: `UEdenFlightMovementComponent`
+
+`ThrustAuthority` in `[0,1]` (Full=1.0, Reduced=0.5). Scales translation accel and propulsion demand. Fuel remains a demand reader only.
+
+### L4 — HUD / alerts defaults
+
+HUD assemble/refresh at **10 Hz**. Alert list cap **8** (evict oldest Info, then Warning; never silently drop Critical/Emergency).
+
+### L5 — 0006-facing surfaces
+
+`FEdenOperatorStateSnapshot`, operator intent/command-issued delegate, `OnAlertRaised` / `OnAlertCleared`. Mission `OnObjectiveStateChanged` remains 0006 Checkpoint D0.

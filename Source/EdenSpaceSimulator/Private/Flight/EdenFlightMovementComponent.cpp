@@ -64,13 +64,21 @@ void UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputCommand
 		return;
 	}
 
+	FEdenFlightInputCommand EffectiveCommand = Command;
+	const float SafeAuthority = FMath::IsFinite(ThrustAuthority) ? FMath::Clamp(ThrustAuthority, 0.0f, 1.0f) : 0.0f;
+	EffectiveCommand.TranslationInput *= SafeAuthority;
+	if (!bStabilizationAssistAvailable)
+	{
+		EffectiveCommand.bStabilizationEnabled = false;
+	}
+
 	FEdenFlightVelocityState CurrentVelocityState;
 	CurrentVelocityState.LinearVelocityWorldCmPerSecond = Velocity;
 	CurrentVelocityState.AngularVelocityLocalDegreesPerSecond = AngularVelocityLocalDegreesPerSecond;
 
 	const FEdenFlightIntegrationResult IntegrationResult = FEdenFlightMovementModel::IntegrateVelocity(
 		CurrentVelocityState,
-		Command,
+		EffectiveCommand,
 		MovementSettings,
 		UpdatedComponent->GetComponentQuat(),
 		DeltaTimeSeconds);
@@ -107,6 +115,41 @@ void UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputCommand
 void UEdenFlightMovementComponent::ResetFlightMovement()
 {
 	StopMovementImmediately();
+	ThrustAuthority = 1.0f;
+	bStabilizationAssistAvailable = true;
+}
+
+bool UEdenFlightMovementComponent::SetThrustAuthority(float NewThrustAuthority)
+{
+	if (!FMath::IsFinite(NewThrustAuthority))
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s rejected non-finite thrust authority."), *GetNameSafe(this));
+		ThrustAuthority = 0.0f;
+		return false;
+	}
+
+	ThrustAuthority = FMath::Clamp(NewThrustAuthority, 0.0f, 1.0f);
+	return FMath::IsNearlyEqual(ThrustAuthority, NewThrustAuthority);
+}
+
+void UEdenFlightMovementComponent::ResetThrustAuthority()
+{
+	ThrustAuthority = 1.0f;
+}
+
+float UEdenFlightMovementComponent::GetThrustAuthority() const
+{
+	return FMath::IsFinite(ThrustAuthority) ? FMath::Clamp(ThrustAuthority, 0.0f, 1.0f) : 0.0f;
+}
+
+void UEdenFlightMovementComponent::SetStabilizationAssistAvailable(bool bAvailable)
+{
+	bStabilizationAssistAvailable = bAvailable;
+}
+
+bool UEdenFlightMovementComponent::IsStabilizationAssistAvailable() const
+{
+	return bStabilizationAssistAvailable;
 }
 
 FVector UEdenFlightMovementComponent::GetAngularVelocityLocalDegreesPerSecond() const

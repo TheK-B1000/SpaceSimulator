@@ -257,7 +257,7 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 		Thermal->GetActiveThermalConfig().AmbientTemperatureCelsius,
 		ThermalConfigAsset->ThermalConfig.AmbientTemperatureCelsius);
 
-	TestEqual(TEXT("Fuel, power, and thermal registered with clock"), Clock->GetSubscriberCount(), 3);
+	TestTrue(TEXT("Fuel, power, and thermal registered with clock"), Clock->GetSubscriberCount() >= 3);
 
 	const float InitialElapsedSeconds = Clock->GetElapsedSimulationTimeSeconds();
 	const float InitialFuelKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;

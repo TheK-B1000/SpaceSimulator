@@ -192,15 +192,22 @@ Development-only `ShowDebug EdenSystems` and `ShowDebug EdenMission` are read-on
 | Fuel quantity and fuel state | `UEdenFuelSystemComponent` | Pawn, mission, UI/debug, telemetry | Fuel component only |
 | Fuel configuration | `UEdenFuelConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Fuel component, editor validation | Content author only |
 | Battery charge, power budget, and power state | `UEdenPowerSystemComponent` | Mission, UI/debug, telemetry, thermal coordination | Power component only |
+| Mission external power demand | `UEdenPowerSystemComponent` (`ExternalDemandKilowatts`) | Mission, UI, telemetry | Mission subsystem via public API only |
+| Operator power demand modifier | `UEdenPowerSystemComponent` (`OperatorDemandKilowatts`) | UI, telemetry | Operator control via public API only |
 | Power configuration | `UEdenPowerConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Power component, editor validation | Content author only |
 | Temperature and thermal state | `UEdenThermalSystemComponent` | Mission, UI/debug, telemetry | Thermal component only |
+| Mission external heating | `UEdenThermalSystemComponent` (`ExternalHeatingRate…`) | Mission, UI, telemetry | Mission subsystem via public API only |
+| Operator dissipation modifier | `UEdenThermalSystemComponent` (`OperatorDissipation…`) | UI, telemetry | Operator control via public API only |
 | Thermal configuration | `UEdenThermalConfigDataAsset` assigned on `BP_EdenSpacecraftPawn` | Thermal component, editor validation | Content author only |
+| Thrust authority and stabilization-assist availability | `UEdenFlightMovementComponent` | Fuel (via demand), UI, telemetry | Operator control via public API; movement owns values |
+| Operator thermal mode / load-shed / propulsion priority intent | `UEdenOperatorControlComponent` | HUD, telemetry | Operator control component only |
 | Mission phase | Mission subsystem | UI, telemetry | Mission subsystem only |
 | Fixed simulation time, accumulator, pause state, and dropped-step count | `UEdenSimulationClockSubsystem` | Systems, mission, telemetry, UI/debug | Clock subsystem only |
 | Active failures | Mission/failure orchestrator | Systems, UI, telemetry | Mission/failure orchestrator |
+| Active alerts and acknowledgement | `UEdenAlertSubsystem` | HUD, telemetry | Alert subsystem only |
 | Telemetry sequence/history | Telemetry subsystem | Local tools/adapters | Telemetry subsystem |
 | Debug display values | `ShowDebug EdenSystems` / view layer | Developer | Derived from immutable debug snapshots |
-| Widget display values | Widget/view model | Widget | Derived from snapshots |
+| Widget display values | Widget/view model (`FEdenOperatorHudSnapshot`) | Widget | Derived from snapshots |
 
 Any change to this table requires architecture review and usually an ADR.
 
@@ -326,12 +333,14 @@ Source/EdenSpaceSimulator/
 |   +-- Core/
 |   +-- Flight/
 |   +-- Missions/
+|   +-- Operations/
 |   +-- Systems/
 |   +-- Telemetry/
 +-- Private/
     +-- Core/
     +-- Flight/
     +-- Missions/
+    +-- Operations/
     +-- Systems/
     +-- Telemetry/
     +-- Tests/

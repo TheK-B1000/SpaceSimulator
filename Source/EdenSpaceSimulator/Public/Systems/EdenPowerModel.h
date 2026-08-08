@@ -52,6 +52,12 @@ struct EDENSPACESIMULATOR_API FEdenPowerStateSnapshot
 	float ExternalDemandKilowatts = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
+	float OperatorDemandKilowatts = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
+	float TotalDemandKilowatts = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
 	float NetPowerKilowatts = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
@@ -67,6 +73,7 @@ struct EDENSPACESIMULATOR_API FEdenPowerStepResult
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
 	bool bExternalDemandWasSanitized = false;
+	bool bOperatorDemandWasSanitized = false;
 };
 
 struct EDENSPACESIMULATOR_API FEdenPowerModel
@@ -74,6 +81,7 @@ struct EDENSPACESIMULATOR_API FEdenPowerModel
 	static bool ValidateConfig(const FEdenPowerConfig& Config, TArray<FString>* OutErrors = nullptr);
 	static bool IsValidDeltaTime(float DeltaTimeSeconds);
 	static float SanitizeNonnegativeKilowatts(float Kilowatts, bool* bOutWasSanitized = nullptr);
+	static float SanitizeFiniteKilowatts(float Kilowatts, bool* bOutWasSanitized = nullptr);
 	static float ClampBatteryChargeKilowattHours(
 		float BatteryChargeKilowattHours,
 		float BatteryCapacityKilowattHours,
@@ -84,7 +92,8 @@ struct EDENSPACESIMULATOR_API FEdenPowerModel
 		float BatteryChargeKilowattHours,
 		float GenerationKilowatts,
 		float BaselineDemandKilowatts,
-		float ExternalDemandKilowatts = 0.0f);
+		float ExternalDemandKilowatts = 0.0f,
+		float OperatorDemandKilowatts = 0.0f);
 	static FEdenPowerStateSnapshot MakeInitialSnapshot(const FEdenPowerConfig& Config);
 	static FEdenPowerStepResult Step(
 		const FEdenPowerConfig& Config,

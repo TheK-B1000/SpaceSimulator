@@ -139,7 +139,8 @@ bool UEdenPowerSystemComponent::SetGenerationKilowatts(float GenerationKilowatts
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			SanitizedGenerationKilowatts,
 			CurrentSnapshot.BaselineDemandKilowatts,
-			CurrentSnapshot.ExternalDemandKilowatts),
+			CurrentSnapshot.ExternalDemandKilowatts,
+			CurrentSnapshot.OperatorDemandKilowatts),
 		true);
 
 	return !bGenerationWasSanitized;
@@ -173,7 +174,8 @@ bool UEdenPowerSystemComponent::SetBaselineDemandKilowatts(float BaselineDemandK
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			CurrentSnapshot.GenerationKilowatts,
 			SanitizedDemandKilowatts,
-			CurrentSnapshot.ExternalDemandKilowatts),
+			CurrentSnapshot.ExternalDemandKilowatts,
+			CurrentSnapshot.OperatorDemandKilowatts),
 		true);
 
 	return !bDemandWasSanitized;
@@ -210,7 +212,8 @@ bool UEdenPowerSystemComponent::SetBatteryChargeKilowattHours(float BatteryCharg
 			ClampedChargeKilowattHours,
 			CurrentSnapshot.GenerationKilowatts,
 			CurrentSnapshot.BaselineDemandKilowatts,
-			CurrentSnapshot.ExternalDemandKilowatts),
+			CurrentSnapshot.ExternalDemandKilowatts,
+			CurrentSnapshot.OperatorDemandKilowatts),
 		true);
 
 	return !bChargeWasSanitized;
@@ -246,7 +249,8 @@ bool UEdenPowerSystemComponent::SetExternalDemandKilowatts(float ExternalDemandK
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			CurrentSnapshot.GenerationKilowatts,
 			CurrentSnapshot.BaselineDemandKilowatts,
-			SanitizedExternalDemand),
+			SanitizedExternalDemand,
+			CurrentSnapshot.OperatorDemandKilowatts),
 		true);
 
 	return !bWasSanitized;
@@ -256,6 +260,49 @@ bool UEdenPowerSystemComponent::ClearExternalDemand()
 {
 	return SetExternalDemandKilowatts(0.0f);
 }
+
+bool UEdenPowerSystemComponent::SetOperatorDemandKilowatts(float OperatorDemandKilowatts)
+{
+	if (!bPowerSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set operator demand; power simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+
+	bool bWasSanitized = false;
+	const float SanitizedOperatorDemand = FEdenPowerModel::SanitizeFiniteKilowatts(
+		OperatorDemandKilowatts,
+		&bWasSanitized);
+
+	if (bWasSanitized)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s sanitized requested operator demand from %f kW to %f kW."),
+			*MakeLogContext(),
+			OperatorDemandKilowatts,
+			SanitizedOperatorDemand);
+	}
+
+	ApplySnapshot(
+		FEdenPowerModel::MakeSnapshot(
+			ActivePowerConfig,
+			CurrentSnapshot.BatteryChargeKilowattHours,
+			CurrentSnapshot.GenerationKilowatts,
+			CurrentSnapshot.BaselineDemandKilowatts,
+			CurrentSnapshot.ExternalDemandKilowatts,
+			SanitizedOperatorDemand),
+		true);
+
+	return !bWasSanitized;
+}
+
+bool UEdenPowerSystemComponent::ClearOperatorDemand()
+{
+	return SetOperatorDemandKilowatts(0.0f);
+}
+
 
 bool UEdenPowerSystemComponent::IsPowerSimulationEnabled() const
 {
@@ -282,7 +329,7 @@ FEdenPowerDebugSnapshot UEdenPowerSystemComponent::GetPowerDebugSnapshot() const
 	Snapshot.BatteryCapacityKilowattHours = ActivePowerConfig.BatteryCapacityKilowattHours;
 	Snapshot.ChargePercent = CurrentSnapshot.ChargeFraction * 100.0f;
 	Snapshot.GenerationKilowatts = CurrentSnapshot.GenerationKilowatts;
-	Snapshot.DemandKilowatts = CurrentSnapshot.BaselineDemandKilowatts;
+	Snapshot.DemandKilowatts = CurrentSnapshot.TotalDemandKilowatts;
 	Snapshot.NetPowerKilowatts = CurrentSnapshot.NetPowerKilowatts;
 	Snapshot.PowerState = CurrentSnapshot.PowerState;
 	return Snapshot;

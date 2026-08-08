@@ -3,6 +3,7 @@
 #include "Flight/EdenFlightPlayerController.h"
 
 #include "Core/EdenLogCategories.h"
+#include "Core/EdenSimulationClockSubsystem.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Flight/EdenFlightMovementModel.h"
@@ -11,6 +12,12 @@
 #include "InputActionValue.h"
 #include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Missions/EdenMissionSubsystem.h"
+#include "Operations/EdenAlertSubsystem.h"
+#include "Operations/EdenOperatorControlComponent.h"
+#include "Operations/EdenOperatorHudWidget.h"
+#include "Systems/EdenFuelSystemComponent.h"
+#include "Systems/EdenPowerSystemComponent.h"
+#include "Systems/EdenThermalSystemComponent.h"
 #include "UObject/SoftObjectPath.h"
 
 namespace EdenFlightPlayerControllerMission
@@ -72,6 +79,14 @@ void AEdenFlightPlayerController::PlayerTick(float DeltaTime)
 
 	bLoggedUnexpectedPawnState = false;
 	SpacecraftPawn->ApplyFlightInputCommand(GetCurrentFlightInputCommand(), DeltaTime);
+
+	OperatorHudRefreshAccumulatorSeconds += DeltaTime;
+	const float RefreshIntervalSeconds = OperatorHudRefreshHz > KINDA_SMALL_NUMBER ? (1.0f / OperatorHudRefreshHz) : 0.1f;
+	if (OperatorHudRefreshAccumulatorSeconds >= RefreshIntervalSeconds)
+	{
+		OperatorHudRefreshAccumulatorSeconds = 0.0f;
+		RefreshOperatorHudSnapshot();
+	}
 }
 
 void AEdenFlightPlayerController::SetupInputComponent()
@@ -89,6 +104,9 @@ void AEdenFlightPlayerController::OnPossess(APawn* InPawn)
 	{
 		SpacecraftPawn->ResetFlightState();
 	}
+
+	EnsureOperatorHudCreated();
+	RefreshOperatorHudSnapshot();
 }
 
 void AEdenFlightPlayerController::OnUnPossess()
@@ -171,6 +189,25 @@ void AEdenFlightPlayerController::BindFlightInputActions()
 		EnhancedInputComponent->BindAction(FlightStabilizeAction, ETriggerEvent::Started, this, &AEdenFlightPlayerController::HandleStabilizeStarted);
 	}
 
+	if (ThermalModeAction)
+	{
+		EnhancedInputComponent->BindAction(ThermalModeAction, ETriggerEvent::Started, this, &AEdenFlightPlayerController::HandleThermalModeStarted);
+	}
+
+	if (LoadShedAction)
+	{
+		EnhancedInputComponent->BindAction(LoadShedAction, ETriggerEvent::Started, this, &AEdenFlightPlayerController::HandleLoadShedStarted);
+	}
+
+	if (PropulsionPriorityAction)
+	{
+		EnhancedInputComponent->BindAction(
+			PropulsionPriorityAction,
+			ETriggerEvent::Started,
+			this,
+			&AEdenFlightPlayerController::HandlePropulsionPriorityStarted);
+	}
+
 	LogMissingInputAssetState();
 }
 
@@ -224,6 +261,127 @@ void AEdenFlightPlayerController::HandleStabilizeStarted(const FInputActionValue
 		TEXT("%s set flight stabilization to %s."),
 		*GetNameSafe(this),
 		FlightInputIntent.CurrentCommand.bStabilizationEnabled ? TEXT("enabled") : TEXT("disabled"));
+}
+
+void AEdenFlightPlayerController::HandleThermalModeStarted(const FInputActionValue& Value)
+{
+	(void)Value;
+	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
+	{
+		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
+		{
+			Operator->CycleThermalControlMode();
+		}
+	}
+}
+
+void AEdenFlightPlayerController::HandleLoadShedStarted(const FInputActionValue& Value)
+{
+	(void)Value;
+	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
+	{
+		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
+		{
+			Operator->ToggleLoadShedMode();
+		}
+	}
+}
+
+void AEdenFlightPlayerController::HandlePropulsionPriorityStarted(const FInputActionValue& Value)
+{
+	(void)Value;
+	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
+	{
+		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
+		{
+			Operator->TogglePropulsionPriorityMode();
+		}
+	}
+}
+
+FEdenOperatorHudSnapshot AEdenFlightPlayerController::GetOperatorHudSnapshot() const
+{
+	return CachedOperatorHudSnapshot;
+}
+
+void AEdenFlightPlayerController::EnsureOperatorHudCreated()
+{
+	if (OperatorHudWidget || !OperatorHudWidgetClass)
+	{
+		return;
+	}
+
+	OperatorHudWidget = CreateWidget<UEdenOperatorHudWidget>(this, OperatorHudWidgetClass);
+	if (OperatorHudWidget)
+	{
+		OperatorHudWidget->AddToViewport(10);
+	}
+}
+
+void AEdenFlightPlayerController::RefreshOperatorHudSnapshot()
+{
+	CachedOperatorHudSnapshot = AssembleOperatorHudSnapshot();
+	EnsureOperatorHudCreated();
+	if (OperatorHudWidget)
+	{
+		OperatorHudWidget->ApplyHudSnapshot(CachedOperatorHudSnapshot);
+	}
+}
+
+FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapshot() const
+{
+	FEdenMissionStateSnapshot MissionSnapshot;
+	FEdenFuelStateSnapshot FuelSnapshot;
+	FEdenPowerStateSnapshot PowerSnapshot;
+	FEdenThermalStateSnapshot ThermalSnapshot;
+	FEdenOperatorStateSnapshot OperatorSnapshot;
+	TArray<FEdenAlert> Alerts;
+	float SimTimeSeconds = 0.0f;
+
+	if (const UWorld* World = GetWorld())
+	{
+		if (const UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>())
+		{
+			MissionSnapshot = Mission->GetMissionStateSnapshot();
+		}
+		if (const UEdenAlertSubsystem* AlertsSubsystem = World->GetSubsystem<UEdenAlertSubsystem>())
+		{
+			Alerts = AlertsSubsystem->GetActiveAlerts();
+		}
+		if (const UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>())
+		{
+			SimTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
+		}
+	}
+
+	if (const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
+	{
+		if (const UEdenFuelSystemComponent* Fuel = SpacecraftPawn->GetFuelSystemComponent())
+		{
+			FuelSnapshot = Fuel->GetFuelStateSnapshot();
+		}
+		if (const UEdenPowerSystemComponent* Power = SpacecraftPawn->GetPowerSystemComponent())
+		{
+			PowerSnapshot = Power->GetPowerStateSnapshot();
+		}
+		if (const UEdenThermalSystemComponent* Thermal = SpacecraftPawn->GetThermalSystemComponent())
+		{
+			ThermalSnapshot = Thermal->GetThermalStateSnapshot();
+		}
+		if (const UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
+		{
+			OperatorSnapshot = Operator->GetOperatorStateSnapshot();
+		}
+	}
+
+	return FEdenOperatorHudModel::Assemble(
+		MissionSnapshot,
+		FuelSnapshot,
+		PowerSnapshot,
+		ThermalSnapshot,
+		OperatorSnapshot,
+		Alerts,
+		SimTimeSeconds);
 }
 
 void AEdenFlightPlayerController::LogMissingInputAssetState()

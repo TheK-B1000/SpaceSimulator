@@ -52,6 +52,12 @@ struct EDENSPACESIMULATOR_API FEdenThermalStateSnapshot
 	float DissipationDegreesCelsiusPerSecond = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float OperatorDissipationDegreesCelsiusPerSecond = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float EffectiveDissipationDegreesCelsiusPerSecond = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
 	float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
@@ -66,6 +72,7 @@ struct EDENSPACESIMULATOR_API FEdenThermalStepResult
 	bool bDeltaTimeWasValid = true;
 	bool bHeatGenerationWasSanitized = false;
 	bool bDissipationWasSanitized = false;
+	bool bOperatorDissipationWasSanitized = false;
 	bool bExternalHeatingRateWasSanitized = false;
 	bool bTemperatureWasSanitized = false;
 };
@@ -75,6 +82,7 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 	static bool ValidateConfig(const FEdenThermalConfig& Config, TArray<FString>* OutErrors = nullptr);
 	static bool IsValidDeltaTime(float DeltaTimeSeconds);
 	static float SanitizeNonnegativeDegreesCelsiusPerSecond(float Rate, bool* bOutWasSanitized = nullptr);
+	static float SanitizeFiniteDegreesCelsiusPerSecond(float Rate, bool* bOutWasSanitized = nullptr);
 	static float ClampTemperatureCelsius(
 		float TemperatureCelsius,
 		const FEdenThermalConfig& Config,
@@ -85,7 +93,8 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 		float TemperatureCelsius,
 		float HeatGenerationDegreesCelsiusPerSecond,
 		float DissipationDegreesCelsiusPerSecond,
-		float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f);
+		float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f,
+		float OperatorDissipationDegreesCelsiusPerSecond = 0.0f);
 	static FEdenThermalStateSnapshot MakeInitialSnapshot(const FEdenThermalConfig& Config);
 	static FEdenThermalStepResult Step(
 		const FEdenThermalConfig& Config,
