@@ -4,15 +4,20 @@
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTransport.h"
 #include "EdenOs/EdenOsWireTypes.h"
+#include "Core/EdenSimulationClockSubsystem.h"
+#include "Missions/EdenMissionSubsystem.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
 #include "Telemetry/EdenTelemetrySink.h"
 #include "Telemetry/EdenTelemetrySubsystem.h"
 
+#include "Engine/Engine.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/Paths.h"
+#include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -227,6 +232,245 @@ namespace EdenOsTransportTests
 		Probe.PowerState = PowerSnapshot.PowerState;
 		Probe.ThermalState = ThermalSnapshot.ThermalState;
 		return Probe;
+	}
+
+	struct FScopedEdenOsMissionWorld
+	{
+		FWorldContext* WorldContext = nullptr;
+		UWorld* World = nullptr;
+
+		FScopedEdenOsMissionWorld()
+		{
+			const FName WorldName = MakeUniqueObjectName(
+				nullptr,
+				UWorld::StaticClass(),
+				TEXT("EdenOsMissionIsolationWorld"),
+				EUniqueObjectNameOptions::GloballyUnique);
+
+			WorldContext = &GEngine->CreateNewWorldContext(EWorldType::Game);
+			World = UWorld::CreateWorld(EWorldType::Game, false, WorldName, GetTransientPackage());
+			check(World);
+			World->AddToRoot();
+			WorldContext->SetCurrentWorld(World);
+			World->InitializeActorsForPlay(FURL());
+		}
+
+		~FScopedEdenOsMissionWorld()
+		{
+			if (!World)
+			{
+				return;
+			}
+
+			GEngine->ShutdownWorldNetDriver(World);
+			World->DestroyWorld(true);
+			World->RemoveFromRoot();
+			GEngine->DestroyWorldContext(World);
+			World = nullptr;
+			WorldContext = nullptr;
+		}
+	};
+
+	FEdenMissionDefinitionConfig MakeIsolationMissionDefinition()
+	{
+		FEdenMissionDefinitionConfig Config;
+		Config.MissionId = FName("EdenOsIsolationMission");
+		Config.DisplayName = FText::FromString(TEXT("EDEN OS Isolation Mission"));
+
+		FEdenMissionObjectiveConfig Survive;
+		Survive.ObjectiveId = FName("Survive");
+		Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+		Survive.TargetValue = 0.5f;
+		Survive.bRequired = true;
+		Survive.bActivateOnStart = true;
+		Config.Objectives.Add(Survive);
+
+		FEdenMissionObjectiveConfig KeepCool;
+		KeepCool.ObjectiveId = FName("KeepCool");
+		KeepCool.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+		KeepCool.TargetValue = 100.0f;
+		KeepCool.bRequired = true;
+		KeepCool.bActivateOnStart = true;
+		Config.Objectives.Add(KeepCool);
+
+		FEdenMissionObjectiveConfig RestorePower;
+		RestorePower.ObjectiveId = FName("RestorePower");
+		RestorePower.ObjectiveType = EEdenObjectiveType::RestorePowerAbove;
+		RestorePower.TargetValue = 0.2f;
+		RestorePower.bRequired = true;
+		RestorePower.bActivateOnStart = true;
+		Config.Objectives.Add(RestorePower);
+
+		FEdenMissionObjectiveConfig ConserveFuel;
+		ConserveFuel.ObjectiveId = FName("ConserveFuel");
+		ConserveFuel.ObjectiveType = EEdenObjectiveType::MaintainFuelAbove;
+		ConserveFuel.TargetValue = 0.2f;
+		ConserveFuel.bRequired = true;
+		ConserveFuel.bActivateOnStart = true;
+		Config.Objectives.Add(ConserveFuel);
+
+		FEdenMissionEventConfig EnterWarning;
+		EnterWarning.EventId = FName("EnterWarning");
+		EnterWarning.TriggerTimeSeconds = 0.1f;
+		EnterWarning.CommandType = EEdenMissionCommandType::SetMissionPhase;
+		EnterWarning.PhaseParameter = EEdenMissionPhase::Warning;
+		Config.Events.Add(EnterWarning);
+
+		FEdenMissionEventConfig AddHeating;
+		AddHeating.EventId = FName("SolarHeating");
+		AddHeating.TriggerTimeSeconds = 0.1f;
+		AddHeating.CommandType = EEdenMissionCommandType::SetExternalHeatingRate;
+		AddHeating.FloatParameter = 3.0f;
+		Config.Events.Add(AddHeating);
+
+		FEdenMissionEventConfig AddPowerDemand;
+		AddPowerDemand.EventId = FName("PowerDemand");
+		AddPowerDemand.TriggerTimeSeconds = 0.2f;
+		AddPowerDemand.CommandType = EEdenMissionCommandType::SetExternalPowerDemand;
+		AddPowerDemand.FloatParameter = 2.0f;
+		Config.Events.Add(AddPowerDemand);
+
+		FEdenMissionEventConfig EnterImpact;
+		EnterImpact.EventId = FName("EnterImpact");
+		EnterImpact.TriggerTimeSeconds = 0.2f;
+		EnterImpact.CommandType = EEdenMissionCommandType::SetMissionPhase;
+		EnterImpact.PhaseParameter = EEdenMissionPhase::Impact;
+		Config.Events.Add(EnterImpact);
+
+		return Config;
+	}
+
+	struct FMissionIsolationProbe
+	{
+		EEdenMissionState MissionState = EEdenMissionState::Inactive;
+		EEdenMissionPhase MissionPhase = EEdenMissionPhase::Nominal;
+		float MissionElapsedTimeSeconds = 0.0f;
+		float ClockElapsedTimeSeconds = 0.0f;
+		int32 ClockLastDroppedSteps = 0;
+		TArray<FEdenMissionEventRuntime> EventStates;
+		TArray<FEdenMissionObjectiveRuntime> ObjectiveStates;
+		FEdenFuelStateSnapshot Fuel;
+		FEdenPowerStateSnapshot Power;
+		FEdenThermalStateSnapshot Thermal;
+		int32 TelemetryEventCount = 0;
+		int32 TelemetrySnapshotCount = 0;
+		int32 RegisteredSinkCountBeforeDelivery = 0;
+		int32 TelemetryDeliveryAttempts = 0;
+		int32 EdenTransportAttempts = 0;
+		EEdenOsConnectionState EdenConnectionState = EEdenOsConnectionState::Disabled;
+		FString EdenLastErrorSummary;
+	};
+
+	FMissionIsolationProbe RunMissionIsolationProbe(bool bEnableFailingEden)
+	{
+		FScopedEdenOsMissionWorld ScopedWorld;
+		UWorld* World = ScopedWorld.World;
+
+		UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+		Clock->SetFixedStepSeconds(0.1f);
+		Clock->SetMaxCatchUpSteps(8);
+		Clock->ResetSimulationClock();
+
+		UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+		Telemetry->ClearHistory();
+
+		AActor* Owner = World->SpawnActor<AActor>();
+		UEdenFuelSystemComponent* Fuel = NewObject<UEdenFuelSystemComponent>(Owner);
+		Fuel->RegisterComponent();
+		Fuel->InitializeFuelSimulation(MakeFuelConfig());
+		Fuel->RegisterWithSimulationClock();
+
+		UEdenPowerSystemComponent* Power = NewObject<UEdenPowerSystemComponent>(Owner);
+		Power->RegisterComponent();
+		Power->InitializePowerSimulation(MakePowerConfig());
+		Power->RegisterWithSimulationClock();
+
+		UEdenThermalSystemComponent* Thermal = NewObject<UEdenThermalSystemComponent>(Owner);
+		Thermal->RegisterComponent();
+		Thermal->InitializeThermalSimulation(MakeThermalConfig());
+		Thermal->RegisterWithSimulationClock();
+
+		UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+		Mission->SetMissionResourceTargets(Thermal, Power, Fuel);
+		Mission->LoadMission(MakeIsolationMissionDefinition());
+		Mission->StartMission();
+
+		FFakeHttpTransport Transport;
+		UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
+		if (bEnableFailingEden)
+		{
+			Transport.Results.Add(FEdenOsHttpResult::Failed(0, TEXT("offline")));
+			Adapter->SetHttpTransportForTesting(&Transport);
+			Adapter->ApplyRuntimeConfig(MakeEnabledConfig());
+		}
+
+		for (int32 Index = 0; Index < 8; ++Index)
+		{
+			Clock->Tick(0.1f);
+		}
+
+		FMissionIsolationProbe Probe;
+		Probe.RegisteredSinkCountBeforeDelivery = Telemetry->GetRegisteredTelemetrySinkCount();
+		if (bEnableFailingEden)
+		{
+			const FEdenTelemetrySinkDeliverySummary Summary = Telemetry->DeliverSessionToRegisteredSinks();
+			Probe.TelemetryDeliveryAttempts = Summary.AttemptedCount;
+		}
+
+		const FEdenMissionRuntimeState RuntimeState = Mission->GetMissionRuntimeState();
+		Probe.MissionState = Mission->GetMissionState();
+		Probe.MissionPhase = Mission->GetMissionPhase();
+		Probe.MissionElapsedTimeSeconds = Mission->GetMissionElapsedTimeSeconds();
+		Probe.ClockElapsedTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
+		Probe.ClockLastDroppedSteps = Clock->GetLastDroppedSteps();
+		Probe.EventStates = RuntimeState.EventStates;
+		Probe.ObjectiveStates = RuntimeState.ObjectiveStates;
+		Probe.Fuel = Fuel->GetFuelStateSnapshot();
+		Probe.Power = Power->GetPowerStateSnapshot();
+		Probe.Thermal = Thermal->GetThermalStateSnapshot();
+		Probe.TelemetryEventCount = Telemetry->GetEventHistory().Num();
+		Probe.TelemetrySnapshotCount = Telemetry->GetSnapshotHistory().Num();
+		if (bEnableFailingEden)
+		{
+			const FEdenOsConnectionSnapshot Snapshot = Adapter->GetConnectionSnapshot();
+			Probe.EdenTransportAttempts = Transport.SentRequests.Num();
+			Probe.EdenConnectionState = Snapshot.ConnectionState;
+			Probe.EdenLastErrorSummary = Snapshot.LastErrorSummary;
+		}
+		return Probe;
+	}
+
+	bool CompareMissionIsolationProbes(FAutomationTestBase& Test, const FMissionIsolationProbe& Disabled, const FMissionIsolationProbe& Failing)
+	{
+		bool bPassed = true;
+		bPassed &= Test.TestEqual(TEXT("Mission state identical"), Failing.MissionState, Disabled.MissionState);
+		bPassed &= Test.TestEqual(TEXT("Mission phase identical"), Failing.MissionPhase, Disabled.MissionPhase);
+		bPassed &= Test.TestEqual(TEXT("Mission elapsed time identical"), Failing.MissionElapsedTimeSeconds, Disabled.MissionElapsedTimeSeconds);
+		bPassed &= Test.TestEqual(TEXT("Clock elapsed time identical"), Failing.ClockElapsedTimeSeconds, Disabled.ClockElapsedTimeSeconds);
+		bPassed &= Test.TestEqual(TEXT("Clock dropped steps identical"), Failing.ClockLastDroppedSteps, Disabled.ClockLastDroppedSteps);
+		bPassed &= Test.TestEqual(TEXT("Mission event count identical"), Failing.EventStates.Num(), Disabled.EventStates.Num());
+		for (int32 Index = 0; Index < FMath::Min(Failing.EventStates.Num(), Disabled.EventStates.Num()); ++Index)
+		{
+			bPassed &= Test.TestEqual(TEXT("Mission event id identical"), Failing.EventStates[Index].EventId, Disabled.EventStates[Index].EventId);
+			bPassed &= Test.TestEqual(TEXT("Mission event state identical"), Failing.EventStates[Index].EventState, Disabled.EventStates[Index].EventState);
+		}
+		bPassed &= Test.TestEqual(TEXT("Objective count identical"), Failing.ObjectiveStates.Num(), Disabled.ObjectiveStates.Num());
+		for (int32 Index = 0; Index < FMath::Min(Failing.ObjectiveStates.Num(), Disabled.ObjectiveStates.Num()); ++Index)
+		{
+			bPassed &= Test.TestEqual(TEXT("Objective id identical"), Failing.ObjectiveStates[Index].ObjectiveId, Disabled.ObjectiveStates[Index].ObjectiveId);
+			bPassed &= Test.TestEqual(TEXT("Objective state identical"), Failing.ObjectiveStates[Index].State, Disabled.ObjectiveStates[Index].State);
+		}
+		bPassed &= Test.TestEqual(TEXT("Fuel kg identical"), Failing.Fuel.FuelQuantityKilograms, Disabled.Fuel.FuelQuantityKilograms);
+		bPassed &= Test.TestEqual(TEXT("Fuel fraction identical"), Failing.Fuel.FuelFraction, Disabled.Fuel.FuelFraction);
+		bPassed &= Test.TestEqual(TEXT("Fuel state identical"), Failing.Fuel.FuelState, Disabled.Fuel.FuelState);
+		bPassed &= Test.TestEqual(TEXT("Battery kWh identical"), Failing.Power.BatteryChargeKilowattHours, Disabled.Power.BatteryChargeKilowattHours);
+		bPassed &= Test.TestEqual(TEXT("Battery fraction identical"), Failing.Power.ChargeFraction, Disabled.Power.ChargeFraction);
+		bPassed &= Test.TestEqual(TEXT("Power state identical"), Failing.Power.PowerState, Disabled.Power.PowerState);
+		bPassed &= Test.TestEqual(TEXT("Thermal temperature identical"), Failing.Thermal.TemperatureCelsius, Disabled.Thermal.TemperatureCelsius);
+		bPassed &= Test.TestEqual(TEXT("Thermal state identical"), Failing.Thermal.ThermalState, Disabled.Thermal.ThermalState);
+		bPassed &= Test.TestEqual(TEXT("Telemetry event count identical"), Failing.TelemetryEventCount, Disabled.TelemetryEventCount);
+		bPassed &= Test.TestEqual(TEXT("Telemetry snapshot count identical"), Failing.TelemetrySnapshotCount, Disabled.TelemetrySnapshotCount);
+		return bPassed;
 	}
 }
 
@@ -482,6 +726,29 @@ bool FEdenOsFailingTransportDoesNotChangeSimulationTest::RunTest(const FString& 
 	TestEqual(TEXT("Power state identical"), DisabledProbe.PowerState, FailingProbe.PowerState);
 	TestEqual(TEXT("Thermal state identical"), DisabledProbe.ThermalState, FailingProbe.ThermalState);
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsFailingTransportPreservesAuthoritativeMissionResultTest,
+	"Eden.Integration.EdenOs.FailingTransportPreservesAuthoritativeMissionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsFailingTransportPreservesAuthoritativeMissionResultTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenOsTransportTests;
+
+	const FMissionIsolationProbe DisabledProbe = RunMissionIsolationProbe(false);
+	const FMissionIsolationProbe FailingProbe = RunMissionIsolationProbe(true);
+
+	TestEqual(TEXT("Disabled run has no EDEN sink"), DisabledProbe.RegisteredSinkCountBeforeDelivery, 0);
+	TestEqual(TEXT("Failing run registers the EDEN sink"), FailingProbe.RegisteredSinkCountBeforeDelivery, 1);
+	TestEqual(TEXT("EDEN sink delivery attempted"), FailingProbe.TelemetryDeliveryAttempts, 1);
+	TestEqual(TEXT("Failing transport received one HTTP attempt"), FailingProbe.EdenTransportAttempts, 1);
+	TestEqual(TEXT("Failing transport reports disconnected"), FailingProbe.EdenConnectionState, EEdenOsConnectionState::Disconnected);
+	TestTrue(TEXT("Failure summary records offline transport"), FailingProbe.EdenLastErrorSummary.Contains(TEXT("offline")));
+
+	return CompareMissionIsolationProbes(*this, DisabledProbe, FailingProbe);
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

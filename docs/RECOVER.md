@@ -9,11 +9,11 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E ready for acceptance review |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E corrective proof ready for acceptance review |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS; `Automation RunTests Eden.Unit.EdenOs.Transport.` PASS with 10 tests; `Eden.Integration.EdenOs.` PASS with 1 test; `Eden.Integration.Telemetry.` PASS with 1 test; `Automation RunTests Eden.` PASS with 229 tests; `git diff --check` PASS; Source `LogTemp`, scope, blocking HTTP, hardcoded URL, and secret scans clean for Checkpoint E |
+| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS with explicit corrective `EdenOsTransportTests.cpp` compile and final up-to-date build; `Automation RunTests Eden.Integration.EdenOs.` PASS with 2 tests; `Automation RunTests Eden.Unit.EdenOs.Transport.` PASS with 10 tests; `Automation RunTests Eden.` PASS with 230 tests; `git diff --check` PASS; Source `LogTemp`, secret, scope, hardcoded URL, and blocking HTTP scans clean or limited to expected contract/async transport matches |
 | Next task | Review/accept ExecPlan 0007 Checkpoint E. Do not begin Checkpoint F until E is accepted and ProjectEden Checkpoint D is complete |
 
 ## Recovery protocol
@@ -56,7 +56,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint A initial sink seam was rejected at `8209fbc`; remediation was accepted and pushed as `7a42fcf`.
 - 0007 Checkpoint B was accepted and pushed as `a63de4e`.
 - 0007 Checkpoint C was accepted and committed as `f66cda3`.
-- 0007 Checkpoint E has been implemented for review directly on `main`.
+- 0007 Checkpoint E was committed as `32c8f9a`, then held for one missing mission-level failure-isolation proof. The corrective proof is implemented for review directly on `main`.
 
 ### Latest Checkpoint E Evidence
 
@@ -83,6 +83,22 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Blocking/synchronous HTTP scan found no wait/sleep pattern around HTTP; matches were unrelated mission `Inf` validation test names.
 - Secret scan found no realistic committed JWT value; matches were limited to synthetic `test-token` literals in EdenOs tests and existing docs evidence.
 
+### Latest Checkpoint E Corrective Evidence
+
+- `Eden.Integration.EdenOs.FailingTransportPreservesAuthoritativeMissionResult` was added after review found `FailingTransportDoesNotChangeSimulation` was resource-only and too weak for Checkpoint E.
+- The corrective test runs the same deterministic world-backed mission twice: EDEN disabled, then EDEN enabled with `FEdenOsTelemetrySink` registered and fake HTTP transport returning `offline` failure for outbound delivery.
+- Compared authoritative fields: mission state, mission phase, mission elapsed time, mission event runtime states, mission objective runtime states, fuel kilograms/fraction/state, battery kWh/fraction/state, thermal temperature/state, telemetry event/snapshot counts, simulation-clock elapsed time, and dropped clock steps.
+- Excluded fields are adapter bookkeeping only: EDEN connection state, pending/dropped counts, last transport error, and fake transport attempt records.
+- The failing run proves EDEN was actually active: one EDEN sink registered, one telemetry delivery attempted, one fake HTTP request sent, adapter connection state `Disconnected`, and `LastErrorSummary` contains `offline`.
+- UBT initially trusted stale test intermediates after the test edit. Only `EdenOsTransportTests.cpp` intermediate object/response/dependency files under `Intermediate/Build/.../EdenSpaceSimulator/` were removed. The next build invalidated the makefile for `EdenOsTransportTests.cpp.obj.rsp deleted`, explicitly compiled `EdenOsTransportTests.cpp`, relinked `UnrealEditor-EdenSpaceSimulator.dll`, and returned `Result: Succeeded`.
+- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Integration.EdenOs.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 2 tests found, including `FailingTransportPreservesAuthoritativeMissionResult`, and exit code 0 in `Saved/Logs/EdenSpaceSimulator.log`.
+- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Transport.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 10 tests found and exit code 0.
+- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 230 tests found and exit code 0.
+- Final repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`.
+- Final Win64 Development Editor build passed via `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` and reported target up to date after the corrective compile.
+- `git diff --check` passed.
+- Source `LogTemp` scan returned no matches. Secret scan returned no matches. Scope scan found no advisory, external command, retry/backoff implementation, hardcoded localhost, or blocking HTTP wait; matches were limited to the existing authority-mode contract/tests, pre-existing mission "no retry" log text, the route-version negative assertion, and intended async Unreal HTTP calls.
+
 ### Next Clean Action
 
-Wait for Checkpoint E acceptance. After approval, do not begin Checkpoint F until ProjectEden Checkpoint D is complete and both repositories are ready against the locked contract.
+Commit the Checkpoint E corrective proof directly on `main`, then wait for Checkpoint E acceptance. After approval, do not begin Checkpoint F until ProjectEden Checkpoint D is complete and both repositories are ready against the locked contract.
