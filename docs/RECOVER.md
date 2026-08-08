@@ -7,16 +7,13 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Field | Value |
 |---|---|
 | Date | 2026-08-08 |
-| Branch | `main` (PR #3 merged; plan branch retained for follow-on docs) |
-| Active ExecPlan | `docs/exec-plans/0004-emergency-scenario-mission-shell.md` |
-| Checkpoint A–E | Accepted architecture baseline through D `326057b`; E dispatch retained and corrected under remediation |
-| Checkpoint F | Remediated and automation-green — **do not reopen** |
-| Checkpoint G | ✅ Real `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset` (LFS); VerifyMissionAssets passed on `main` |
-| Checkpoint H | Code present; **manual PIE remains the only 0004 blocker** |
-| ExecPlan 0003 | Still blocked on delayed hands-on PIE (fold into same PIE session) |
-| ExecPlan 0006 | Design locked in `docs/exec-plans/0006-telemetry-and-after-action-review.md`; implementation blocked on 0005 |
-| Last successful validation | VerifyMissionAssets: `/Game/Eden/Data/Missions/DA_SolarEventEmergency` (4 objectives, 7 events). Prior full suite: `Automation RunTests Eden.` → **179** project `Eden.*` tests, exit 0. |
-| Next task | Human PIE closeout for 0004 H (+ delayed 0003). Do not mark 0004 Complete / do not tag `v0.3.0-emergency-mission` until PIE evidence is recorded. Do not change 0004 code again before PIE unless the editor exposes a real defect. |
+| Branch | `main` |
+| Active ExecPlan | `docs/exec-plans/0005-operator-systems-control-and-mission-hud.md` (+ 0006 implementation started) |
+| ExecPlan 0004 | Automated green; **manual PIE still required** before Complete / `v0.3.0-emergency-mission` |
+| ExecPlan 0005 | Implementing — operator model, Operator* channels, thrust authority, alerts, HUD assembly, DA asset created |
+| ExecPlan 0006 | Implementing — telemetry subsystem (prio 200), AAR model, objective delegate, export schema v1 stub |
+| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** successes / **0** failures |
+| Next task | Manual PIE for 0005 HUD/input + remaining 0004 closeout; Blueprint-compose `WBP_EdenOperatorHud` and assign operator input actions; polish 0006 sinks/presentation |
 
 ## Recovery protocol
 
@@ -27,40 +24,33 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
 ```
 
-Then read `AGENTS.md` and mandatory docs, then ExecPlan 0004.
+Then read `AGENTS.md`, ADR-0002, ExecPlan 0005 / 0006.
 
 ## Safe Restart Rules
 
 - Do not discard local changes without inspecting them.
 - Do not delete `Content`, `Config`, or `Source`.
-- Preserve `DA_SolarEventEmergency.uasset` (Git LFS).
-- Do not revert historical premature G/H commits merely because claims were early; fix forward.
-- Parallel 0005 planning may exist as an untracked/local ExecPlan; do not mix it into 0004 remediation commits unless requested.
+- Preserve `DA_SolarEventEmergency.uasset` and `DA_EdenOperatorControlConfig.uasset` (Git LFS).
+- Do not reopen ExecPlan 0004 Checkpoint F.
+- Do not tag `v0.3.0-emergency-mission` until 0004 PIE evidence is recorded.
 
 ## Current Known Risks
 
-- Manual PIE for 0004 H and delayed 0003 resource PIE are still outstanding.
-- Historical commits `3f2dfd5` / `9662bea` / `4a12241` claimed G/H prematurely; current tree is corrected by remediation.
-- Fail-only objectives (`KeepTemperatureBelow`, `MaintainFuelAbove`) remain Active when held; EvaluateOutcome treats them as satisfied for success once required complete-seeking objectives Complete.
-- Missing resource targets no longer invent depleted fuel/power readings during objective evaluation.
-- `SetPowerGeneration` remains unsupported and is rejected by definition validation.
-- Platform INVALID SDK noise and expected negative-path automation warnings remain.
+- Production HUD C++ widget exists; Blueprint `WBP_EdenOperatorHud` still needs content authoring and assignment on `BP_EdenFlightPlayerController`.
+- Operator Enhanced Input actions (`IA_ThermalMode`, `IA_LoadShed`, `IA_PropulsionPriority`) still need asset creation + IMC mapping.
+- 0004 / delayed 0003 manual PIE still outstanding.
+- Telemetry `LoadMission` history-close policy is explicit `ClearHistory()` (not auto-wired to every mission state transition).
 
 ## Session Handoff
 
-### Completed in remediation
+### Completed this session
 
-- F: EvaluateObjectives implemented with ChargeFraction/FuelFraction; AdvanceSimulation order corrected; typed PhaseParameter; LoadMission previous-state broadcast; cached weak targets preserved; production Succeeded/Failed paths wired.
-- G: Real `DA_SolarEventEmergency` created (MissionId `SolarCrisis`); factory helper removed; verifier loads actual `.uasset`; Solar Event integration tests green.
-- H automated: Start/Restart/Abort load the Data Asset (soft path); ShowDebug EdenMission code remains read-only; asset verifiers pass.
-
-### Remaining Work
-
-- Hands-on PIE checklist for ShowDebug EdenMission / StartMission / RestartMission / AbortMission (plus delayed 0003 resource checks).
-- Mark ExecPlan 0004 Complete only after PIE evidence.
-- Create `v0.3.0-emergency-mission` only after Complete.
-- Do not start 0006 implementation until 0005; design is locked in ExecPlan 0006.
+- ADR-0002 + ExecPlan 0005 L1–L5 locked; ARCHITECTURE ownership updated.
+- Operator* power/thermal channels; thrust authority + stabilize assist gate on flight movement.
+- `UEdenOperatorControlComponent`, alerts, HUD snapshot/widget, telemetry subsystem + AAR model + objective delegate.
+- `DA_EdenOperatorControlConfig` created via editor automation.
+- Eden automation: 186/186.
 
 ### Next Clean Action
 
-Perform manual PIE closeout. Asset creation and factory regression fix are done. Do not reopen Checkpoint F. Do not change 0004 code again before PIE unless PIE exposes a real defect.
+Commit the 0005/0006 implementation when requested. Author Blueprint HUD + input bindings, then PIE.

@@ -35,6 +35,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FName,
 	EventId);
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FEdenObjectiveStateChangedSignature,
+	FName,
+	ObjectiveId,
+	EEdenObjectiveState,
+	PreviousState,
+	EEdenObjectiveState,
+	NewState);
+
 /**
  * World-scoped mission orchestrator.
  *
@@ -122,6 +131,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Eden|Mission")
 	FEdenMissionEventTriggeredSignature OnMissionEventTriggered;
+
+	UPROPERTY(BlueprintAssignable, Category = "Eden|Mission")
+	FEdenObjectiveStateChangedSignature OnObjectiveStateChanged;
 
 private:
 	void TransitionMissionState(EEdenMissionState NewState);

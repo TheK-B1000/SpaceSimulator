@@ -2,7 +2,7 @@
 
 ## Status
 
-**Design approved / locked - not started. Implementation blocked on 0005.**
+**Approved — implementing (types, subsystem prio 200, AAR model, objective delegate, export v1 stub; presentation/PIE pending).**
 
 ## Prerequisite status
 

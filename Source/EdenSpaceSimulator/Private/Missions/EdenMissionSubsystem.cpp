@@ -69,12 +69,28 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 		? FuelComp->GetFuelStateSnapshot().FuelFraction
 		: 1.0f;
 
+	const TArray<FEdenMissionObjectiveRuntime> PreviousObjectives = CurrentRuntimeState.ObjectiveStates;
+
 	CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
 		CurrentRuntimeState,
 		ActiveMissionDefinition,
 		ThermalTemperatureCelsius,
 		PowerChargeFraction,
 		FuelFraction);
+
+	for (const FEdenMissionObjectiveRuntime& NewObjective : CurrentRuntimeState.ObjectiveStates)
+	{
+		const FEdenMissionObjectiveRuntime* PreviousObjective = PreviousObjectives.FindByPredicate(
+			[&NewObjective](const FEdenMissionObjectiveRuntime& Candidate)
+			{
+				return Candidate.ObjectiveId == NewObjective.ObjectiveId;
+			});
+
+		if (PreviousObjective && PreviousObjective->State != NewObjective.State)
+		{
+			OnObjectiveStateChanged.Broadcast(NewObjective.ObjectiveId, PreviousObjective->State, NewObjective.State);
+		}
+	}
 
 	const EEdenMissionState EvaluatedOutcome = FEdenMissionModel::EvaluateOutcome(
 		CurrentRuntimeState,
