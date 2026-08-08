@@ -73,6 +73,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
 	FEdenAfterActionResult BuildAfterActionResult() const;
 
+	/**
+	 * Records an observation-only telemetry event from an external adapter.
+	 * Allowed for EdenAdvisoryIssued only — adapters must not invent mission/resource events.
+	 */
+	bool RecordObservationEvent(
+		EEdenTelemetryEventType EventType,
+		FName SourceSystem,
+		FName EventId,
+		const FString& Detail);
+
 private:
 	void BindSources();
 	void UnbindSources();

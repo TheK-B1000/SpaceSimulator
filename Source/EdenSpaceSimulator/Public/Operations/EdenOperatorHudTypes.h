@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EdenOs/EdenOsAdvisoryTypes.h"
 #include "Missions/EdenMissionTypes.h"
 #include "Operations/EdenAlertTypes.h"
 #include "Operations/EdenOperatorTypes.h"
@@ -47,6 +48,22 @@ struct EDENSPACESIMULATOR_API FEdenOperatorHudSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD")
 	TArray<FEdenAlert> ActiveAlerts;
 
+	/** True when the adapter holds a validated ProjectEden advisory for display. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	bool bHasAdvisory = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	FString AdvisoryRecommendation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	FString AdvisoryRationale;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	FString AdvisoryId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	float AdvisoryIssuedSimulationTimeSeconds = 0.0f;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD")
 	float AssembledAtSimTimeSeconds = 0.0f;
 };
@@ -60,5 +77,6 @@ struct EDENSPACESIMULATOR_API FEdenOperatorHudModel
 		const FEdenThermalStateSnapshot& Thermal,
 		const FEdenOperatorStateSnapshot& Operator,
 		const TArray<FEdenAlert>& Alerts,
-		float SimulationTimeSeconds);
+		float SimulationTimeSeconds,
+		const FEdenOsAcceptedAdvisory& Advisory = FEdenOsAcceptedAdvisory());
 };

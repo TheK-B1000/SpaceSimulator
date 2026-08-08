@@ -8,6 +8,7 @@
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTypes.h"
 #include "EdenOs/EdenOsTransport.h"
+#include "EdenOs/EdenOsWireTypes.h"
 #include "Telemetry/EdenTelemetrySink.h"
 #include "Subsystems/WorldSubsystem.h"
 
@@ -50,6 +51,9 @@ public:
 	/** Most recent advisory context built by a settled-step evaluation. Invalid until one occurs. */
 	FEdenOsAdvisoryContext GetLastAdvisoryContext() const;
 
+	/** Most recent ProjectEden advisory accepted for HUD presentation. Invalid until one is accepted. */
+	FEdenOsAcceptedAdvisory GetLatestAcceptedAdvisory() const;
+
 	/** Number of advisory evaluations performed since the adapter last reset its advisory cursors. */
 	int32 GetAdvisoryEvaluationCount() const;
 
@@ -60,7 +64,21 @@ public:
 	bool UnregisterFromSimulationClock();
 
 private:
+	struct FPendingAdvisoryDispatch
+	{
+		FString EvaluationId;
+		FEdenOsAdvisoryContext Context;
+		int64 EvaluationOrdinal = 0;
+	};
+
 	void EvaluateAdvisoryForSettledStep();
+	void DispatchAdvisoryEvaluation(const FEdenOsAdvisoryContext& Context);
+	void HandleAdvisoryTransportCompleted(const FEdenOsHttpResult& Result, int64 SequenceNumber);
+	void AcceptAdvisoryResponse(
+		const FEdenOsAdvisoryResponseV1& Response,
+		const FPendingAdvisoryDispatch& Pending);
+	void CancelPendingAdvisoryDispatches(const TCHAR* Reason);
+	bool HasSessionCompletedOrCompletionQueued() const;
 	void ResetAdvisoryRuntimeState();
 
 	void RefreshSnapshotFromRuntimeConfig();
@@ -104,10 +122,14 @@ private:
 	// trend and transition detection read accepted 0006 history, never a shadow copy of it.
 	FEdenOsAdvisoryContextBounds AdvisoryContextBounds;
 	FEdenOsAdvisoryContext LastAdvisoryContext;
+	FEdenOsAcceptedAdvisory LatestAcceptedAdvisory;
+	TMap<int64, FPendingAdvisoryDispatch> PendingAdvisoryByOutboundSequence;
 	int64 LastEvaluatedTelemetrySequence = 0;
 	float LastAdvisoryEvaluationSimulationSeconds = 0.0f;
 	bool bHasEvaluatedAdvisory = false;
 	int32 AdvisoryEvaluationCount = 0;
+	int64 NextAdvisoryEvaluationOrdinal = 1;
+	int64 LatestAcceptedAdvisoryOrdinal = 0;
 
 public:
 	/** Settled steps observed. Distinguishes "not ticking" from "ticking but gated" in diagnostics. */

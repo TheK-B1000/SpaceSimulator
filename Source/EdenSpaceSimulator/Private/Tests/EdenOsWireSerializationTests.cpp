@@ -492,4 +492,158 @@ bool FEdenOsWireSerializesDeterministicallyTest::RunTest(const FString& Paramete
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireTriggerReasonVocabularyIsLockedTest,
+	"Eden.Unit.EdenOs.Wire.TriggerReasonVocabularyIsLocked",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireTriggerReasonVocabularyIsLockedTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	TestEqual(
+		TEXT("MissionPhaseTransition"),
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::MissionPhaseTransition),
+		FString(TEXT("mission_phase_transition")));
+	TestEqual(
+		TEXT("AlertTransition"),
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::AlertTransition),
+		FString(TEXT("alert_transition")));
+	TestEqual(
+		TEXT("ObjectiveTransition"),
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::ObjectiveTransition),
+		FString(TEXT("objective_transition")));
+	TestEqual(
+		TEXT("OperatorAction"),
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::OperatorAction),
+		FString(TEXT("operator_action")));
+	TestEqual(
+		TEXT("Heartbeat"),
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::Heartbeat),
+		FString(TEXT("heartbeat")));
+
+	const FString OperatorWire =
+		FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason::OperatorAction);
+	TestFalse(
+		TEXT("Retired meaningful_operator_action spelling is not produced"),
+		OperatorWire.Contains(TEXT("meaningful")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireAdvisoryRequestSerializesDualTimestampsTest,
+	"Eden.Unit.EdenOs.Wire.AdvisoryRequestSerializesDualTimestamps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireAdvisoryRequestSerializesDualTimestampsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenOsAdvisoryContext Context;
+	Context.bIsValid = true;
+	Context.SessionId = TEXT("session-advisory-001");
+	Context.SimulationTimeSeconds = 0.7f;
+	Context.ContextSnapshotSimulationTimeSeconds = 0.5f;
+	Context.MissionElapsedTimeSeconds = 0.5f;
+	Context.ActiveMissionId = TEXT("SolarCrisis");
+	Context.MissionState = EEdenMissionState::Running;
+	Context.MissionPhase = EEdenMissionPhase::Impact;
+	Context.Thermal.TemperatureCelsius = 91.0f;
+	Context.Power.ChargeFraction = 0.42f;
+	Context.Fuel.FuelFraction = 0.76f;
+	Context.TriggerReasons = {
+		EEdenOsAdvisoryTriggerReason::AlertTransition,
+		EEdenOsAdvisoryTriggerReason::Heartbeat};
+
+	FEdenOsAdvisoryRequestV1 Request;
+	Request.SessionId = Context.SessionId;
+	Request.EvaluationId = TEXT("eval-42");
+	Request.Context = Context;
+
+	const FEdenOsWireSerializationResult Result = FEdenOsWireSerializationModel::BuildAdvisoryJsonV1(Request);
+	TestTrue(TEXT("Advisory serialization succeeds"), Result.IsSuccess());
+	TestTrue(TEXT("Route contract uses advisories plural"), FString(EdenOsWireContract::AdvisoriesRouteTemplate).Contains(TEXT("/advisories")));
+	TestTrue(TEXT("evaluation time present"), Result.Json.Contains(TEXT("\"simulationTimeSeconds\": 0.700000")));
+	TestTrue(
+		TEXT("snapshot time present and distinct"),
+		Result.Json.Contains(TEXT("\"contextSnapshotSimulationTimeSeconds\": 0.500000")));
+	TestTrue(TEXT("operator_action vocabulary available for later"), Result.Json.Contains(TEXT("alert_transition")));
+	TestTrue(TEXT("heartbeat vocabulary"), Result.Json.Contains(TEXT("heartbeat")));
+	TestTrue(TEXT("phase token is bare enum name"), Result.Json.Contains(TEXT("\"phase\": \"Impact\"")));
+	TestFalse(TEXT("no UEnum qualified phase"), Result.Json.Contains(TEXT("EEdenMissionPhase::")));
+	TestFalse(TEXT("JWT never appears in body"), Result.Json.Contains(TEXT("Bearer")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireAdvisoryRequestRejectsInvertedTimestampsTest,
+	"Eden.Unit.EdenOs.Wire.AdvisoryRequestRejectsInvertedTimestamps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireAdvisoryRequestRejectsInvertedTimestampsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenOsAdvisoryContext Context;
+	Context.bIsValid = true;
+	Context.SessionId = TEXT("session-advisory-001");
+	Context.SimulationTimeSeconds = 0.5f;
+	Context.ContextSnapshotSimulationTimeSeconds = 0.7f;
+	Context.TriggerReasons = {EEdenOsAdvisoryTriggerReason::Heartbeat};
+
+	FEdenOsAdvisoryRequestV1 Request;
+	Request.SessionId = Context.SessionId;
+	Request.EvaluationId = TEXT("eval-bad");
+	Request.Context = Context;
+
+	TestFalse(
+		TEXT("Snapshot after evaluation rejected"),
+		FEdenOsWireSerializationModel::BuildAdvisoryJsonV1(Request).IsSuccess());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireAdvisoryResponseParsesAndCorrelatesEvaluationIdTest,
+	"Eden.Unit.EdenOs.Wire.AdvisoryResponseParsesAndCorrelatesEvaluationId",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireAdvisoryResponseParsesAndCorrelatesEvaluationIdTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const FString ValidJson = TEXT(
+		"{"
+		"\"schemaVersion\":1,"
+		"\"advisoryId\":\"adv-391\","
+		"\"evaluationId\":\"eval-42\","
+		"\"recommendation\":\"Increase cooling and maintain load shedding.\","
+		"\"rationale\":\"Temperature is approaching the thermal limit while battery charge remains sufficient.\""
+		"}");
+
+	const FEdenOsAdvisoryResponseParseResult Ok =
+		FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(ValidJson, TEXT("eval-42"));
+	TestTrue(TEXT("Valid response parses"), Ok.IsSuccess());
+	TestEqual(TEXT("advisoryId"), Ok.Response.AdvisoryId, FString(TEXT("adv-391")));
+	TestEqual(TEXT("evaluationId"), Ok.Response.EvaluationId, FString(TEXT("eval-42")));
+	TestTrue(TEXT("recommendation preserved"), Ok.Response.Recommendation.Contains(TEXT("cooling")));
+	TestTrue(TEXT("rationale with escaped-safe content preserved"), Ok.Response.Rationale.Contains(TEXT("thermal")));
+
+	const FEdenOsAdvisoryResponseParseResult Mismatch =
+		FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(ValidJson, TEXT("eval-other"));
+	TestFalse(TEXT("Mismatched evaluationId rejected"), Mismatch.IsSuccess());
+
+	const FString EscapedRationaleJson = TEXT(
+		"{"
+		"\"schemaVersion\":1,"
+		"\"advisoryId\":\"adv-escaped\","
+		"\"evaluationId\":\"eval-42\","
+		"\"recommendation\":\"Hold course.\","
+		"\"rationale\":\"Operator said \\\"wait\\\" then continued.\""
+		"}");
+	const FEdenOsAdvisoryResponseParseResult Escaped =
+		FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(EscapedRationaleJson, TEXT("eval-42"));
+	TestTrue(TEXT("Escaped quotes in rationale parse"), Escaped.IsSuccess());
+	TestTrue(TEXT("Escaped quote preserved"), Escaped.Response.Rationale.Contains(TEXT("\"wait\"")));
+	return true;
+}
+
 #endif

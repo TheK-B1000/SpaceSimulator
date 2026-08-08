@@ -348,6 +348,7 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 	TArray<FEdenAlert> Alerts;
 	float SimTimeSeconds = 0.0f;
 
+	FEdenOsAcceptedAdvisory AcceptedAdvisory;
 	if (const UWorld* World = GetWorld())
 	{
 		if (const UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>())
@@ -361,6 +362,10 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 		if (const UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>())
 		{
 			SimTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
+		}
+		if (const UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>())
+		{
+			AcceptedAdvisory = Adapter->GetLatestAcceptedAdvisory();
 		}
 	}
 
@@ -391,7 +396,8 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 		ThermalSnapshot,
 		OperatorSnapshot,
 		Alerts,
-		SimTimeSeconds);
+		SimTimeSeconds,
+		AcceptedAdvisory);
 }
 
 void AEdenFlightPlayerController::LogMissingInputAssetState()

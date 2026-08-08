@@ -9,7 +9,8 @@ FEdenOperatorHudSnapshot FEdenOperatorHudModel::Assemble(
 	const FEdenThermalStateSnapshot& Thermal,
 	const FEdenOperatorStateSnapshot& Operator,
 	const TArray<FEdenAlert>& Alerts,
-	float SimulationTimeSeconds)
+	float SimulationTimeSeconds,
+	const FEdenOsAcceptedAdvisory& Advisory)
 {
 	FEdenOperatorHudSnapshot Snapshot;
 	Snapshot.MissionId = Mission.ActiveMissionId;
@@ -23,5 +24,16 @@ FEdenOperatorHudSnapshot FEdenOperatorHudModel::Assemble(
 	Snapshot.Operator = Operator;
 	Snapshot.ActiveAlerts = Alerts;
 	Snapshot.AssembledAtSimTimeSeconds = SimulationTimeSeconds;
+
+	// HUD mirrors adapter-owned advisory facts only — never invents fields.
+	Snapshot.bHasAdvisory = Advisory.bIsValid;
+	if (Advisory.bIsValid)
+	{
+		Snapshot.AdvisoryRecommendation = Advisory.Recommendation;
+		Snapshot.AdvisoryRationale = Advisory.Rationale;
+		Snapshot.AdvisoryId = Advisory.AdvisoryId;
+		Snapshot.AdvisoryIssuedSimulationTimeSeconds = Advisory.IssuedSimulationTimeSeconds;
+	}
+
 	return Snapshot;
 }

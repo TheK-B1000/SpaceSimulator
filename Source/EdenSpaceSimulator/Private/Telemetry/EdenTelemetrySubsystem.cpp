@@ -384,6 +384,27 @@ void UEdenTelemetrySubsystem::RecordEvent(
 	}
 }
 
+bool UEdenTelemetrySubsystem::RecordObservationEvent(
+	EEdenTelemetryEventType EventType,
+	FName SourceSystem,
+	FName EventId,
+	const FString& Detail)
+{
+	// Checkpoint I: only EdenAdvisoryIssued may enter through the adapter observation path.
+	if (EventType != EEdenTelemetryEventType::EdenAdvisoryIssued)
+	{
+		UE_LOG(
+			LogEdenTelemetry,
+			Warning,
+			TEXT("RecordObservationEvent rejected EventType=%d; only EdenAdvisoryIssued is allowed."),
+			static_cast<int32>(EventType));
+		return false;
+	}
+
+	RecordEvent(EventType, SourceSystem, EventId, Detail);
+	return true;
+}
+
 void UEdenTelemetrySubsystem::UpdateAggregates(const FEdenTelemetrySnapshot& Snapshot)
 {
 	if (!bHasAggregateSeed)

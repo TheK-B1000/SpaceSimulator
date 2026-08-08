@@ -2,9 +2,9 @@
 
 ## Status
 
-**In Progress - Checkpoint G implemented and ready for acceptance; Checkpoints H-M remain locked.**
+**In Progress - Checkpoint I implemented and ready for acceptance; Checkpoints J-M remain locked.**
 
-Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E are accepted, ProjectEden D is accepted in its separate repository, and Checkpoint F convergence plus the corrective live HTTP proof are accepted. Checkpoint G Observe mode has been implemented and validated for review. Do not begin Checkpoints H-M until Checkpoint G is explicitly accepted.
+Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H are accepted (H timing amendment included). ProjectEden H.1 advisory API exists at `da38ecb`. Checkpoint I surfaces ProjectEden advisories as `EdenAdvisoryIssued` telemetry plus a read-only HUD panel. Do not begin Checkpoints J-M until Checkpoint I is explicitly accepted.
 
 Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`; its corrective wire-contract alignment was accepted at `3f69f9b`. Checkpoint E implementation was committed at `32c8f9a`; the follow-up mission-level failure-isolation proof was accepted at `75fcd90`. Checkpoint F implementation commit `63768ab` plus corrective proof commit `5249a6a` are accepted.
 
@@ -241,15 +241,44 @@ An advisory is recorded as an immutable telemetry event, exactly like any resour
 ```text
 EdenAdvisoryIssued
 ├── AdvisoryId
-├── Severity
-├── RecommendationCode
-├── DisplayText
-├── Confidence
-├── SimulationTimeSeconds
-├── TriggerReasons          [Heartbeat | PhaseChanged | AlertChanged |
-│                            ObjectiveChanged | OperatorAction]
-└── RelatedObjectiveIds / RelatedAlertIds
+├── EvaluationId
+├── Recommendation
+├── Rationale
+├── EvaluationSimulationTimeSeconds
+├── ContextSnapshotSimulationTimeSeconds
+└── TriggerReasons
 ```
+
+**AMENDED 2026-08-08 to match the accepted H.1 contract.** `Severity`, `RecommendationCode`, `Confidence`, `RelatedObjectiveIds`, and `RelatedAlertIds` are **removed** from the 0007 event. §19.3 response v1 carries only `advisoryId`, `evaluationId`, `recommendation`, and `rationale`, so those fields had no source — recording them would have meant manufacturing facts. They may return in a later schemaVersion when a real product requirement and a real source exist.
+
+#### Three distinct timestamps
+
+The ordinary `FEdenTelemetryEvent::SimulationTimeSeconds` carries the **issuance** time, so no redundant field is needed:
+
+| Fact | Meaning |
+|---|---|
+| `ContextSnapshotSimulationTimeSeconds` | when the state sent to ProjectEden was observed |
+| `EvaluationSimulationTimeSeconds` | when Unreal decided an advisory was due and built the request |
+| `FEdenTelemetryEvent::SimulationTimeSeconds` | when the validated response was accepted and the advisory issued |
+
+```text
+12.0  context snapshot observed
+12.7  advisory evaluation due, request created
+13.4  valid response accepted, EdenAdvisoryIssued emitted
+```
+
+None may be substituted for another.
+
+**AAR latency semantics this enables (0006 consumes these later):**
+
+```text
+EDEN reasoning + transport latency = issued time - evaluation time
+operator response time             = operator action time - issued time
+```
+
+Measuring operator response from *evaluation* time would charge the operator for time ProjectEden spent reasoning and on the wire.
+
+These are **simulation-time** metrics. A paused simulation does not advance them, which is correct for mission and AAR semantics. Real wall-clock network latency, if ever wanted, belongs in separate transport telemetry and must not be smuggled into simulation time.
 
 `TriggerReasons` records **why EDEN was asked to evaluate**, not only what it said. That provenance is what later makes it possible to study whether event-triggered or heartbeat-triggered advisories were more useful:
 
@@ -814,9 +843,9 @@ EdenOs H    owns cursor, evaluation bookkeeping, immutable derived context
 
 ## 19. Checkpoint H.1 — ProjectEden advisory API contract
 
-**LOCKED 2026-08-08. Not implemented. Blocks Checkpoint I.**
+**IMPLEMENTED in ProjectEden (`da38ecb` trigger-contract fix). Unlocks Checkpoint I.**
 
-Checkpoint I remains locked until this contract is implemented server-side in ProjectEden.
+ProjectEden serves `POST /api/missions/sessions/{session_id}/advisories` with the locked §19.2/§19.3 schemas and the five §19.2a trigger strings.
 
 ### 19.1 Route
 

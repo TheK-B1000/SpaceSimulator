@@ -22,6 +22,9 @@ public class EdenSpaceSimulator : ModuleRules
 			"SlateCore"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
+		// Json is used to parse EDEN OS advisory responses. Responses come from an external service,
+		// so hand-scanned string extraction is not safe: escaped quotes inside rationale text would
+		// silently truncate or corrupt parsed values.
+		PrivateDependencyModuleNames.AddRange(new string[] { "Json" });
 	}
 }

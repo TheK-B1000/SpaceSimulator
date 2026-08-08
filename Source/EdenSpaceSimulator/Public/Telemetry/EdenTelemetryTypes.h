@@ -26,7 +26,14 @@ enum class EEdenTelemetryEventType : uint8
 	ResourceStateTransition,
 	OperatorCommandIssued,
 	AlertRaised,
-	AlertCleared
+	AlertCleared,
+	/**
+	 * An EDEN OS advisory was received, validated, and issued.
+	 *
+	 * The event's SimulationTimeSeconds is the ISSUANCE time — when the validated response was
+	 * accepted — not the evaluation time that produced the request. See ExecPlan 0007 §5.9.
+	 */
+	EdenAdvisoryIssued
 };
 
 USTRUCT(BlueprintType)

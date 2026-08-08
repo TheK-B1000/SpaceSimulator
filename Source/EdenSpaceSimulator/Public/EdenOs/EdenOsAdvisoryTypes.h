@@ -170,3 +170,43 @@ struct EDENSPACESIMULATOR_API FEdenOsAdvisoryContext
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	bool bUpstreamHistoryTruncated = false;
 };
+
+/**
+ * Validated advisory accepted from ProjectEden. Informational only — no executable action.
+ * Owned by UEdenOsAdapterSubsystem; HUD reads a copy.
+ */
+USTRUCT(BlueprintType)
+struct EDENSPACESIMULATOR_API FEdenOsAcceptedAdvisory
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	bool bIsValid = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FString AdvisoryId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FString EvaluationId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FString Recommendation;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FString Rationale;
+
+	/** When Unreal decided the evaluation was due (request). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	float EvaluationSimulationTimeSeconds = 0.0f;
+
+	/** When the context snapshot was observed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	float ContextSnapshotSimulationTimeSeconds = 0.0f;
+
+	/** When the validated response was accepted (issuance / EdenAdvisoryIssued). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	float IssuedSimulationTimeSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	TArray<EEdenOsAdvisoryTriggerReason> TriggerReasons;
+};

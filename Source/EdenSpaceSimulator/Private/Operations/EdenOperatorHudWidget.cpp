@@ -128,6 +128,21 @@ FText UEdenOperatorHudWidget::FormatSnapshot(const FEdenOperatorHudSnapshot& Sna
 		AlertsText = TEXT("\n  (none)");
 	}
 
+	const FString AdvisoryText = Snapshot.bHasAdvisory
+		? FString::Printf(
+			TEXT(
+				"\n\n"
+				"EDEN ADVISORY\n"
+				"  %s\n"
+				"  %s\n"
+				"  Issued at: %.1fs\n"
+				"  Id: %s"),
+			*Snapshot.AdvisoryRecommendation,
+			*Snapshot.AdvisoryRationale,
+			Snapshot.AdvisoryIssuedSimulationTimeSeconds,
+			*Snapshot.AdvisoryId)
+		: FString();
+
 	const FString Body = FString::Printf(
 		TEXT(
 			"MISSION\n"
@@ -147,7 +162,7 @@ FText UEdenOperatorHudWidget::FormatSnapshot(const FEdenOperatorHudSnapshot& Sna
 			"  Load-shed: %s\n"
 			"  Propulsion: %s\n"
 			"\n"
-			"ALERTS%s"),
+			"ALERTS%s%s"),
 		*Snapshot.MissionId.ToString(),
 		*EnumToString(Snapshot.MissionState),
 		*EnumToString(Snapshot.MissionPhase),
@@ -161,7 +176,8 @@ FText UEdenOperatorHudWidget::FormatSnapshot(const FEdenOperatorHudSnapshot& Sna
 		*EnumToString(Snapshot.Operator.ThermalMode),
 		*EnumToString(Snapshot.Operator.LoadShedMode),
 		*EnumToString(Snapshot.Operator.PropulsionPriority),
-		*AlertsText);
+		*AlertsText,
+		*AdvisoryText);
 
 	return FText::FromString(Body);
 }

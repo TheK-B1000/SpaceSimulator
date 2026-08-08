@@ -2,11 +2,14 @@
 
 #include "EdenOs/EdenOsAdapterSubsystem.h"
 
+#include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "EdenOs/EdenOsAdvisoryModel.h"
 #include "EdenOs/EdenOsConnectionSettings.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsUnrealHttpTransport.h"
+#include "EdenOs/EdenOsWireTypes.h"
+#include "Telemetry/EdenTelemetryExportModel.h"
 #include "Telemetry/EdenTelemetrySubsystem.h"
 #include "Engine/World.h"
 #include "HAL/PlatformMisc.h"
@@ -341,13 +344,33 @@ void UEdenOsAdapterSubsystem::HandleTransportCompleted(
 		OutboundQueue.Num(),
 		DroppedOutboundMessageCount,
 		&Result);
+	const bool bIgnoreAdvisoryFailureAfterComplete =
+		MessageType == EEdenOsOutboundMessageType::Advisory
+		&& !Result.IsSuccess()
+		&& HasSessionCompletedOrCompletionQueued();
 	if (Result.IsSuccess())
 	{
 		bHasSuccessfulTransportDelivery = true;
 	}
-	else if (bHasSuccessfulTransportDelivery)
+	else if (bHasSuccessfulTransportDelivery && !bIgnoreAdvisoryFailureAfterComplete)
 	{
 		ConnectionSnapshot.ConnectionState = EEdenOsConnectionState::Degraded;
+	}
+	else if (bIgnoreAdvisoryFailureAfterComplete && bHasSuccessfulTransportDelivery)
+	{
+		// Keep Connected: a late advisory losing the race to SessionComplete is expected, not degraded.
+		ConnectionSnapshot.ConnectionState = EEdenOsConnectionState::Connected;
+		ConnectionSnapshot.LastErrorSummary.Reset();
+	}
+
+	if (MessageType == EEdenOsOutboundMessageType::Advisory)
+	{
+		HandleAdvisoryTransportCompleted(Result, SequenceNumber);
+	}
+	else if (MessageType == EEdenOsOutboundMessageType::SessionComplete && Result.IsSuccess())
+	{
+		// Terminal session: drop any advisory work that would 409 against ProjectEden.
+		CancelPendingAdvisoryDispatches(TEXT("session completed"));
 	}
 
 	PumpOutboundQueue();
@@ -471,6 +494,12 @@ void UEdenOsAdapterSubsystem::EvaluateAdvisoryForSettledStep()
 	}
 
 	const FEdenTelemetrySnapshot& SettledSnapshot = Snapshots.Last();
+	if (SettledSnapshot.Mission.MissionState != EEdenMissionState::Running)
+	{
+		// Advisories are in-mission only. Post-terminal evaluation would race SessionComplete
+		// (ProjectEden returns 409 for completed sessions).
+		return;
+	}
 
 	// Evaluation timing is owned by the simulation clock; telemetry owns observation history.
 	// Reading the clock live is what keeps evaluation time distinct from the (decimated) snapshot
@@ -508,20 +537,300 @@ void UEdenOsAdapterSubsystem::EvaluateAdvisoryForSettledStep()
 	LastAdvisoryEvaluationSimulationSeconds = Result.NewLastEvaluationSimulationSeconds;
 	bHasEvaluatedAdvisory = true;
 	++AdvisoryEvaluationCount;
+
+	DispatchAdvisoryEvaluation(Result.Context);
+}
+
+void UEdenOsAdapterSubsystem::DispatchAdvisoryEvaluation(const FEdenOsAdvisoryContext& Context)
+{
+	if (!Context.bIsValid || Context.SessionId.IsEmpty())
+	{
+		UE_LOG(LogEdenOs, Warning, TEXT("Advisory dispatch skipped: context invalid or sessionId empty."));
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	UEdenTelemetrySubsystem* Telemetry = World ? World->GetSubsystem<UEdenTelemetrySubsystem>() : nullptr;
+	if (!Telemetry)
+	{
+		UE_LOG(LogEdenOs, Warning, TEXT("Advisory dispatch skipped: telemetry subsystem unavailable."));
+		return;
+	}
+
+	// ProjectEden rejects advisories for unknown sessions. Flush the EDEN lifecycle sink first so
+	// session create (and any pending telemetry/events) is queued ahead of this advisory request.
+	const FEdenTelemetrySinkDeliverySummary LifecycleFlush = Telemetry->DeliverSessionToRegisteredSinks();
+	if (LifecycleFlush.AttemptedCount == 0 || LifecycleFlush.SucceededCount == 0)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory dispatch skipped: lifecycle flush did not queue session create for '%s'."),
+			*Context.SessionId);
+		return;
+	}
+
+	if (HasSessionCompletedOrCompletionQueued())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Advisory dispatch skipped for session '%s': completion already queued or delivered."),
+			*Context.SessionId);
+		return;
+	}
+
+	const int64 EvaluationOrdinal = NextAdvisoryEvaluationOrdinal++;
+	const FString EvaluationId = FString::Printf(TEXT("eval-%lld"), EvaluationOrdinal);
+
+	FEdenOsAdvisoryRequestV1 Request;
+	Request.SessionId = Context.SessionId;
+	Request.EvaluationId = EvaluationId;
+	Request.Context = Context;
+
+	const FEdenOsWireSerializationResult Serialization =
+		FEdenOsWireSerializationModel::BuildAdvisoryJsonV1(Request);
+	if (!Serialization.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory request serialization failed for %s: %s"),
+			*EvaluationId,
+			*Serialization.ErrorMessage);
+		return;
+	}
+
+	const int64 SequenceNumber = NextOutboundSequenceNumber;
+	FPendingAdvisoryDispatch Pending;
+	Pending.EvaluationId = EvaluationId;
+	Pending.Context = Context;
+	Pending.EvaluationOrdinal = EvaluationOrdinal;
+	PendingAdvisoryByOutboundSequence.Add(SequenceNumber, MoveTemp(Pending));
+
+	FEdenOsQueuedRequest Queued;
+	Queued.MessageType = EEdenOsOutboundMessageType::Advisory;
+	Queued.RoutePath = FEdenOsUrlModel::BuildSessionRoute(
+		EdenOsWireContract::AdvisoriesRouteTemplate,
+		Context.SessionId);
+	Queued.BodyJson = Serialization.Json;
+
+	const FEdenTelemetrySinkResult EnqueueResult = EnqueueOutboundRequest(MoveTemp(Queued));
+	if (!EnqueueResult.IsSuccess())
+	{
+		PendingAdvisoryByOutboundSequence.Remove(SequenceNumber);
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory enqueue failed for %s: %s"),
+			*EvaluationId,
+			*EnqueueResult.ErrorMessage);
+	}
+}
+
+void UEdenOsAdapterSubsystem::HandleAdvisoryTransportCompleted(
+	const FEdenOsHttpResult& Result,
+	int64 SequenceNumber)
+{
+	FPendingAdvisoryDispatch Pending;
+	const bool bHadPending = PendingAdvisoryByOutboundSequence.RemoveAndCopyValue(SequenceNumber, Pending);
+	if (!bHadPending)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory transport completed for unknown outbound sequence %lld; ignoring."),
+			SequenceNumber);
+		return;
+	}
+
+	if (!Result.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory transport failed for %s: %s"),
+			*Pending.EvaluationId,
+			*Result.ErrorSummary);
+		return;
+	}
+
+	const FEdenOsAdvisoryResponseParseResult Parsed =
+		FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(Result.ResponseBodyJson, Pending.EvaluationId);
+	if (!Parsed.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Advisory response rejected for %s: %s"),
+			*Pending.EvaluationId,
+			*Parsed.ErrorMessage);
+		return;
+	}
+
+	AcceptAdvisoryResponse(Parsed.Response, Pending);
+}
+
+void UEdenOsAdapterSubsystem::AcceptAdvisoryResponse(
+	const FEdenOsAdvisoryResponseV1& Response,
+	const FPendingAdvisoryDispatch& Pending)
+{
+	UWorld* World = GetWorld();
+	UEdenTelemetrySubsystem* Telemetry = World ? World->GetSubsystem<UEdenTelemetrySubsystem>() : nullptr;
+
+	float IssuedSimulationTimeSeconds = Pending.Context.SimulationTimeSeconds;
+	if (World)
+	{
+		if (const UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>())
+		{
+			IssuedSimulationTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
+		}
+	}
+
+	FString TriggerReasonsJson = TEXT("[");
+	for (int32 Index = 0; Index < Pending.Context.TriggerReasons.Num(); ++Index)
+	{
+		if (Index > 0)
+		{
+			TriggerReasonsJson += TEXT(", ");
+		}
+		TriggerReasonsJson += FString::Printf(
+			TEXT("\"%s\""),
+			*FEdenOsWireSerializationModel::TriggerReasonToWireValue(Pending.Context.TriggerReasons[Index]));
+	}
+	TriggerReasonsJson += TEXT("]");
+
+	// Detail carries §5.9 facts only — no invented severity/confidence/codes.
+	const FString Detail = FString::Printf(
+		TEXT(
+			"{"
+			"\"advisoryId\":\"%s\","
+			"\"evaluationId\":\"%s\","
+			"\"recommendation\":\"%s\","
+			"\"rationale\":\"%s\","
+			"\"evaluationSimulationTimeSeconds\":%.6f,"
+			"\"contextSnapshotSimulationTimeSeconds\":%.6f,"
+			"\"triggerReasons\":%s"
+			"}"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Response.AdvisoryId),
+		*FEdenTelemetryExportModel::EscapeJsonString(Response.EvaluationId),
+		*FEdenTelemetryExportModel::EscapeJsonString(Response.Recommendation),
+		*FEdenTelemetryExportModel::EscapeJsonString(Response.Rationale),
+		Pending.Context.SimulationTimeSeconds,
+		Pending.Context.ContextSnapshotSimulationTimeSeconds,
+		*TriggerReasonsJson);
+
+	if (Telemetry)
+	{
+		Telemetry->RecordObservationEvent(
+			EEdenTelemetryEventType::EdenAdvisoryIssued,
+			TEXT("EdenOs"),
+			FName(*Response.AdvisoryId),
+			Detail);
+	}
+
+	// Stale-callback safety for HUD: only newer-or-equal ordinals replace LatestAcceptedAdvisory.
+	if (Pending.EvaluationOrdinal < LatestAcceptedAdvisoryOrdinal)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Accepted stale advisory %s (eval %s); telemetry recorded, HUD not updated."),
+			*Response.AdvisoryId,
+			*Response.EvaluationId);
+		return;
+	}
+
+	LatestAcceptedAdvisoryOrdinal = Pending.EvaluationOrdinal;
+	LatestAcceptedAdvisory = FEdenOsAcceptedAdvisory();
+	LatestAcceptedAdvisory.bIsValid = true;
+	LatestAcceptedAdvisory.AdvisoryId = Response.AdvisoryId;
+	LatestAcceptedAdvisory.EvaluationId = Response.EvaluationId;
+	LatestAcceptedAdvisory.Recommendation = Response.Recommendation;
+	LatestAcceptedAdvisory.Rationale = Response.Rationale;
+	LatestAcceptedAdvisory.EvaluationSimulationTimeSeconds = Pending.Context.SimulationTimeSeconds;
+	LatestAcceptedAdvisory.ContextSnapshotSimulationTimeSeconds =
+		Pending.Context.ContextSnapshotSimulationTimeSeconds;
+	LatestAcceptedAdvisory.IssuedSimulationTimeSeconds = IssuedSimulationTimeSeconds;
+	LatestAcceptedAdvisory.TriggerReasons = Pending.Context.TriggerReasons;
+
+	UE_LOG(
+		LogEdenOs,
+		Log,
+		TEXT("Accepted advisory %s for evaluation %s (issued at sim t=%.3fs)."),
+		*Response.AdvisoryId,
+		*Response.EvaluationId,
+		IssuedSimulationTimeSeconds);
+}
+
+void UEdenOsAdapterSubsystem::CancelPendingAdvisoryDispatches(const TCHAR* Reason)
+{
+	int32 RemovedQueued = 0;
+	for (int32 Index = OutboundQueue.Num() - 1; Index >= 0; --Index)
+	{
+		if (OutboundQueue[Index].MessageType == EEdenOsOutboundMessageType::Advisory)
+		{
+			PendingAdvisoryByOutboundSequence.Remove(OutboundQueue[Index].SequenceNumber);
+			OutboundQueue.RemoveAt(Index, 1, EAllowShrinking::No);
+			++RemovedQueued;
+		}
+	}
+
+	const int32 RemovedPending = PendingAdvisoryByOutboundSequence.Num();
+	PendingAdvisoryByOutboundSequence.Reset();
+
+	if (RemovedQueued > 0 || RemovedPending > 0)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Cancelled advisory dispatches (%d queued, %d pending maps) because %s."),
+			RemovedQueued,
+			RemovedPending,
+			Reason ? Reason : TEXT("unspecified"));
+	}
+}
+
+bool UEdenOsAdapterSubsystem::HasSessionCompletedOrCompletionQueued() const
+{
+	for (const FEdenOsDeliveryRecord& Record : DeliveryHistory)
+	{
+		if (Record.MessageType == EEdenOsOutboundMessageType::SessionComplete && Record.bSucceeded)
+		{
+			return true;
+		}
+	}
+	for (const FEdenOsQueuedRequest& Request : OutboundQueue)
+	{
+		if (Request.MessageType == EEdenOsOutboundMessageType::SessionComplete)
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
 {
 	LastAdvisoryContext = FEdenOsAdvisoryContext();
+	LatestAcceptedAdvisory = FEdenOsAcceptedAdvisory();
+	PendingAdvisoryByOutboundSequence.Reset();
 	LastEvaluatedTelemetrySequence = 0;
 	LastAdvisoryEvaluationSimulationSeconds = 0.0f;
 	bHasEvaluatedAdvisory = false;
 	AdvisoryEvaluationCount = 0;
+	NextAdvisoryEvaluationOrdinal = 1;
+	LatestAcceptedAdvisoryOrdinal = 0;
 }
 
 FEdenOsAdvisoryContext UEdenOsAdapterSubsystem::GetLastAdvisoryContext() const
 {
 	return LastAdvisoryContext;
+}
+
+FEdenOsAcceptedAdvisory UEdenOsAdapterSubsystem::GetLatestAcceptedAdvisory() const
+{
+	return LatestAcceptedAdvisory;
 }
 
 int32 UEdenOsAdapterSubsystem::GetAdvisoryEvaluationCount() const

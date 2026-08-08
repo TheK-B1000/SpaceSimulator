@@ -2,6 +2,9 @@
 
 #include "EdenOs/EdenOsWireTypes.h"
 
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "Telemetry/EdenTelemetryExportModel.h"
 
 namespace EdenOsWireSerializationPrivate
@@ -334,6 +337,202 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildSessionComple
 	}
 	Json += TEXT("\n}\n");
 	return FEdenOsWireSerializationResult::Succeeded(Json);
+}
+
+FEdenOsAdvisoryResponseParseResult FEdenOsAdvisoryResponseParseResult::Succeeded(FEdenOsAdvisoryResponseV1 InResponse)
+{
+	FEdenOsAdvisoryResponseParseResult Result;
+	Result.bSuccess = true;
+	Result.Response = MoveTemp(InResponse);
+	return Result;
+}
+
+FEdenOsAdvisoryResponseParseResult FEdenOsAdvisoryResponseParseResult::Failed(FString InErrorMessage)
+{
+	FEdenOsAdvisoryResponseParseResult Result;
+	Result.bSuccess = false;
+	Result.ErrorMessage = MoveTemp(InErrorMessage);
+	return Result;
+}
+
+bool FEdenOsAdvisoryResponseParseResult::IsSuccess() const
+{
+	return bSuccess;
+}
+
+FString FEdenOsWireSerializationModel::TriggerReasonToWireValue(EEdenOsAdvisoryTriggerReason Reason)
+{
+	// Locked §19.2a vocabulary. ProjectEden pins these exact strings at route level, so any drift
+	// here fails loudly rather than silently.
+	switch (Reason)
+	{
+	case EEdenOsAdvisoryTriggerReason::MissionPhaseTransition:
+		return TEXT("mission_phase_transition");
+	case EEdenOsAdvisoryTriggerReason::AlertTransition:
+		return TEXT("alert_transition");
+	case EEdenOsAdvisoryTriggerReason::ObjectiveTransition:
+		return TEXT("objective_transition");
+	case EEdenOsAdvisoryTriggerReason::OperatorAction:
+		return TEXT("operator_action");
+	case EEdenOsAdvisoryTriggerReason::Heartbeat:
+		return TEXT("heartbeat");
+	}
+
+	checkNoEntry();
+	return FString();
+}
+
+FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildAdvisoryJsonV1(
+	const FEdenOsAdvisoryRequestV1& Request)
+{
+	using namespace EdenOsWireSerializationPrivate;
+
+	if (!HasIdentifier(Request.SessionId))
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS advisory requires a non-empty sessionId."));
+	}
+	if (!HasIdentifier(Request.EvaluationId))
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS advisory requires a non-empty evaluationId."));
+	}
+	if (!Request.Context.bIsValid)
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS advisory requires a built advisory context."));
+	}
+
+	const float EvaluationTime = Request.Context.SimulationTimeSeconds;
+	const float SnapshotTime = Request.Context.ContextSnapshotSimulationTimeSeconds;
+	if (!FMath::IsFinite(EvaluationTime) || !FMath::IsFinite(SnapshotTime))
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS advisory times must be finite."));
+	}
+	if (SnapshotTime > EvaluationTime)
+	{
+		// Mirrors the ProjectEden CHECK constraint: an observation cannot postdate the decision.
+		return FEdenOsWireSerializationResult::Failed(
+			TEXT("EDEN OS advisory contextSnapshotSimulationTimeSeconds cannot exceed simulationTimeSeconds."));
+	}
+	if (Request.Context.TriggerReasons.Num() == 0)
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS advisory requires at least one trigger reason."));
+	}
+
+	FString Json;
+	Json += TEXT("{\n");
+	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
+	Json += FString::Printf(
+		TEXT("  \"evaluationId\": \"%s\",\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.EvaluationId));
+	Json += FString::Printf(TEXT("  \"simulationTimeSeconds\": %.6f,\n"), EvaluationTime);
+	Json += FString::Printf(TEXT("  \"contextSnapshotSimulationTimeSeconds\": %.6f,\n"), SnapshotTime);
+
+	Json += TEXT("  \"triggerReasons\": [");
+	for (int32 Index = 0; Index < Request.Context.TriggerReasons.Num(); ++Index)
+	{
+		Json += FString::Printf(
+			TEXT("%s\"%s\""),
+			Index > 0 ? TEXT(", ") : TEXT(""),
+			*TriggerReasonToWireValue(Request.Context.TriggerReasons[Index]));
+	}
+	Json += TEXT("],\n");
+
+	// Bounded, flat observation. Field names match what the ProjectEden reasoner reads.
+	Json += TEXT("  \"context\": {\n");
+	Json += FString::Printf(
+		TEXT("    \"missionId\": \"%s\",\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.Context.ActiveMissionId.ToString()));
+	Json += FString::Printf(
+		TEXT("    \"missionState\": \"%s\",\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(
+			FEdenTelemetryExportModel::EnumToken(Request.Context.MissionState)));
+	Json += FString::Printf(
+		TEXT("    \"phase\": \"%s\",\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(
+			FEdenTelemetryExportModel::EnumToken(Request.Context.MissionPhase)));
+	Json += FString::Printf(
+		TEXT("    \"missionElapsedTimeSeconds\": %.6f,\n"),
+		Request.Context.MissionElapsedTimeSeconds);
+	Json += FString::Printf(
+		TEXT("    \"temperatureCelsius\": %.6f,\n"),
+		Request.Context.Thermal.TemperatureCelsius);
+	Json += FString::Printf(TEXT("    \"batteryFraction\": %.6f,\n"), Request.Context.Power.ChargeFraction);
+	Json += FString::Printf(TEXT("    \"fuelFraction\": %.6f,\n"), Request.Context.Fuel.FuelFraction);
+	Json += FString::Printf(
+		TEXT("    \"temperatureDeltaCelsius\": %.6f,\n"),
+		Request.Context.TemperatureCelsiusTrend.Delta);
+	Json += FString::Printf(
+		TEXT("    \"batteryFractionDelta\": %.6f,\n"),
+		Request.Context.BatteryChargeFractionTrend.Delta);
+	Json += FString::Printf(
+		TEXT("    \"fuelFractionDelta\": %.6f,\n"),
+		Request.Context.FuelFractionTrend.Delta);
+	Json += FString::Printf(TEXT("    \"snapshotSampleCount\": %d,\n"), Request.Context.RecentSnapshots.Num());
+	Json += FString::Printf(TEXT("    \"eventSampleCount\": %d,\n"), Request.Context.RecentEvents.Num());
+	Json += FString::Printf(
+		TEXT("    \"contextTruncated\": %s,\n"),
+		Request.Context.bContextTruncated ? TEXT("true") : TEXT("false"));
+	Json += FString::Printf(
+		TEXT("    \"upstreamHistoryTruncated\": %s\n"),
+		Request.Context.bUpstreamHistoryTruncated ? TEXT("true") : TEXT("false"));
+	Json += TEXT("  }\n");
+	Json += TEXT("}\n");
+
+	return FEdenOsWireSerializationResult::Succeeded(Json);
+}
+
+FEdenOsAdvisoryResponseParseResult FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(
+	const FString& Json,
+	const FString& ExpectedEvaluationId)
+{
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Json);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response is not valid JSON."));
+	}
+
+	FEdenOsAdvisoryResponseV1 Response;
+
+	double SchemaVersion = 0.0;
+	if (!Root->TryGetNumberField(TEXT("schemaVersion"), SchemaVersion))
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response is missing schemaVersion."));
+	}
+	Response.SchemaVersion = static_cast<int32>(SchemaVersion);
+	if (Response.SchemaVersion != EdenOsWireContract::CurrentSchemaVersion)
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(FString::Printf(
+			TEXT("Unsupported advisory response schemaVersion %d."),
+			Response.SchemaVersion));
+	}
+
+	if (!Root->TryGetStringField(TEXT("advisoryId"), Response.AdvisoryId) || Response.AdvisoryId.IsEmpty())
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response requires a non-empty advisoryId."));
+	}
+	if (!Root->TryGetStringField(TEXT("evaluationId"), Response.EvaluationId) || Response.EvaluationId.IsEmpty())
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response requires a non-empty evaluationId."));
+	}
+	if (!Root->TryGetStringField(TEXT("recommendation"), Response.Recommendation) || Response.Recommendation.IsEmpty())
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response requires a non-empty recommendation."));
+	}
+	if (!Root->TryGetStringField(TEXT("rationale"), Response.Rationale) || Response.Rationale.IsEmpty())
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(TEXT("Advisory response requires a non-empty rationale."));
+	}
+
+	// Correlation guard: a response for a different evaluation must never become this advisory.
+	if (!ExpectedEvaluationId.IsEmpty() && Response.EvaluationId != ExpectedEvaluationId)
+	{
+		return FEdenOsAdvisoryResponseParseResult::Failed(FString::Printf(
+			TEXT("Advisory response evaluationId '%s' does not match pending evaluation '%s'."),
+			*Response.EvaluationId,
+			*ExpectedEvaluationId));
+	}
+
+	return FEdenOsAdvisoryResponseParseResult::Succeeded(MoveTemp(Response));
 }
 
 FEdenOsWireSerializationResult FEdenOsWireSerializationModel::ValidateSchemaVersionFromJson(const FString& Json)

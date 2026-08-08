@@ -164,6 +164,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from eden_api.database.models import (
+    MissionAdvisory,
     MissionEnvironmentEvent,
     MissionTelemetryPayload,
     SimulationRun,
@@ -187,6 +188,12 @@ def main() -> None:
     session_id = evidence["sessionId"]
     deliveries = evidence["deliveries"]
     expected_event_count = sum(1 for item in deliveries if item["messageType"] == "Event")
+    authority_mode = evidence.get("authorityMode", "Advisory")
+    successful_advisory_deliveries = sum(
+        1
+        for item in deliveries
+        if item["messageType"] == "Advisory" and item.get("succeeded") is True
+    )
 
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
     Session = sessionmaker(bind=engine)
@@ -221,16 +228,27 @@ def main() -> None:
             .all()
         )
         events = db.query(MissionEnvironmentEvent).filter_by(session_id=session_id).all()
-        if len(telemetry_payloads) != 1:
-            fail(f"expected one mission telemetry payload, got {len(telemetry_payloads)}")
-        if len(telemetry_states) != 1:
-            fail(f"expected one telemetry state row for run, got {len(telemetry_states)}")
+        advisories = db.query(MissionAdvisory).filter_by(session_id=session_id).all()
+        # Advisory mode flushes telemetry incrementally during the mission, so payload count may be > 1.
+        if len(telemetry_payloads) < 1:
+            fail(f"expected at least one mission telemetry payload, got {len(telemetry_payloads)}")
+        if len(telemetry_states) < 1:
+            fail(f"expected at least one telemetry state row for run, got {len(telemetry_states)}")
         if telemetry_payloads[0].telemetry_state.simulation_run_id != run.id:
             fail("telemetry payload does not belong to the persisted run")
         if len(events) != expected_event_count:
             fail(f"expected {expected_event_count} mission events, got {len(events)}")
         if any(event.simulation_run_id != run.id for event in events):
             fail("at least one event does not belong to the persisted run")
+        if authority_mode == "Advisory":
+            if successful_advisory_deliveries < 1:
+                fail("Advisory mode evidence contains no successful advisory deliveries")
+            if len(advisories) < 1:
+                fail(f"expected at least one persisted MissionAdvisory, got {len(advisories)}")
+            if any(advisory.simulation_run_id != run.id for advisory in advisories):
+                fail("at least one advisory does not belong to the persisted run")
+        elif authority_mode == "Observe" and len(advisories) != 0:
+            fail(f"Observe mode must not persist advisories, got {len(advisories)}")
 
         summary = {
             "sessionId": session_id,
@@ -241,10 +259,13 @@ def main() -> None:
             "endedAtPopulated": run.ended_at is not None,
             "databaseRunStatus": run.run_status.name,
             "unrealMissionState": evidence["missionState"],
+            "authorityMode": authority_mode,
             "terminalResultMatches": evidence["missionState"] == "Succeeded" and run.run_status.name == "completed",
             "telemetryPayloadCount": len(telemetry_payloads),
             "telemetryStateCount": len(telemetry_states),
             "eventCount": len(events),
+            "advisoryCount": len(advisories),
+            "successfulAdvisoryDeliveries": successful_advisory_deliveries,
             "alertsCount": run.alerts_count,
             "ticks": run.ticks,
             "highestRiskSystem": run.highest_risk_system,
