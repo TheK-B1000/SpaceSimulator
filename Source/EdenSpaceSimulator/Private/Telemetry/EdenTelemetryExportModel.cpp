@@ -9,7 +9,9 @@ namespace EdenTelemetryExportModelPrivate
 		return bValue ? TEXT("true") : TEXT("false");
 	}
 
-	FString ResolveOutcome(const TArray<FEdenTelemetryEvent>& Events, const TArray<FEdenTelemetrySnapshot>& Snapshots)
+	FString ResolveOutcome(
+		TConstArrayView<FEdenTelemetryEvent> Events,
+		TConstArrayView<FEdenTelemetrySnapshot> Snapshots)
 	{
 		for (int32 Index = Events.Num() - 1; Index >= 0; --Index)
 		{
@@ -143,34 +145,40 @@ FString FEdenTelemetryExportModel::BuildSessionJsonV1(
 	const FString& SessionId,
 	const FName MissionId)
 {
+	const FEdenTelemetrySessionPayload Payload(Events, Snapshots, Metadata, SessionId, MissionId);
+	return BuildSessionJsonV1(Payload);
+}
+
+FString FEdenTelemetryExportModel::BuildSessionJsonV1(const FEdenTelemetrySessionPayload& Payload)
+{
 	using namespace EdenTelemetryExportModelPrivate;
 
 	float StartSimulationTime = 0.0f;
 	float EndSimulationTime = 0.0f;
-	if (Snapshots.Num() > 0)
+	if (Payload.Snapshots.Num() > 0)
 	{
-		StartSimulationTime = Snapshots[0].SimulationTimeSeconds;
-		EndSimulationTime = Snapshots.Last().SimulationTimeSeconds;
+		StartSimulationTime = Payload.Snapshots[0].SimulationTimeSeconds;
+		EndSimulationTime = Payload.Snapshots.Last().SimulationTimeSeconds;
 	}
-	else if (Events.Num() > 0)
+	else if (Payload.Events.Num() > 0)
 	{
-		StartSimulationTime = Events[0].SimulationTimeSeconds;
-		EndSimulationTime = Events.Last().SimulationTimeSeconds;
-	}
-
-	FName ResolvedMissionId = MissionId;
-	if (ResolvedMissionId.IsNone() && Snapshots.Num() > 0)
-	{
-		ResolvedMissionId = Snapshots.Last().Mission.ActiveMissionId;
+		StartSimulationTime = Payload.Events[0].SimulationTimeSeconds;
+		EndSimulationTime = Payload.Events.Last().SimulationTimeSeconds;
 	}
 
-	const FString Outcome = ResolveOutcome(Events, Snapshots);
+	FName ResolvedMissionId = Payload.MissionId;
+	if (ResolvedMissionId.IsNone() && Payload.Snapshots.Num() > 0)
+	{
+		ResolvedMissionId = Payload.Snapshots.Last().Mission.ActiveMissionId;
+	}
+
+	const FString Outcome = ResolveOutcome(Payload.Events, Payload.Snapshots);
 
 	FString Json;
 	Json += TEXT("{\n");
 	Json += TEXT("  \"schemaVersion\": 1,\n");
 	Json += TEXT("  \"session\": {\n");
-	Json += FString::Printf(TEXT("    \"sessionId\": \"%s\",\n"), *EscapeJsonString(SessionId));
+	Json += FString::Printf(TEXT("    \"sessionId\": \"%s\",\n"), *EscapeJsonString(Payload.GetSafeSessionId()));
 	Json += FString::Printf(
 		TEXT("    \"missionId\": \"%s\",\n"),
 		*EscapeJsonString(ResolvedMissionId.ToString()));
@@ -181,33 +189,33 @@ FString FEdenTelemetryExportModel::BuildSessionJsonV1(
 	Json += TEXT("  \"integrity\": {\n");
 	Json += FString::Printf(
 		TEXT("    \"historyTruncated\": %s,\n"),
-		*BoolJson(Metadata.bHistoryTruncated));
-	Json += FString::Printf(TEXT("    \"droppedSnapshots\": %d,\n"), Metadata.DroppedSnapshotCount);
-	Json += FString::Printf(TEXT("    \"droppedEvents\": %d,\n"), Metadata.DroppedEventCount);
+		*BoolJson(Payload.Metadata.bHistoryTruncated));
+	Json += FString::Printf(TEXT("    \"droppedSnapshots\": %d,\n"), Payload.Metadata.DroppedSnapshotCount);
+	Json += FString::Printf(TEXT("    \"droppedEvents\": %d,\n"), Payload.Metadata.DroppedEventCount);
 	Json += FString::Printf(
 		TEXT("    \"eventIntegrityCompromised\": %s\n"),
-		*BoolJson(Metadata.bEventIntegrityCompromised));
+		*BoolJson(Payload.Metadata.bEventIntegrityCompromised));
 	Json += TEXT("  },\n");
 	Json += TEXT("  \"aggregates\": {\n");
-	Json += FString::Printf(TEXT("    \"peakTemperatureCelsius\": %.6f,\n"), Metadata.PeakTemperatureCelsius);
+	Json += FString::Printf(TEXT("    \"peakTemperatureCelsius\": %.6f,\n"), Payload.Metadata.PeakTemperatureCelsius);
 	Json += FString::Printf(
 		TEXT("    \"minimumBatteryChargeFraction\": %.6f,\n"),
-		Metadata.MinimumBatteryChargeFraction);
-	Json += FString::Printf(TEXT("    \"minimumFuelFraction\": %.6f,\n"), Metadata.MinimumFuelFraction);
-	Json += FString::Printf(TEXT("    \"snapshotIntervalSeconds\": %.6f\n"), Metadata.SnapshotIntervalSeconds);
+		Payload.Metadata.MinimumBatteryChargeFraction);
+	Json += FString::Printf(TEXT("    \"minimumFuelFraction\": %.6f,\n"), Payload.Metadata.MinimumFuelFraction);
+	Json += FString::Printf(TEXT("    \"snapshotIntervalSeconds\": %.6f\n"), Payload.Metadata.SnapshotIntervalSeconds);
 	Json += TEXT("  },\n");
 
 	Json += TEXT("  \"events\": [\n");
-	for (int32 Index = 0; Index < Events.Num(); ++Index)
+	for (int32 Index = 0; Index < Payload.Events.Num(); ++Index)
 	{
-		AppendEvent(Json, Events[Index], Index + 1 < Events.Num());
+		AppendEvent(Json, Payload.Events[Index], Index + 1 < Payload.Events.Num());
 	}
 	Json += TEXT("  ],\n");
 
 	Json += TEXT("  \"snapshots\": [\n");
-	for (int32 Index = 0; Index < Snapshots.Num(); ++Index)
+	for (int32 Index = 0; Index < Payload.Snapshots.Num(); ++Index)
 	{
-		AppendSnapshot(Json, Snapshots[Index], Index + 1 < Snapshots.Num());
+		AppendSnapshot(Json, Payload.Snapshots[Index], Index + 1 < Payload.Snapshots.Num());
 	}
 	Json += TEXT("  ]\n");
 	Json += TEXT("}\n");

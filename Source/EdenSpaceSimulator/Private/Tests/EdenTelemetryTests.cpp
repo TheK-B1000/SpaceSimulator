@@ -2,6 +2,7 @@
 
 #include "Telemetry/EdenAfterActionModel.h"
 #include "Telemetry/EdenTelemetryExportModel.h"
+#include "Telemetry/EdenTelemetrySink.h"
 #include "Telemetry/EdenTelemetryTypes.h"
 
 #include "Misc/AutomationTest.h"
@@ -166,6 +167,59 @@ bool FEdenTelemetryExportSchemaV1ContainsContractFieldsTest::RunTest(const FStri
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenTelemetrySinkPayloadBuildsSameSchemaAsDirectExportTest,
+	"Eden.Unit.Telemetry.Sink.PayloadBuildsSameSchemaAsDirectExport",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenTelemetrySinkPayloadBuildsSameSchemaAsDirectExportTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenTelemetrySessionMetadata Metadata;
+	Metadata.PeakTemperatureCelsius = 91.0f;
+	Metadata.MinimumBatteryChargeFraction = 0.31f;
+	Metadata.MinimumFuelFraction = 0.62f;
+	Metadata.SnapshotIntervalSeconds = 0.5f;
+
+	TArray<FEdenTelemetryEvent> Events;
+	FEdenTelemetryEvent Started;
+	Started.SequenceNumber = 1;
+	Started.EventType = EEdenTelemetryEventType::MissionStarted;
+	Started.SourceSystem = TEXT("Mission");
+	Started.EventId = TEXT("Running");
+	Events.Add(Started);
+
+	TArray<FEdenTelemetrySnapshot> Snapshots;
+	FEdenTelemetrySnapshot Snapshot;
+	Snapshot.SequenceNumber = 2;
+	Snapshot.SimulationTimeSeconds = 5.0f;
+	Snapshot.Fuel.FuelFraction = 0.62f;
+	Snapshot.Power.ChargeFraction = 0.31f;
+	Snapshot.Thermal.TemperatureCelsius = 91.0f;
+	Snapshot.Mission.ActiveMissionId = TEXT("SolarCrisis");
+	Snapshot.Mission.MissionState = EEdenMissionState::Running;
+	Snapshots.Add(Snapshot);
+
+	const FString DirectJson = FEdenTelemetryExportModel::BuildSessionJsonV1(
+		Events,
+		Snapshots,
+		Metadata,
+		TEXT("payload-session"),
+		TEXT("SolarCrisis"));
+
+	const FEdenTelemetrySessionPayload Payload(
+		Events,
+		Snapshots,
+		Metadata,
+		TEXT("payload-session"),
+		TEXT("SolarCrisis"));
+	const FString PayloadJson = FEdenTelemetryExportModel::BuildSessionJsonV1(Payload);
+
+	TestEqual(TEXT("Payload overload preserves schema output"), PayloadJson, DirectJson);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenTelemetryExportFileSmokeTest,
 	"Eden.Unit.Telemetry.Export.FileSmokeWritesSavedTelemetry",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -174,26 +228,27 @@ bool FEdenTelemetryExportFileSmokeTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 
-	const FString Json = FEdenTelemetryExportModel::BuildSessionJsonV1(
-		{},
-		{},
+	TArray<FEdenTelemetryEvent> Events;
+	TArray<FEdenTelemetrySnapshot> Snapshots;
+	const FEdenTelemetrySessionPayload Payload(
+		Events,
+		Snapshots,
 		FEdenTelemetrySessionMetadata(),
 		TEXT("smoke-session"),
 		TEXT("SolarCrisis"));
 
-	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Telemetry"));
-	IFileManager::Get().MakeDirectory(*Directory, true);
-	const FString AbsolutePath =
-		FPaths::ConvertRelativePathToFull(FPaths::Combine(Directory, TEXT("telemetry_smoke-session.json")));
+	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Telemetry"), TEXT("SinkSmoke"));
+	FEdenLocalJsonTelemetrySink Sink(Directory);
+	const FEdenTelemetrySinkResult Result = Sink.DeliverTelemetrySession(Payload);
 
-	TestTrue(
-		TEXT("Write smoke file"),
-		FFileHelper::SaveStringToFile(Json, *AbsolutePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
-	TestTrue(TEXT("Smoke file exists"), IFileManager::Get().FileExists(*AbsolutePath));
+	TestTrue(TEXT("Write smoke file through sink"), Result.IsSuccess());
+	TestFalse(TEXT("Sink returns destination"), Result.Destination.IsEmpty());
+	TestTrue(TEXT("Smoke file exists"), IFileManager::Get().FileExists(*Result.Destination));
 
 	FString RoundTrip;
-	TestTrue(TEXT("Read smoke file"), FFileHelper::LoadFileToString(RoundTrip, *AbsolutePath));
+	TestTrue(TEXT("Read smoke file"), FFileHelper::LoadFileToString(RoundTrip, *Result.Destination));
 	TestTrue(TEXT("Round-trip schema"), RoundTrip.Contains(TEXT("\"schemaVersion\": 1")));
+	TestTrue(TEXT("Round-trip session"), RoundTrip.Contains(TEXT("\"sessionId\": \"smoke-session\"")));
 	return true;
 }
 
