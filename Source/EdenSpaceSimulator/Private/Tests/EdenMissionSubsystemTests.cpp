@@ -441,11 +441,11 @@ bool FEdenMissionSameTimeEventsDispatchDeterministicallyTest::RunTest(const FStr
 
 	Clock->Tick(0.15f);
 
-	TestEqual(TEXT("Both same-time events fired"), Listener->TriggeredEventIds.Num(), 2);
-	if (Listener->TriggeredEventIds.Num() == 2)
+	TestEqual(TEXT("Both same-time events fired"), Listener->TriggeredEvents.Num(), 2);
+	if (Listener->TriggeredEvents.Num() == 2)
 	{
-		TestEqual(TEXT("Configured order preserved: Alpha first"), Listener->TriggeredEventIds[0], FName("AlphaHeat"));
-		TestEqual(TEXT("Configured order preserved: Beta second"), Listener->TriggeredEventIds[1], FName("BetaDemand"));
+		TestEqual(TEXT("Configured order preserved: Alpha first"), Listener->TriggeredEvents[0], FName("AlphaHeat"));
+		TestEqual(TEXT("Configured order preserved: Beta second"), Listener->TriggeredEvents[1], FName("BetaDemand"));
 	}
 
 	TestEqual(TEXT("Thermal command applied"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 11.0f);
@@ -495,12 +495,12 @@ bool FEdenMissionEventDoesNotDispatchTwiceTest::RunTest(const FString& Parameter
 	TestTrue(TEXT("Mission starts"), MissionSubsystem->StartMission());
 
 	Clock->Tick(0.15f);
-	TestEqual(TEXT("Event fires once"), Listener->TriggeredEventIds.Num(), 1);
+	TestEqual(TEXT("Event fires once"), Listener->TriggeredEvents.Num(), 1);
 	TestEqual(TEXT("External heating applied"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 9.0f);
 
 	ThermalComponent->ClearExternalHeatingRate();
 	Clock->Tick(0.2f);
-	TestEqual(TEXT("Event does not re-dispatch"), Listener->TriggeredEventIds.Num(), 1);
+	TestEqual(TEXT("Event does not re-dispatch"), Listener->TriggeredEvents.Num(), 1);
 	TestEqual(TEXT("External heating remains cleared"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 0.0f);
 
 	return true;
