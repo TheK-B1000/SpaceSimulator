@@ -2,16 +2,28 @@
 
 ## Status
 
-**Draft — design only, not approved, not started.**
+**Design approved / locked - not started. Implementation blocked on 0005.**
 
 ## Prerequisite status
 
 > [!IMPORTANT]
 > 0006 depends on **0005 (Operator Systems Control + Mission HUD)** being complete, not merely on 0004.
 >
-> The interesting telemetry — operator commands, alert transitions, response latency — does not exist until 0005 creates it. Building 0006 first would produce a recorder whose most valuable channel is empty, and would force a schema revision the moment operator actions arrive.
+> The interesting telemetry - operator commands, alert transitions, response latency - does not exist until 0005 creates it. Building 0006 first would produce a recorder whose most valuable channel is empty, and would force a schema revision the moment operator actions arrive.
 >
-> 0006 **design** may proceed now. 0006 **implementation** must wait for 0005.
+> 0006 **design** is locked below. 0006 **implementation** must wait for 0005.
+
+Locked product sequence:
+
+```text
+0004 Emergency mission shell
+        |
+0005 Operator systems + HUD
+        |
+0006 Telemetry + AAR
+        |
+0007 EDEN OS adapter / AI mission control
+```
 
 ---
 
@@ -23,29 +35,29 @@ This milestone builds the simulator's flight recorder:
 
 ```text
 Flight / Fuel / Power / Thermal / Mission / Operator
-                    ↓ immutable snapshots + transition events
+                    -> immutable snapshots + transition events
              UEdenTelemetrySubsystem
-                    ↓ bounded, ordered history
+                    -> bounded, ordered history
         After-Action Review  ·  JSON export  ·  future EDEN OS adapter
 ```
 
-The outcome is that a completed Solar Crisis yields a reconstructable account of what happened, what the operator did, and when — as data, not as log text.
+The outcome is that a completed Solar Crisis yields a reconstructable account of what happened, what the operator did, and when - as data, not as log text.
 
 ---
 
-## 2. Locked architecture decisions (proposed)
+## 2. Locked architecture decisions (approved)
 
 ### 2.1 Telemetry observes; it never commands
 
-Telemetry holds no authoritative state and issues no commands. It reads immutable snapshots through existing `BlueprintPure` accessors and subscribes to existing broadcast delegates.
+Telemetry holds no authoritative state and issues no commands. It reads immutable snapshots through existing `BlueprintPure` accessors and subscribes to broadcast delegates.
 
 Forbidden without exception:
 
 ```text
-Telemetry → set battery / temperature / fuel
-Telemetry → fail or complete an objective
-Telemetry → change mission phase or state
-Telemetry → issue an operator command
+Telemetry -> set battery / temperature / fuel
+Telemetry -> fail or complete an objective
+Telemetry -> change mission phase or state
+Telemetry -> issue an operator command
 ```
 
 A telemetry defect must be capable of losing data. It must never be capable of changing the mission result.
@@ -60,7 +72,15 @@ Priority 100   Mission      (timeline, objectives, outcome, dispatch)
 Priority 200   Telemetry    (observation only)
 ```
 
-Registering strictly after mission guarantees every sample reflects **fully settled** state for that step — post-resource, post-objective, post-outcome, post-dispatch. No sample can catch a half-stepped world.
+Deterministic order:
+
+```text
+resources settle
+-> mission observes / evaluates / dispatches
+-> telemetry records final state of that simulation step
+```
+
+Every telemetry record means: *the settled state after step N*. No Schrodinger snapshots.
 
 ### 2.3 Simulation time is the clock; sequence number is the tiebreaker
 
@@ -72,31 +92,74 @@ Every record carries:
 | `MissionElapsedTimeSeconds` | Mission-relative time for the AAR |
 | `SequenceNumber` (`uint64`, monotonic) | Total ordering when several records share a timestamp |
 
-Multiple events legitimately occur at the same fixed-step timestamp (phase change, external demand, external heating all at $T=10.0$). Timestamp alone cannot order them; the sequence number can. Wall-clock UTC is recorded **once per session header**, never per record.
+Multiple events legitimately occur at the same fixed-step timestamp. Timestamp alone cannot order them; the sequence number can. Wall-clock UTC is recorded **once per session header**, never per record.
 
 ### 2.4 Two record types, different capture rules
 
-- **`FEdenTelemetryEvent`** — discrete, transition-driven. **Never decimated.** Losing an event loses a fact.
-- **`FEdenTelemetrySnapshot`** — periodic sample of continuous state. **Decimated** (every Nth fixed step; proposed N=5, i.e. 2 Hz against the 0.1 s step). Losing a sample loses resolution, not a fact.
+- **`FEdenTelemetryEvent`** - discrete, transition-driven. **Lossless.** Losing an event loses a fact.
+- **`FEdenTelemetrySnapshot`** - periodic sample of continuous state. **Decimated** (every Nth fixed step; proposed N=5, i.e. 2 Hz against the 0.1 s step). Losing a sample loses resolution, not a fact.
 
-### 2.5 History is bounded and its truncation is visible
+### 2.5 Observe every step for aggregates; store every Nth snapshot
 
-Fixed-capacity ring buffers, preallocated at initialization — no per-step heap allocation, per AGENTS.md. Separate capacities for events and snapshots.
+Telemetry runs every fixed step at priority 200. Capture policy:
 
-On overflow: drop oldest, increment `DroppedEventCount` / `DroppedSnapshotCount`. The AAR must **state** when its history was truncated rather than silently presenting a partial record as complete. Silent truncation is a lie told with real data.
+```text
+every 0.1 s telemetry observation
+      ├── update aggregate metrics
+      ├── capture every event
+      └── persist snapshot only every N steps (e.g. 0.5 s)
+```
 
-### 2.6 History outlives the mission that produced it
+AAR extrema are therefore **simulation-step resolution**, not merely extrema of the retained snapshot ring. Presentation may say:
 
-This is the decision most easily got wrong. The AAR is generated *after* a mission reaches `Succeeded`/`Failed`, so:
+```text
+Snapshot interval: 0.5 s
+Peak recorded simulation temperature: 73.4 C
+Lowest recorded battery: ...
+```
 
-- `UEdenMissionSubsystem::ResetMission()` **must not** clear telemetry history.
-- History is cleared **only** by explicit `ClearHistory()` or by `LoadMission` starting a *new* mission.
+Do **not** add authoritative running extrema to thermal/power ownership for 0006 v1. Aggregating inside telemetry avoids analytics-only derived state on resource owners.
 
-Telemetry deliberately outlives its mission. Wiring it to mission reset would destroy the record exactly when the review needs it.
+### 2.6 History is bounded and truncation is encoded in the session
 
-### 2.7 Domain composition inside, versioned schema at the boundary
+Fixed-capacity ring buffers, preallocated at initialization - no per-step heap allocation, per AGENTS.md. Separate capacities for events and snapshots.
 
-`FEdenTelemetrySnapshot` **composes** the existing domain snapshot structs rather than re-flattening their fields:
+Session truncation metadata (required):
+
+```text
+DroppedSnapshotCount
+DroppedEventCount          // ideally always 0
+HistoryTruncated
+FirstAvailableSequence
+LastAvailableSequence
+```
+
+On snapshot overflow: drop oldest, increment `DroppedSnapshotCount`, set `HistoryTruncated`.
+
+On event overflow (extreme / should-not-happen): drop oldest, increment `DroppedEventCount`, set a **loud integrity flag**. Quiet event amputation is forbidden.
+
+The AAR must **state** when history was truncated rather than silently presenting a partial record as complete.
+
+### 2.7 Three separate history / mission operations
+
+```text
+ResetMission()
+    resets mission runtime only
+    does NOT clear telemetry / AAR history
+
+ClearHistory()
+    explicitly destroys telemetry / AAR history
+
+LoadMission(new mission)
+    closes / discards previous active recording according to policy
+    then starts a new telemetry session
+```
+
+AAR data must not disappear because gameplay state was reset.
+
+### 2.8 Domain composition inside, versioned schema at the boundary
+
+Internally, compose domain snapshots:
 
 ```cpp
 struct FEdenTelemetrySnapshot
@@ -105,20 +168,18 @@ struct FEdenTelemetrySnapshot
     float    MissionElapsedTimeSeconds;
     uint64   SequenceNumber;
 
+    FEdenFlightStateSnapshot   Flight;
     FEdenFuelStateSnapshot     Fuel;
     FEdenPowerStateSnapshot    Power;
     FEdenThermalStateSnapshot  Thermal;
     FEdenMissionStateSnapshot  Mission;
-    FEdenFlightStateSnapshot   Flight;
     FEdenOperatorStateSnapshot Operator;   // 0005
 };
 ```
 
-One definition per domain; adding a resource field does not require editing telemetry.
+Externally: **Telemetry Export Schema v1**. The exporter/adapter translates the evolving internal model into a stable wire contract. That prevents EDEN OS from welding onto Unreal structs.
 
-The **exporter** owns the versioned wire schema and maps domain structs onto it. Schema version lives at the export boundary, not in the domain. This is what lets 0007's EDEN OS adapter consume a stable contract while the simulation keeps evolving.
-
-### 2.8 Sink failure is contained
+### 2.9 Sink failure is contained
 
 ```cpp
 class IEdenTelemetrySink
@@ -128,7 +189,35 @@ class IEdenTelemetrySink
 };
 ```
 
-A sink returns a result; it never throws and never mutates simulation state. Delivery failures are counted and logged separately from domain state, per ARCHITECTURE.md §12. A failing sink must not stall the fixed step — a slow or broken sink is disabled after a bounded failure count rather than retried indefinitely inside the simulation tick.
+A sink returns a result; it never throws and never mutates simulation state. Delivery failures are counted and logged separately from domain state, per ARCHITECTURE.md section 12. A failing sink must not stall the fixed step - disable after a bounded failure count rather than retry indefinitely inside the simulation tick.
+
+### 2.10 Objective-state delegate is a Checkpoint dependency
+
+Do **not** infer objective transitions by comparing sampled snapshots.
+
+Mission owns objective state and must emit:
+
+```cpp
+OnObjectiveStateChanged(
+    FName ObjectiveId,
+    EEdenObjectiveState PreviousState,
+    EEdenObjectiveState NewState
+)
+```
+
+Telemetry subscribes:
+
+```text
+Mission objective changes
+        |
+OnObjectiveStateChanged
+        |
+Telemetry event
+        |
+AAR
+```
+
+This touches mission code and **strengthens** command/event/snapshot separation. It is an explicit 0006 checkpoint dependency, not an internal telemetry workaround.
 
 ---
 
@@ -138,87 +227,103 @@ A sink returns a result; it never throws and never mutates simulation state. Del
 |---|---|---|---|
 | Telemetry event history | `UEdenTelemetrySubsystem` | AAR, export, sinks | Telemetry subsystem only |
 | Telemetry snapshot history | `UEdenTelemetrySubsystem` | AAR, export, sinks | Telemetry subsystem only |
-| Sequence counter | `UEdenTelemetrySubsystem` | — | Telemetry subsystem only |
-| Dropped-record counters | `UEdenTelemetrySubsystem` | AAR | Telemetry subsystem only |
-| Sink registration list | `UEdenTelemetrySubsystem` | — | Telemetry subsystem only |
+| Per-step aggregate extrema | `UEdenTelemetrySubsystem` | AAR | Telemetry subsystem only |
+| Sequence counter | `UEdenTelemetrySubsystem` | - | Telemetry subsystem only |
+| Truncation / integrity metadata | `UEdenTelemetrySubsystem` | AAR | Telemetry subsystem only |
+| Sink registration list | `UEdenTelemetrySubsystem` | - | Telemetry subsystem only |
 | Sink delivery failure counts | `UEdenTelemetrySubsystem` | Debug, AAR | Telemetry subsystem only |
 | Derived AAR metrics | `FEdenAfterActionModel` (pure, computed) | AAR view | Computed, never stored as truth |
 
-Every row is telemetry-owned. **No existing ownership row changes** — that is the point.
+Every row is telemetry-owned (except the mission-owned `OnObjectiveStateChanged` emission). **No resource ownership rows change** for extrema.
 
 ---
 
 ## 4. Event capture sources
 
-All bind to delegates that already exist; none introduce polling.
+Bind to delegates; do not poll for transitions.
 
 | Source | Delegate | Events |
 |---|---|---|
 | Mission | `OnMissionStateChanged` | `MissionStarted`, `MissionSucceeded`, `MissionFailed`, `MissionAborted` |
 | Mission | `OnMissionPhaseChanged` | `PhaseChanged` |
 | Mission | `OnMissionEventTriggered` | `ScheduledEventFired` (+ command type and payload) |
+| Mission | **`OnObjectiveStateChanged` (new, required)** | `ObjectiveActivated` / `Completed` / `Failed` / etc. |
 | Fuel / Power / Thermal | `OnStateChanged(Prev, Current)` | `ResourceStateTransition` |
 | Operator (0005) | operator intent change | `OperatorCommandIssued` |
 | Alerts (0005) | alert raised / cleared | `AlertRaised`, `AlertCleared` |
-| Objectives | objective runtime transition | `ObjectiveActivated/Completed/Failed` |
-
-Objective transitions currently have no delegate — mission owns objective runtime state internally. **0006 will need a mission-side objective-transition broadcast**, or telemetry must diff successive mission snapshots. Diffing is inference, not observation; a delegate is the correct fix. Flagged as open question #2.
 
 ---
 
 ## 5. After-Action Review
 
-`FEdenAfterActionModel` is a **pure** model computing derived metrics from recorded history — no world, fully unit-testable, matching `FEdenMissionModel`'s precedent.
+Split deliberately:
 
-Derived metrics:
+```text
+H  FEdenAfterActionModel
+   pure transformation: telemetry session -> AAR result
+
+I  AAR presentation
+   AAR result -> UI
+
+J  automated / manual closeout
+```
+
+`FEdenAfterActionModel` is pure - no world, fully unit-testable - matching `FEdenMissionModel`.
+
+Unit-testable questions without Unreal UI:
+
+```text
+What was response latency?
+What was maximum temperature?
+How long was the craft critical?
+Which operator action came first?
+Which objectives failed?
+Was telemetry history truncated?
+```
+
+Derived metrics (illustrative):
 
 | Metric | Derivation |
 |---|---|
 | Duration | Last minus first mission-relative timestamp |
-| Peak temperature | Max over snapshot history |
-| Lowest battery | Min `ChargeFraction` over snapshot history |
+| Peak recorded simulation temperature | Max from **per-step aggregates** |
+| Lowest recorded battery | Min `ChargeFraction` from **per-step aggregates** |
 | Fuel remaining | Final `FuelFraction` |
-| Response to impact | First `OperatorCommandIssued` after the impact event, minus impact timestamp |
+| Response to impact | First `OperatorCommandIssued` after impact, minus impact timestamp |
 | Operator action list | Filtered event history |
-| Objective results | Final objective states |
+| Objective results | Final objective states + transition events |
 | Critical events | Events at or above a severity threshold |
-
-Note that peak/min are computed from **decimated** snapshots, so they are extrema *of the samples*, not guaranteed true extrema. Either label them as sampled, or have resource components expose running peak/min as authoritative state. Flagged as open question #3.
+| Truncation / integrity | Session metadata |
 
 ---
 
 ## 6. Checkpoint breakdown
 
-Follows the proposed A–I with two adjustments, noted below.
-
 | # | Scope | Gate |
 |---|---|---|
-| **A** | `FEdenTelemetryEvent`, `FEdenTelemetrySnapshot`, `EEdenTelemetryEventType`, sequence/timestamp semantics | Unit tests |
-| **B** | `UEdenTelemetrySubsystem`, clock registration at priority 200, ring buffers | Unit + ordering tests |
+| **A** | `FEdenTelemetryEvent`, `FEdenTelemetrySnapshot`, `EEdenTelemetryEventType`, sequence/timestamp semantics, session truncation metadata | Unit tests |
+| **B** | `UEdenTelemetrySubsystem`, clock registration at priority 200, ring buffers, per-step aggregates + decimated snapshot store | Unit + ordering tests |
 | **C** | Snapshot assembly from flight + resources + mission + operator | Integration tests |
-| **D** | Event capture: delegate binding for all sources in §4 | Integration tests |
-| **E** | History buffering: bounds, drop counters, reset semantics (§2.6) | Unit tests |
+| **D0** | Mission `OnObjectiveStateChanged` delegate (ownership-correct emission) | Unit + mission tests |
+| **D** | Event capture: delegate binding for all sources in section 4 | Integration tests |
+| **E** | History buffering: bounds, drop counters, `ResetMission` / `ClearHistory` / `LoadMission` semantics (section 2.7) | Unit tests |
 | **F** | `IEdenTelemetrySink` + local logging sink + failure containment | Unit tests with a deliberately failing sink |
-| **G** | JSON export with versioned wire schema; `Saved/Telemetry/` | Round-trip tests |
-| **H** | `FEdenAfterActionModel` derived metrics | Unit tests on synthetic histories |
+| **G** | JSON export with versioned wire schema (`Telemetry Export Schema v1`); `Saved/Telemetry/` | Round-trip tests |
+| **H** | `FEdenAfterActionModel` pure metrics | Unit tests on synthetic histories |
 | **I** | AAR presentation surface | Manual PIE |
 | **J** | Full automation + manual PIE closeout | Hands-on gate |
-
-**Adjustment 1** — AAR is split: `H` is the pure metric model (testable without a world), `I` is presentation. Combining them would make the metrics only testable through UI.
-
-**Adjustment 2** — a `J` closeout checkpoint is added, matching the structure of 0003 and 0004 rather than folding verification into the last feature checkpoint.
 
 ---
 
 ## 7. Test matrix
 
-**Unit** — sequence numbers strictly increase; identical timestamps remain ordered by sequence; ring buffer drops oldest and increments counters; decimation samples every Nth step exactly; events are never decimated; AAR metrics correct over synthetic histories; AAR reports truncation when drop counters are non-zero; JSON round-trips; schema version present.
+**Unit** - sequence numbers strictly increase; identical timestamps remain ordered by sequence; ring buffer drops oldest and increments counters; aggregates update every step while snapshots store every Nth; events are never decimated; event drop raises integrity flag; AAR metrics correct over synthetic histories; AAR reports truncation when drop counters are non-zero; JSON round-trips; schema version present.
 
-**Integration** — telemetry steps after mission at priority 200; every sample reflects settled state; all §4 delegates produce exactly one event per transition; mission reset does **not** clear history; new `LoadMission` **does** clear history; a failing sink neither stalls the step nor mutates state; a sink disabled after repeated failures is reported.
+**Integration** - telemetry steps after mission at priority 200; every sample reflects settled state; all section 4 delegates produce exactly one event per transition; `ResetMission` does **not** clear history; `ClearHistory` does; `LoadMission` closes prior recording per policy and starts a new session; a failing sink neither stalls the step nor mutates state.
 
-**Scenario** — record a full Solar Crisis run and assert the resulting history reconstructs the known timeline; assert an operator run and a passive run produce materially different AARs. That difference is the milestone's proof: it demonstrates the recorder captured *decisions*, not just physics.
+**Scenario** - record a full Solar Crisis run and assert the resulting history reconstructs the known timeline; assert an operator run and a passive run produce materially different AARs.
 
-**Manual PIE** — AAR renders after mission end, values match observed play, export file written and well-formed, no per-frame log spam, clean Output Log.
+**Manual PIE** - AAR renders after mission end, values match observed play, export file written and well-formed, no per-frame log spam, clean Output Log.
 
 ---
 
@@ -226,7 +331,7 @@ Follows the proposed A–I with two adjustments, noted below.
 
 ```text
 Public/Telemetry/
-    EdenTelemetryTypes.h          (event, snapshot, event-type enum)
+    EdenTelemetryTypes.h          (event, snapshot, event-type enum, session metadata)
     EdenTelemetrySubsystem.h
     EdenTelemetrySink.h           (IEdenTelemetrySink)
     EdenTelemetryLogSink.h
@@ -246,20 +351,35 @@ Content/Eden/UI/WBP_EdenAfterActionReview.uasset
 Saved/Telemetry/                  (runtime output, not tracked)
 ```
 
-`Public/Telemetry/` and `Private/Telemetry/` already appear in ARCHITECTURE.md §10 as planned directories.
+`Public/Telemetry/` and `Private/Telemetry/` already appear in ARCHITECTURE.md section 10 as planned directories.
+
+Mission change required by Checkpoint D0:
+
+```text
+Public/Missions/EdenMissionSubsystem.h   (+ OnObjectiveStateChanged)
+Private/Missions/...                     (emit on objective transitions)
+```
 
 ---
 
 ## 9. Out of scope
 
-EDEN OS adapter and transport (0007); network delivery; live streaming; replay or playback from telemetry; persistence across sessions beyond file export; docking (0008); analytics dashboards; compression; database storage; telemetry-driven gameplay of any kind.
+EDEN OS adapter and transport (0007); network delivery; live streaming; replay or playback from telemetry; persistence across sessions beyond file export; docking (0008); analytics dashboards; compression; database storage; telemetry-driven gameplay of any kind; authoritative resource-owned running extrema for analytics.
 
 ---
 
-## 10. Open questions for approval
+## 10. Open questions (remaining)
 
-1. **Snapshot decimation rate.** N=5 (2 Hz) proposed as the balance between AAR resolution and bounded memory. A 50 s mission then holds ~100 snapshots — cheap. Confirm before Checkpoint B fixes the buffer sizes.
-2. **Objective transition delegate.** Objective runtime state has no broadcast today. Recommend adding one to `UEdenMissionSubsystem` rather than having telemetry diff snapshots — diffing infers transitions instead of observing them, and would miss any transition that resolves within one decimation interval. This means 0006 touches mission code.
-3. **Sampled vs. true extrema.** "Peak temperature" from decimated samples can miss a real spike between samples. Either label AAR extrema as sampled, or have thermal/power own authoritative running peak/min. The second is more honest and costs two floats per component; it also changes 0004-owned code.
-4. **Export trigger.** Automatic on mission end, or explicit console command? Automatic risks writing files during every PIE run; explicit risks losing the record. Recommend automatic on terminal state, with a config toggle.
-5. **AAR surface.** Reuse the 0005 HUD stack (UMG) or a separate review screen? Recommend separate — the AAR is a post-mission modal view with different lifetime and input handling than the operator HUD.
+Resolved by approval:
+
+1. ~~Objective transition delegate~~ -> **Locked:** add `OnObjectiveStateChanged` (Checkpoint D0). Do not diff snapshots.
+2. ~~Sampled vs true extrema~~ -> **Locked:** update aggregates every fixed step inside telemetry; store snapshots every N; do not move extrema ownership onto resource components.
+3. ~~History vs mission reset~~ -> **Locked:** `ResetMission` / `ClearHistory` / `LoadMission` are three separate operations (section 2.7).
+4. ~~AAR H/I split~~ -> **Locked:** H model / I presentation / J closeout.
+5. ~~0006 depends on 0005~~ -> **Locked.**
+
+Still open before implementation:
+
+1. **Snapshot decimation rate.** N=5 (2 Hz) proposed. Confirm before Checkpoint B fixes buffer sizes.
+2. **Export trigger.** Automatic on terminal mission state with a config toggle, or explicit console command?
+3. **AAR surface.** Separate post-mission modal (recommended) vs reuse of the 0005 HUD stack.

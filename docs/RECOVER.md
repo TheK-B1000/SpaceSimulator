@@ -14,6 +14,7 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Checkpoint G | ✅ Real `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset` (LFS); VerifyMissionAssets passed on `main` |
 | Checkpoint H | Code present; **manual PIE remains the only 0004 blocker** |
 | ExecPlan 0003 | Still blocked on delayed hands-on PIE (fold into same PIE session) |
+| ExecPlan 0006 | Design locked in `docs/exec-plans/0006-telemetry-and-after-action-review.md`; implementation blocked on 0005 |
 | Last successful validation | VerifyMissionAssets: `/Game/Eden/Data/Missions/DA_SolarEventEmergency` (4 objectives, 7 events). Prior full suite: `Automation RunTests Eden.` → **179** project `Eden.*` tests, exit 0. |
 | Next task | Human PIE closeout for 0004 H (+ delayed 0003). Do not mark 0004 Complete / do not tag `v0.3.0-emergency-mission` until PIE evidence is recorded. Do not change 0004 code again before PIE unless the editor exposes a real defect. |
 
@@ -58,6 +59,7 @@ Then read `AGENTS.md` and mandatory docs, then ExecPlan 0004.
 - Hands-on PIE checklist for ShowDebug EdenMission / StartMission / RestartMission / AbortMission (plus delayed 0003 resource checks).
 - Mark ExecPlan 0004 Complete only after PIE evidence.
 - Create `v0.3.0-emergency-mission` only after Complete.
+- Do not start 0006 implementation until 0005; design is locked in ExecPlan 0006.
 
 ### Next Clean Action
 
