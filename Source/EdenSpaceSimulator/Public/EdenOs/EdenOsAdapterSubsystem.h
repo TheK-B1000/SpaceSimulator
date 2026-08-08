@@ -27,6 +27,8 @@ public:
 	FEdenOsValidationResult GetLastValidationResult() const;
 
 	bool ApplyRuntimeConfig(const FEdenOsConnectionConfig& InConfig);
+	/** Enable transport using config defaults; optional BaseUrl override. Preserves any injected RuntimeBearerJwt. */
+	bool EnableRuntimeConnection(const FString& BaseUrl);
 	void SetRuntimeBearerJwt(const FString& InBearerJwt);
 	void ClearRuntimeBearerJwt();
 	bool LoadRuntimeBearerJwtFromEnvironment(const FString& VariableName);

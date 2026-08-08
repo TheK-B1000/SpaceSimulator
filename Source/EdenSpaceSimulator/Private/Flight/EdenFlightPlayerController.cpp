@@ -4,10 +4,12 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "EdenOs/EdenOsAdapterSubsystem.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenSpacecraftPawn.h"
+#include "HAL/PlatformMisc.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "Missions/EdenMissionDefinitionDataAsset.h"
@@ -21,6 +23,12 @@
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
 #include "UObject/SoftObjectPath.h"
+
+namespace EdenFlightPlayerControllerEdenOs
+{
+	static const TCHAR* DefaultLiveBaseUrlEnvVar = TEXT("EDEN_OS_LIVE_E2E_BASE_URL");
+	static const TCHAR* DefaultLiveBearerJwtEnvVar = TEXT("EDEN_OS_LIVE_E2E_BEARER_JWT");
+}
 
 namespace EdenFlightPlayerControllerMission
 {
@@ -558,6 +566,97 @@ void AEdenFlightPlayerController::ShowAfterAction()
 		AfterActionReviewWidget->AddToViewport(20);
 	}
 	AfterActionReviewWidget->SetVisibility(ESlateVisibility::Visible);
+}
+
+void AEdenFlightPlayerController::EnableEdenOs(const FString& BaseUrl)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
+	if (!Adapter)
+	{
+		UE_LOG(LogEdenOs, Warning, TEXT("%s EnableEdenOs: UEdenOsAdapterSubsystem not found."), *GetNameSafe(this));
+		return;
+	}
+
+	FString ResolvedBaseUrl = BaseUrl.TrimStartAndEnd();
+	if (ResolvedBaseUrl.IsEmpty())
+	{
+		ResolvedBaseUrl =
+			FPlatformMisc::GetEnvironmentVariable(EdenFlightPlayerControllerEdenOs::DefaultLiveBaseUrlEnvVar)
+				.TrimStartAndEnd();
+	}
+
+	const bool bAccepted = Adapter->EnableRuntimeConnection(ResolvedBaseUrl);
+	const FEdenOsConnectionSnapshot Snapshot = Adapter->GetConnectionSnapshot();
+	const FEdenOsValidationResult Validation = Adapter->GetLastValidationResult();
+	if (!bAccepted)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("%s EnableEdenOs rejected: %s (BaseUrl='%s')."),
+			*GetNameSafe(this),
+			*Validation.GetFirstErrorOrEmpty(),
+			*ResolvedBaseUrl);
+		return;
+	}
+
+	UE_LOG(
+		LogEdenOs,
+		Log,
+		TEXT("%s EnableEdenOs ready: BaseUrl='%s' HasBearerJwt=%s State=%d. Inject JWT next if needed, then StartMission."),
+		*GetNameSafe(this),
+		*ResolvedBaseUrl,
+		Snapshot.bHasBearerJwt ? TEXT("true") : TEXT("false"),
+		static_cast<int32>(Snapshot.ConnectionState));
+}
+
+void AEdenFlightPlayerController::SetEdenOsBearerFromEnv(const FString& VariableName)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
+	if (!Adapter)
+	{
+		UE_LOG(LogEdenOs, Warning, TEXT("%s SetEdenOsBearerFromEnv: UEdenOsAdapterSubsystem not found."), *GetNameSafe(this));
+		return;
+	}
+
+	FString ResolvedVariableName = VariableName.TrimStartAndEnd();
+	if (ResolvedVariableName.IsEmpty())
+	{
+		ResolvedVariableName = EdenFlightPlayerControllerEdenOs::DefaultLiveBearerJwtEnvVar;
+	}
+
+	if (!Adapter->LoadRuntimeBearerJwtFromEnvironment(ResolvedVariableName))
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("%s SetEdenOsBearerFromEnv: environment variable '%s' is missing or empty."),
+			*GetNameSafe(this),
+			*ResolvedVariableName);
+		return;
+	}
+
+	const FEdenOsConnectionSnapshot Snapshot = Adapter->GetConnectionSnapshot();
+	UE_LOG(
+		LogEdenOs,
+		Log,
+		TEXT("%s SetEdenOsBearerFromEnv loaded token from '%s' (value not logged). HasBearerJwt=%s Enabled=%s."),
+		*GetNameSafe(this),
+		*ResolvedVariableName,
+		Snapshot.bHasBearerJwt ? TEXT("true") : TEXT("false"),
+		Snapshot.bEnabled ? TEXT("true") : TEXT("false"));
 }
 
 void AEdenFlightPlayerController::EnsureAfterActionReviewCreated()

@@ -55,6 +55,20 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Telemetry")
 	void ShowAfterAction();
 
+	/**
+	 * PIE/dev: enable EDEN OS transport.
+	 * BaseUrl optional; if empty, uses EDEN_OS_LIVE_E2E_BASE_URL then UEdenOsConnectionSettings::BaseUrl.
+	 */
+	UFUNCTION(Exec, Category = "Eden|OS")
+	void EnableEdenOs(const FString& BaseUrl);
+
+	/**
+	 * PIE/dev: load Bearer JWT from an environment variable (value never logged).
+	 * VariableName optional; defaults to EDEN_OS_LIVE_E2E_BEARER_JWT.
+	 */
+	UFUNCTION(Exec, Category = "Eden|OS")
+	void SetEdenOsBearerFromEnv(const FString& VariableName);
+
 	/** Default mission definition loaded by StartMission/RestartMission. Soft reference; no hard package dependency. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Mission")
 	TSoftObjectPtr<UEdenMissionDefinitionDataAsset> DefaultMissionDefinitionAsset;

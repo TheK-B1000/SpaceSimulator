@@ -14,7 +14,7 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
 | Last successful validation | Checkpoint G validation: build PASS with explicit `EdenOsTransportTests.cpp` compile; focused `Eden.Integration.EdenOs.` PASS with 4 tests including Observe invariant; focused `Eden.Unit.EdenOs.` PASS with 38 tests; live Observe E2E PASS through real ProjectEden FastAPI/auth/service/repository/SQLite; full `Automation RunTests Eden.` PASS with 239 tests; repository validation PASS; editor verifiers PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and added-diff scope scans PASS |
-| Next task | Review/accept Checkpoint G. Do not begin Checkpoints H-M until G is committed and explicitly accepted |
+| Next task | Review/accept Checkpoint G. Do not begin Checkpoints H-M until G is committed and explicitly accepted. Small PIE QoL: `EnableEdenOs` / `SetEdenOsBearerFromEnv` console pair (JWT via env only) |
 
 ## Recovery protocol
 
@@ -61,6 +61,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - The narrow Checkpoint C corrective wire-contract patch was accepted at `3f69f9b`.
 - 0007 Checkpoint F session lifecycle convergence plus live cross-process E2E proof are accepted at `63768ab` and `5249a6a`.
 - 0007 Checkpoint G Observe mode is implemented and ready for acceptance. Checkpoints H-M remain locked.
+- PIE/dev console pair added: `EnableEdenOs` / `SetEdenOsBearerFromEnv` on `AEdenFlightPlayerController` (defaults match `EDEN_OS_LIVE_E2E_*` env vars; Bearer value never logged).
 
 ### Latest Checkpoint G Evidence
 

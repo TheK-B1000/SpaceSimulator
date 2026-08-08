@@ -309,4 +309,29 @@ bool FEdenOsSubsystemOwnsRuntimeSnapshotTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsSubsystemEnableRuntimeConnectionPreservesJwtTest,
+	"Eden.Unit.EdenOs.Subsystem.EnableRuntimeConnectionPreservesJwt",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsSubsystemEnableRuntimeConnectionPreservesJwtTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UEdenOsAdapterSubsystem* Subsystem = NewObject<UEdenOsAdapterSubsystem>();
+	Subsystem->SetRuntimeBearerJwt(TEXT("preserved-token"));
+	TestTrue(
+		TEXT("EnableRuntimeConnection accepts valid BaseUrl"),
+		Subsystem->EnableRuntimeConnection(TEXT("http://127.0.0.1:8791")));
+
+	const FEdenOsConnectionSnapshot Snapshot = Subsystem->GetConnectionSnapshot();
+	TestTrue(TEXT("EnableRuntimeConnection leaves transport enabled"), Snapshot.bEnabled);
+	TestTrue(TEXT("EnableRuntimeConnection preserves injected Bearer JWT"), Snapshot.bHasBearerJwt);
+	TestEqual(
+		TEXT("EnableRuntimeConnection starts disconnected until delivery"),
+		Snapshot.ConnectionState,
+		EEdenOsConnectionState::Disconnected);
+	return true;
+}
+
 #endif

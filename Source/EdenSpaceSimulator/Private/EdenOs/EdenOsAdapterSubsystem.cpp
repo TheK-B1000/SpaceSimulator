@@ -69,6 +69,21 @@ bool UEdenOsAdapterSubsystem::ApplyRuntimeConfig(const FEdenOsConnectionConfig& 
 	return LastValidationResult.IsValid();
 }
 
+bool UEdenOsAdapterSubsystem::EnableRuntimeConnection(const FString& BaseUrl)
+{
+	const FString PreservedJwt = RuntimeConfig.RuntimeBearerJwt;
+	const UEdenOsConnectionSettings* Settings = GetDefault<UEdenOsConnectionSettings>();
+	FEdenOsConnectionConfig Config = Settings ? Settings->MakeConnectionConfig() : FEdenOsConnectionConfig();
+	Config.bEnabled = true;
+	const FString TrimmedBaseUrl = BaseUrl.TrimStartAndEnd();
+	if (!TrimmedBaseUrl.IsEmpty())
+	{
+		Config.BaseUrl = TrimmedBaseUrl;
+	}
+	Config.RuntimeBearerJwt = PreservedJwt;
+	return ApplyRuntimeConfig(Config);
+}
+
 void UEdenOsAdapterSubsystem::SetRuntimeBearerJwt(const FString& InBearerJwt)
 {
 	RuntimeConfig.RuntimeBearerJwt = InBearerJwt;
