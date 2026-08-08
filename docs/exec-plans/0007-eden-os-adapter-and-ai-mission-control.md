@@ -847,6 +847,20 @@ Stays under the mission-session resource established in D/F. **Not** `/api/simul
 | `triggerReasons` | Every same-step coalesced reason, canonical order preserved |
 | `context` | The bounded immutable H context |
 
+#### 19.2a Trigger reason wire vocabulary — LOCKED
+
+H stopped before the wire contract, so `EEdenOsAdvisoryTriggerReason` has **never been serialized**. Neither repository can inspect the other for these names; the contract defines them, and both implement against this table.
+
+| `EEdenOsAdvisoryTriggerReason` | Wire value | Canonical order |
+|---|---|---|
+| `MissionPhaseTransition` | `mission_phase_transition` | 0 |
+| `AlertTransition` | `alert_transition` | 1 |
+| `ObjectiveTransition` | `objective_transition` | 2 |
+| `OperatorAction` | `operator_action` | 3 |
+| `Heartbeat` | `heartbeat` | 4 |
+
+snake_case of the enum name. `triggerReasons` is emitted in canonical ascending order (§18.2), is never empty, and never contains duplicates. Any value outside this table is rejected deterministically; the vocabulary is closed for 0007.
+
 No JWT in the body. No commands. No control authority.
 
 **The two timestamps are deliberately separate.** Per §18.7 they can differ by up to one snapshot decimation interval, and reasoning must never assume they are simultaneous.
@@ -885,6 +899,41 @@ malformed / non-finite context   → 422 / 4xx
 ```
 
 ProjectEden should persist the advisory evaluation and result where that fits its existing service/repository layering, since I will need a durable fact to correlate with `EdenAdvisoryIssued`.
+
+### 19.4a H.1 acceptance criteria — locked before implementation reports
+
+Audited in this order. Recorded in advance so acceptance is measured against the contract, not against whatever was built.
+
+| # | Gate |
+|---|---|
+| 1 | **Scope** — `POST /api/missions/sessions/{session_id}/advisories`, plural exactly; no `/api/simulator`; no `/api/v1/` |
+| 2 | **Request contract** — `schemaVersion`, `evaluationId`, `simulationTimeSeconds`, `contextSnapshotSimulationTimeSeconds`, `triggerReasons`, `context` |
+| 3 | **Dual-time semantics** — 0.7/0.5 accepted and stored independently; snapshot > evaluation rejected; NaN/Infinity rejected |
+| 4 | **Trigger vocabulary** — exactly the five §19.2a values; nothing else silently accepted |
+| 5 | **Session policy** — auth required; owner-scoped unknown session → 404; mission_environment requirement; completed-session policy enforced |
+| 6 | **Idempotency** — same session + `evaluationId` → same advisory, no second reasoner invocation, no duplicate row; DB unique constraint present |
+| 7 | **Reasoner boundary** — route does not reason; service orchestrates; repository persists; Protocol vendor-independent; deterministic implementation clearly identified as a stub |
+| 8 | **Response contract** — the four fields only; no executable action, control authority, or operator-mutation payload |
+| 9 | **Persistence** — advisory linked to correct session, both timestamps, trigger reasons, context, recommendation, rationale, `evaluationId`, schema version |
+| 10 | **Migration** — one Alembic head, clean upgrade, downgrade per repo policy, no historical migration modified |
+| 11 | **Regression** — focused H.1 tests, mission D/F tests, DB/migration tests, full API suite, simulator suite, focused Ruff |
+| 12 | **Security/scope** — no JWT persisted or logged; no API-key auth; no commands; no `AuthorizedControl`; no Unreal changes; no Checkpoint I work |
+
+**The load-bearing test.** Through the real route → service → repository → database stack:
+
+```text
+POST advisory   simulationTimeSeconds = 0.7
+                contextSnapshotSimulationTimeSeconds = 0.5
+   → both persisted as distinct facts
+   → reasoner invoked once
+   → durable advisory returned
+repeat same evaluationId
+   → same advisory returned
+   → reasoner invocation count unchanged
+   → row count unchanged
+```
+
+If that passes end to end, H.1's skeleton is load-bearing. It is the regression test for `d6a07b6`, and it must not be satisfied by a fixture where the two timestamps are equal.
 
 ### 19.5 REQUIRED H amendment before H.1 can be implemented faithfully
 
