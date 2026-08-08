@@ -12,7 +12,7 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint K **READY FOR ACCEPTANCE**; L–M locked |
 | Accepted Checkpoint I | `89d47da` + `89761fd` (+ docs `54b38dd`) |
 | Accepted Checkpoint J | `22f8bb9` (+ docs `964c54c`) |
-| Checkpoint K | Implemented; awaiting acceptance (see commit after `feat(eden): execute authorized validated commands`) |
+| Checkpoint K | `a50bcf1` READY FOR ACCEPTANCE (not accepted) |
 | ExecPlan 0004–0006 | Complete |
 | Last successful validation | K closeout: Win64 Dev Editor PASS; ExternalCommand unit 32/32; Integration ExternalCommand 25/25; `Eden.Unit.EdenOs.` 94/94; `Eden.Integration.EdenOs.` 31/31; full `Eden.` **322/322** exit 0; Validate-Project PASS |
 | Next task | Accept Checkpoint K after review. **Do not begin L** until authorized. |
