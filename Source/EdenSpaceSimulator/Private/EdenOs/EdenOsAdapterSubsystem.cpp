@@ -165,6 +165,16 @@ void UEdenOsAdapterSubsystem::SetHttpTransportForTesting(IEdenOsHttpTransport* I
 	ActiveHttpTransport = InTransport ? InTransport : OwnedHttpTransport.Get();
 }
 
+bool UEdenOsAdapterSubsystem::IsUsingProductionHttpTransportForTesting() const
+{
+	return OwnedHttpTransport.IsValid() && ActiveHttpTransport == OwnedHttpTransport.Get();
+}
+
+TArray<FEdenOsDeliveryRecord> UEdenOsAdapterSubsystem::GetDeliveryHistoryForTesting() const
+{
+	return DeliveryHistory;
+}
+
 void UEdenOsAdapterSubsystem::RefreshSnapshotFromRuntimeConfig()
 {
 	LastValidationResult = FEdenOsConnectionConfigModel::Validate(RuntimeConfig);
@@ -232,12 +242,19 @@ void UEdenOsAdapterSubsystem::PumpOutboundQueue()
 
 	if (!ActiveHttpTransport)
 	{
-		HandleTransportCompleted(FEdenOsHttpResult::Failed(0, TEXT("EDEN OS HTTP transport is unavailable.")));
+		HandleTransportCompleted(
+			FEdenOsHttpResult::Failed(0, TEXT("EDEN OS HTTP transport is unavailable.")),
+			EEdenOsOutboundMessageType::Telemetry,
+			TEXT("<missing-route>"),
+			0);
 		return;
 	}
 
 	FEdenOsQueuedRequest Request = MoveTemp(OutboundQueue[0]);
 	OutboundQueue.RemoveAt(0, 1, EAllowShrinking::No);
+	const EEdenOsOutboundMessageType MessageType = Request.MessageType;
+	const FString RoutePath = Request.RoutePath;
+	const int64 SequenceNumber = Request.SequenceNumber;
 	bTransportRequestInFlight = true;
 	ConnectionSnapshot = FEdenOsTransportModel::MakeSnapshotForOutcome(
 		ConnectionSnapshot,
@@ -258,21 +275,29 @@ void UEdenOsAdapterSubsystem::PumpOutboundQueue()
 	const bool bStarted = ActiveHttpTransport->SendAsync(
 		HttpRequest,
 		FEdenOsHttpCompletion::CreateLambda(
-			[WeakThis](FEdenOsHttpResult Result)
+			[WeakThis, MessageType, RoutePath, SequenceNumber](FEdenOsHttpResult Result)
 			{
 				if (UEdenOsAdapterSubsystem* Adapter = WeakThis.Get())
 				{
-					Adapter->HandleTransportCompleted(Result);
+					Adapter->HandleTransportCompleted(Result, MessageType, RoutePath, SequenceNumber);
 				}
 			}));
 
 	if (!bStarted)
 	{
-		HandleTransportCompleted(FEdenOsHttpResult::Failed(0, TEXT("EDEN OS HTTP request could not be started.")));
+		HandleTransportCompleted(
+			FEdenOsHttpResult::Failed(0, TEXT("EDEN OS HTTP request could not be started.")),
+			MessageType,
+			RoutePath,
+			SequenceNumber);
 	}
 }
 
-void UEdenOsAdapterSubsystem::HandleTransportCompleted(const FEdenOsHttpResult& Result)
+void UEdenOsAdapterSubsystem::HandleTransportCompleted(
+	const FEdenOsHttpResult& Result,
+	EEdenOsOutboundMessageType MessageType,
+	const FString& RoutePath,
+	int64 SequenceNumber)
 {
 	if (!bAcceptTransportCallbacks)
 	{
@@ -280,6 +305,7 @@ void UEdenOsAdapterSubsystem::HandleTransportCompleted(const FEdenOsHttpResult& 
 	}
 
 	bTransportRequestInFlight = false;
+	AppendDeliveryRecord(MessageType, RoutePath, SequenceNumber, Result);
 	ConnectionSnapshot = FEdenOsTransportModel::MakeSnapshotForOutcome(
 		ConnectionSnapshot,
 		RuntimeConfig,
@@ -300,9 +326,33 @@ void UEdenOsAdapterSubsystem::HandleTransportCompleted(const FEdenOsHttpResult& 
 	PumpOutboundQueue();
 }
 
+void UEdenOsAdapterSubsystem::AppendDeliveryRecord(
+	EEdenOsOutboundMessageType MessageType,
+	const FString& RoutePath,
+	int64 SequenceNumber,
+	const FEdenOsHttpResult& Result)
+{
+	FEdenOsDeliveryRecord Record;
+	Record.MessageType = MessageType;
+	Record.RoutePath = RoutePath;
+	Record.SequenceNumber = SequenceNumber;
+	Record.HttpStatusCode = Result.HttpStatusCode;
+	Record.bSucceeded = Result.IsSuccess();
+	Record.ErrorSummary = Result.ErrorSummary;
+	Record.ResponseBodyJson = Result.ResponseBodyJson;
+	DeliveryHistory.Add(MoveTemp(Record));
+
+	constexpr int32 MaxDeliveryHistoryRecords = 256;
+	if (DeliveryHistory.Num() > MaxDeliveryHistoryRecords)
+	{
+		DeliveryHistory.RemoveAt(0, DeliveryHistory.Num() - MaxDeliveryHistoryRecords, EAllowShrinking::No);
+	}
+}
+
 void UEdenOsAdapterSubsystem::ResetTransportRuntimeState()
 {
 	OutboundQueue.Reset();
+	DeliveryHistory.Reset();
 	if (OwnedTelemetrySink.IsValid())
 	{
 		OwnedTelemetrySink->ResetSessionDeliveryState();

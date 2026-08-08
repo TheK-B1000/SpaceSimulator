@@ -26,6 +26,17 @@ struct EDENSPACESIMULATOR_API FEdenOsQueuedRequest
 	int64 SequenceNumber = 0;
 };
 
+struct EDENSPACESIMULATOR_API FEdenOsDeliveryRecord
+{
+	EEdenOsOutboundMessageType MessageType = EEdenOsOutboundMessageType::Telemetry;
+	FString RoutePath;
+	int64 SequenceNumber = 0;
+	int32 HttpStatusCode = 0;
+	bool bSucceeded = false;
+	FString ErrorSummary;
+	FString ResponseBodyJson;
+};
+
 struct EDENSPACESIMULATOR_API FEdenOsHttpRequestData
 {
 	FString Url;
@@ -37,14 +48,18 @@ struct EDENSPACESIMULATOR_API FEdenOsHttpRequestData
 
 struct EDENSPACESIMULATOR_API FEdenOsHttpResult
 {
-	static FEdenOsHttpResult Succeeded(int32 InHttpStatusCode);
-	static FEdenOsHttpResult Failed(int32 InHttpStatusCode, FString InErrorSummary);
+	static FEdenOsHttpResult Succeeded(int32 InHttpStatusCode, FString InResponseBodyJson = FString());
+	static FEdenOsHttpResult Failed(
+		int32 InHttpStatusCode,
+		FString InErrorSummary,
+		FString InResponseBodyJson = FString());
 
 	bool IsSuccess() const;
 
 	bool bCompleted = true;
 	int32 HttpStatusCode = 0;
 	FString ErrorSummary;
+	FString ResponseBodyJson;
 };
 
 DECLARE_DELEGATE_OneParam(FEdenOsHttpCompletion, FEdenOsHttpResult);

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EdenOs/EdenOsAdapterSubsystem.h"
+#include "EdenOs/EdenOsMissionLifecycle.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTransport.h"
 #include "EdenOs/EdenOsWireTypes.h"
@@ -9,12 +10,14 @@
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
+#include "Telemetry/EdenTelemetryExportModel.h"
 #include "Telemetry/EdenTelemetrySink.h"
 #include "Telemetry/EdenTelemetrySubsystem.h"
 
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "HAL/PlatformMisc.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/Paths.h"
 #include "UObject/Package.h"
@@ -475,6 +478,254 @@ namespace EdenOsTransportTests
 		bPassed &= Test.TestEqual(TEXT("Telemetry snapshot count identical"), Failing.TelemetrySnapshotCount, Disabled.TelemetrySnapshotCount);
 		return bPassed;
 	}
+
+	FString GetLiveEnvVar(const TCHAR* Name)
+	{
+		return FPlatformMisc::GetEnvironmentVariable(Name).TrimStartAndEnd();
+	}
+
+	const TCHAR* MessageTypeToString(EEdenOsOutboundMessageType MessageType)
+	{
+		switch (MessageType)
+		{
+		case EEdenOsOutboundMessageType::SessionCreate:
+			return TEXT("SessionCreate");
+		case EEdenOsOutboundMessageType::Telemetry:
+			return TEXT("Telemetry");
+		case EEdenOsOutboundMessageType::Event:
+			return TEXT("Event");
+		case EEdenOsOutboundMessageType::SessionComplete:
+			return TEXT("SessionComplete");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	const TCHAR* ConnectionStateToString(EEdenOsConnectionState State)
+	{
+		switch (State)
+		{
+		case EEdenOsConnectionState::Disabled:
+			return TEXT("Disabled");
+		case EEdenOsConnectionState::Disconnected:
+			return TEXT("Disconnected");
+		case EEdenOsConnectionState::Connecting:
+			return TEXT("Connecting");
+		case EEdenOsConnectionState::Connected:
+			return TEXT("Connected");
+		case EEdenOsConnectionState::Degraded:
+			return TEXT("Degraded");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	int32 CountDeliveryRecordsOfType(const TArray<FEdenOsDeliveryRecord>& Records, EEdenOsOutboundMessageType MessageType)
+	{
+		int32 Count = 0;
+		for (const FEdenOsDeliveryRecord& Record : Records)
+		{
+			if (Record.MessageType == MessageType)
+			{
+				++Count;
+			}
+		}
+		return Count;
+	}
+
+	const FEdenOsDeliveryRecord* FindFirstDeliveryRecordOfType(
+		const TArray<FEdenOsDeliveryRecord>& Records,
+		EEdenOsOutboundMessageType MessageType)
+	{
+		for (const FEdenOsDeliveryRecord& Record : Records)
+		{
+			if (Record.MessageType == MessageType)
+			{
+				return &Record;
+			}
+		}
+		return nullptr;
+	}
+
+	bool WriteLiveE2EEvidence(
+		const FString& EvidenceDirectory,
+		const FString& SessionId,
+		int32 ExpectedRequestCount,
+		EEdenMissionState MissionState,
+		const FEdenOsConnectionSnapshot& Snapshot,
+		const TArray<FEdenOsDeliveryRecord>& Records)
+	{
+		IFileManager::Get().MakeDirectory(*EvidenceDirectory, true);
+		const FString EvidencePath = FPaths::Combine(EvidenceDirectory, TEXT("UnrealLiveE2E.json"));
+
+		FString Json;
+		Json += TEXT("{\n");
+		Json += TEXT("  \"transport\": \"FEdenOsUnrealHttpTransport\",\n");
+		Json += FString::Printf(
+			TEXT("  \"sessionId\": \"%s\",\n"),
+			*FEdenTelemetryExportModel::EscapeJsonString(SessionId));
+		Json += TEXT("  \"scenarioId\": \"SolarEventEmergency\",\n");
+		Json += FString::Printf(
+			TEXT("  \"missionState\": \"%s\",\n"),
+			MissionState == EEdenMissionState::Succeeded ? TEXT("Succeeded") : TEXT("Other"));
+		Json += FString::Printf(
+			TEXT("  \"connectionState\": \"%s\",\n"),
+			ConnectionStateToString(Snapshot.ConnectionState));
+		Json += FString::Printf(TEXT("  \"pendingMessageCount\": %d,\n"), Snapshot.PendingMessageCount);
+		Json += FString::Printf(TEXT("  \"droppedMessageCount\": %d,\n"), Snapshot.DroppedMessageCount);
+		Json += FString::Printf(TEXT("  \"expectedRequestCount\": %d,\n"), ExpectedRequestCount);
+		Json += TEXT("  \"deliveries\": [\n");
+		for (int32 Index = 0; Index < Records.Num(); ++Index)
+		{
+			const FEdenOsDeliveryRecord& Record = Records[Index];
+			Json += TEXT("    {\n");
+			Json += FString::Printf(TEXT("      \"messageType\": \"%s\",\n"), MessageTypeToString(Record.MessageType));
+			Json += FString::Printf(
+				TEXT("      \"routePath\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(Record.RoutePath));
+			Json += FString::Printf(TEXT("      \"sequenceNumber\": %lld,\n"), Record.SequenceNumber);
+			Json += FString::Printf(TEXT("      \"httpStatusCode\": %d,\n"), Record.HttpStatusCode);
+			Json += FString::Printf(TEXT("      \"succeeded\": %s,\n"), Record.bSucceeded ? TEXT("true") : TEXT("false"));
+			Json += FString::Printf(
+				TEXT("      \"responseBody\": \"%s\"\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(Record.ResponseBodyJson));
+			Json += Index + 1 < Records.Num() ? TEXT("    },\n") : TEXT("    }\n");
+		}
+		Json += TEXT("  ]\n");
+		Json += TEXT("}\n");
+
+		return FFileHelper::SaveStringToFile(Json, *EvidencePath);
+	}
+
+	class FWaitForEdenOsDeliveryHistoryCountCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FWaitForEdenOsDeliveryHistoryCountCommand(
+			TWeakObjectPtr<UEdenOsAdapterSubsystem> InAdapter,
+			int32 InExpectedCount,
+			double InTimeoutSeconds)
+			: Adapter(InAdapter)
+			, ExpectedCount(InExpectedCount)
+			, TimeoutSeconds(InTimeoutSeconds)
+		{
+		}
+
+		virtual bool Update() override
+		{
+			if (StartTimeSeconds <= 0.0)
+			{
+				StartTimeSeconds = FPlatformTime::Seconds();
+			}
+
+			if (const UEdenOsAdapterSubsystem* AdapterPtr = Adapter.Get())
+			{
+				const FEdenOsConnectionSnapshot Snapshot = AdapterPtr->GetConnectionSnapshot();
+				if (AdapterPtr->GetDeliveryHistoryForTesting().Num() >= ExpectedCount && Snapshot.PendingMessageCount == 0)
+				{
+					return true;
+				}
+			}
+
+			return FPlatformTime::Seconds() - StartTimeSeconds >= TimeoutSeconds;
+		}
+
+	private:
+		TWeakObjectPtr<UEdenOsAdapterSubsystem> Adapter;
+		int32 ExpectedCount = 0;
+		double TimeoutSeconds = 0.0;
+		double StartTimeSeconds = 0.0;
+	};
+
+	class FVerifyLiveProjectEdenLifecycleCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FVerifyLiveProjectEdenLifecycleCommand(
+			FAutomationTestBase* InTest,
+			TSharedRef<FScopedEdenOsMissionWorld> InScopedWorld,
+			TWeakObjectPtr<UEdenOsAdapterSubsystem> InAdapter,
+			FString InSessionId,
+			int32 InExpectedRequestCount,
+			int32 InExpectedEventCount,
+			FString InEvidenceDirectory)
+			: Test(InTest)
+			, ScopedWorld(InScopedWorld)
+			, Adapter(InAdapter)
+			, SessionId(MoveTemp(InSessionId))
+			, ExpectedRequestCount(InExpectedRequestCount)
+			, ExpectedEventCount(InExpectedEventCount)
+			, EvidenceDirectory(MoveTemp(InEvidenceDirectory))
+		{
+		}
+
+		virtual bool Update() override
+		{
+			UEdenOsAdapterSubsystem* AdapterPtr = Adapter.Get();
+			if (!Test->TestNotNull(TEXT("Live adapter still exists"), AdapterPtr))
+			{
+				ScopedWorld.Reset();
+				return true;
+			}
+
+			const TArray<FEdenOsDeliveryRecord> Records = AdapterPtr->GetDeliveryHistoryForTesting();
+			const FEdenOsConnectionSnapshot Snapshot = AdapterPtr->GetConnectionSnapshot();
+			Test->TestEqual(TEXT("All live lifecycle HTTP requests completed"), Records.Num(), ExpectedRequestCount);
+			Test->TestEqual(TEXT("No live lifecycle messages remain pending"), Snapshot.PendingMessageCount, 0);
+			Test->TestEqual(TEXT("Successful live run leaves adapter connected"), Snapshot.ConnectionState, EEdenOsConnectionState::Connected);
+			Test->TestEqual(TEXT("Live run did not drop messages"), Snapshot.DroppedMessageCount, 0);
+			Test->TestEqual(TEXT("One create response"), CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::SessionCreate), 1);
+			Test->TestEqual(TEXT("One telemetry response"), CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Telemetry), 1);
+			Test->TestEqual(TEXT("Expected event responses"), CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Event), ExpectedEventCount);
+			Test->TestEqual(TEXT("One completion response"), CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::SessionComplete), 1);
+
+			const FEdenOsDeliveryRecord* CreateRecord = FindFirstDeliveryRecordOfType(Records, EEdenOsOutboundMessageType::SessionCreate);
+			const FEdenOsDeliveryRecord* TelemetryRecord = FindFirstDeliveryRecordOfType(Records, EEdenOsOutboundMessageType::Telemetry);
+			const FEdenOsDeliveryRecord* EventRecord = FindFirstDeliveryRecordOfType(Records, EEdenOsOutboundMessageType::Event);
+			const FEdenOsDeliveryRecord* CompleteRecord = FindFirstDeliveryRecordOfType(Records, EEdenOsOutboundMessageType::SessionComplete);
+			if (Test->TestNotNull(TEXT("Create delivery record exists"), CreateRecord))
+			{
+				Test->TestEqual(TEXT("Create HTTP status"), CreateRecord->HttpStatusCode, 201);
+				Test->TestTrue(TEXT("Create response includes public sessionId"), CreateRecord->ResponseBodyJson.Contains(SessionId));
+				Test->TestTrue(TEXT("Create response includes running status"), CreateRecord->ResponseBodyJson.Contains(TEXT("running")));
+			}
+			if (Test->TestNotNull(TEXT("Telemetry delivery record exists"), TelemetryRecord))
+			{
+				Test->TestEqual(TEXT("Telemetry HTTP status"), TelemetryRecord->HttpStatusCode, 202);
+				Test->TestTrue(TEXT("Telemetry succeeded"), TelemetryRecord->bSucceeded);
+			}
+			if (Test->TestNotNull(TEXT("At least one event delivery record exists"), EventRecord))
+			{
+				Test->TestEqual(TEXT("Event HTTP status"), EventRecord->HttpStatusCode, 202);
+				Test->TestTrue(TEXT("Event succeeded"), EventRecord->bSucceeded);
+			}
+			if (Test->TestNotNull(TEXT("Complete delivery record exists"), CompleteRecord))
+			{
+				Test->TestEqual(TEXT("Complete HTTP status"), CompleteRecord->HttpStatusCode, 200);
+				Test->TestTrue(TEXT("Complete response includes succeeded final status"), CompleteRecord->ResponseBodyJson.Contains(TEXT("succeeded")));
+			}
+
+			Test->TestTrue(
+				TEXT("Live E2E evidence artifact written"),
+				WriteLiveE2EEvidence(
+					EvidenceDirectory,
+					SessionId,
+					ExpectedRequestCount,
+					EEdenMissionState::Succeeded,
+					Snapshot,
+					Records));
+
+			ScopedWorld.Reset();
+			return true;
+		}
+
+	private:
+		FAutomationTestBase* Test = nullptr;
+		TSharedPtr<FScopedEdenOsMissionWorld> ScopedWorld;
+		TWeakObjectPtr<UEdenOsAdapterSubsystem> Adapter;
+		FString SessionId;
+		int32 ExpectedRequestCount = 0;
+		int32 ExpectedEventCount = 0;
+		FString EvidenceDirectory;
+	};
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -784,6 +1035,107 @@ bool FEdenTelemetryLocalSinkSurvivesEdenSinkFailureTest::RunTest(const FString& 
 	TestTrue(TEXT("Local artifact path returned"), Summary.Records[0].Result.Destination.Contains(TEXT("telemetry_")));
 	TestEqual(TEXT("History unchanged events"), Telemetry->GetEventHistory().Num(), EventsBefore.Num());
 	TestEqual(TEXT("History unchanged snapshots"), Telemetry->GetSnapshotHistory().Num(), SnapshotsBefore.Num());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsLiveProjectEdenMissionLifecycleTest,
+	"Eden.External.EdenOs.LiveProjectEdenMissionLifecycle",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenOsTransportTests;
+
+	const FString BaseUrl = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_BASE_URL"));
+	const FString RuntimeBearerJwt = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_BEARER_JWT"));
+	FString EvidenceDirectory = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_EVIDENCE_DIR"));
+	if (EvidenceDirectory.IsEmpty())
+	{
+		EvidenceDirectory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Automation"), TEXT("EdenOsLiveE2E"));
+	}
+
+	if (BaseUrl.IsEmpty() || RuntimeBearerJwt.IsEmpty())
+	{
+		AddInfo(TEXT("Skipped live ProjectEden E2E: EDEN_OS_LIVE_E2E_BASE_URL or EDEN_OS_LIVE_E2E_BEARER_JWT is not set."));
+		return true;
+	}
+
+	TSharedRef<FScopedEdenOsMissionWorld> ScopedWorld = MakeShared<FScopedEdenOsMissionWorld>();
+	UWorld* World = ScopedWorld->World;
+
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	TestNotNull(TEXT("Clock subsystem exists"), Clock);
+	Clock->SetFixedStepSeconds(0.1f);
+	Clock->SetMaxCatchUpSteps(8);
+	Clock->ResetSimulationClock();
+
+	UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+	TestNotNull(TEXT("Telemetry subsystem exists"), Telemetry);
+	Telemetry->ClearHistory();
+
+	AActor* Owner = World->SpawnActor<AActor>();
+	UEdenFuelSystemComponent* Fuel = NewObject<UEdenFuelSystemComponent>(Owner);
+	Fuel->RegisterComponent();
+	Fuel->InitializeFuelSimulation(MakeFuelConfig());
+	Fuel->RegisterWithSimulationClock();
+
+	UEdenPowerSystemComponent* Power = NewObject<UEdenPowerSystemComponent>(Owner);
+	Power->RegisterComponent();
+	Power->InitializePowerSimulation(MakePowerConfig());
+	Power->RegisterWithSimulationClock();
+
+	UEdenThermalSystemComponent* Thermal = NewObject<UEdenThermalSystemComponent>(Owner);
+	Thermal->RegisterComponent();
+	Thermal->InitializeThermalSimulation(MakeThermalConfig());
+	Thermal->RegisterWithSimulationClock();
+
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	TestNotNull(TEXT("Mission subsystem exists"), Mission);
+	Mission->SetMissionResourceTargets(Thermal, Power, Fuel);
+	Mission->LoadMission(MakeIsolationMissionDefinition());
+	Mission->StartMission();
+
+	UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
+	TestNotNull(TEXT("EDEN OS adapter subsystem exists"), Adapter);
+	TestTrue(TEXT("Live E2E uses production Unreal HTTP transport"), Adapter->IsUsingProductionHttpTransportForTesting());
+
+	FEdenOsConnectionConfig Config = MakeEnabledConfig(64);
+	Config.BaseUrl = BaseUrl;
+	Config.RuntimeBearerJwt = RuntimeBearerJwt;
+	Config.RequestTimeoutSeconds = 10.0f;
+	Config.DefaultScenarioId = TEXT("SolarEventEmergency");
+	TestTrue(TEXT("Live runtime config accepted"), Adapter->ApplyRuntimeConfig(Config));
+	TestEqual(TEXT("EDEN sink registered"), Telemetry->GetRegisteredTelemetrySinkCount(), 1);
+
+	for (int32 Index = 0; Index < 20 && Mission->GetMissionState() == EEdenMissionState::Running; ++Index)
+	{
+		Clock->Tick(0.1f);
+	}
+
+	TestEqual(TEXT("Live E2E mission reached succeeded state"), Mission->GetMissionState(), EEdenMissionState::Succeeded);
+	const FEdenTelemetrySessionPayload PayloadBeforeDelivery = Telemetry->BuildSessionPayload();
+	EEdenOsMissionFinalStatus FinalStatus = EEdenOsMissionFinalStatus::Failed;
+	TestTrue(TEXT("Terminal telemetry fact is present"), FEdenOsMissionLifecycleModel::ResolveFinalStatus(PayloadBeforeDelivery, FinalStatus));
+	TestEqual(TEXT("Terminal status maps to succeeded"), FinalStatus, EEdenOsMissionFinalStatus::Succeeded);
+
+	const int32 ExpectedEventCount = PayloadBeforeDelivery.Events.Num();
+	const int32 ExpectedRequestCount = 1 + 1 + ExpectedEventCount + 1;
+	const FString SessionId = Telemetry->GetSessionId();
+	const FEdenTelemetrySinkDeliverySummary DeliverySummary = Telemetry->DeliverSessionToRegisteredSinks();
+	TestEqual(TEXT("One EDEN sink delivery attempted"), DeliverySummary.AttemptedCount, 1);
+	TestEqual(TEXT("EDEN sink queued lifecycle requests"), DeliverySummary.SucceededCount, 1);
+
+	ADD_LATENT_AUTOMATION_COMMAND(FWaitForEdenOsDeliveryHistoryCountCommand(Adapter, ExpectedRequestCount, 30.0));
+	ADD_LATENT_AUTOMATION_COMMAND(FVerifyLiveProjectEdenLifecycleCommand(
+		this,
+		ScopedWorld,
+		Adapter,
+		SessionId,
+		ExpectedRequestCount,
+		ExpectedEventCount,
+		EvidenceDirectory));
 	return true;
 }
 

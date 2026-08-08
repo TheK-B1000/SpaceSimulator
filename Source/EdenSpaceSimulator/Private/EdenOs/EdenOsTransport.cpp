@@ -4,18 +4,23 @@
 
 #include "GenericPlatform/GenericPlatformHttp.h"
 
-FEdenOsHttpResult FEdenOsHttpResult::Succeeded(int32 InHttpStatusCode)
+FEdenOsHttpResult FEdenOsHttpResult::Succeeded(int32 InHttpStatusCode, FString InResponseBodyJson)
 {
 	FEdenOsHttpResult Result;
 	Result.HttpStatusCode = InHttpStatusCode;
+	Result.ResponseBodyJson = MoveTemp(InResponseBodyJson);
 	return Result;
 }
 
-FEdenOsHttpResult FEdenOsHttpResult::Failed(int32 InHttpStatusCode, FString InErrorSummary)
+FEdenOsHttpResult FEdenOsHttpResult::Failed(
+	int32 InHttpStatusCode,
+	FString InErrorSummary,
+	FString InResponseBodyJson)
 {
 	FEdenOsHttpResult Result;
 	Result.HttpStatusCode = InHttpStatusCode;
 	Result.ErrorSummary = FEdenOsTransportModel::SanitizeErrorSummary(MoveTemp(InErrorSummary));
+	Result.ResponseBodyJson = MoveTemp(InResponseBodyJson);
 	return Result;
 }
 

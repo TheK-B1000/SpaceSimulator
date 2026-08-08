@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint F session lifecycle convergence implemented for review; Checkpoints G-M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint F session lifecycle convergence plus live cross-process E2E proof implemented for review; Checkpoints G-M locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Checkpoint F PASS: initial build explicitly compiled new lifecycle source/tests; focused `Eden.Unit.EdenOs.` PASS; focused `Eden.Integration.EdenOs.` PASS with 3 tests; ProjectEden route verifier PASS replaying 7 Unreal-produced lifecycle requests through Pydantic/service/repository/SQLite persistence; full `Automation RunTests Eden.` PASS with 237 tests; repository validation PASS; editor asset verifiers PASS; final Win64 Development Editor build PASS; `git diff --check` and Source `LogTemp` scan PASS |
-| Next task | Commit Checkpoint F, then wait for user acceptance. Do not begin Checkpoints G-M yet |
+| Last successful validation | Checkpoint F corrective live E2E PASS: real ProjectEden FastAPI server on loopback, real auth, Unreal `FEdenOsUnrealHttpTransport`/`FHttpModule`, create 201, telemetry 202, seven events 202, complete 200, isolated ProjectEden DB persistence verified; replay verifier PASS; focused `Eden.Unit.EdenOs.` PASS; focused `Eden.Integration.EdenOs.` PASS; full `Automation RunTests Eden.` PASS with 238 tests; repository validation PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and scope scans PASS |
+| Next task | Commit Checkpoint F live E2E corrective proof if not already committed, then wait for user acceptance. Do not begin Checkpoints G-M yet |
 
 ## Recovery protocol
 
@@ -37,7 +37,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time: A, B, C, E. Do not implement ProjectEden Checkpoint D in this repository.
-- Do not begin Checkpoints G-M until Checkpoint F is committed and explicitly accepted.
+- Do not begin Checkpoints G-M until Checkpoint F live E2E corrective proof is committed and explicitly accepted.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -45,7 +45,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Operator keys: `T` / `L` / `P`.
 - Telemetry export path: `Saved/Telemetry/` (runtime output; not tracked).
 - `ClearHistory()` remains explicit.
-- ProjectEden Checkpoint D completed at `B:\repo\ProjectEden` commit `6442029`. Unreal corrective C was accepted at `3f69f9b`; Checkpoint F now verifies the real Unreal request JSON through ProjectEden routes and persistence.
+- ProjectEden Checkpoint D completed at `B:\repo\ProjectEden` commit `6442029`. Unreal corrective C was accepted at `3f69f9b`; Checkpoint F now verifies both the deterministic route replay and the real Unreal `FHttpModule` -> ProjectEden FastAPI -> auth/service/repository -> isolated SQLite path.
 
 ## Session Handoff
 
@@ -59,7 +59,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint E was committed as `32c8f9a`, then accepted at `75fcd90` after the mission-level failure-isolation proof.
 - 0007 Checkpoint F was initially stopped before implementation after ProjectEden D (`6442029`) revealed create/telemetry/event/complete DTO mismatches against Unreal Checkpoint C.
 - The narrow Checkpoint C corrective wire-contract patch was accepted at `3f69f9b`.
-- 0007 Checkpoint F session lifecycle convergence is implemented for review and not yet accepted.
+- 0007 Checkpoint F session lifecycle convergence plus live cross-process E2E proof are implemented for review and not yet accepted.
 
 ### Latest Checkpoint F Evidence
 
@@ -79,6 +79,11 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Editor verification passed: `VerifyFlightAssets.py`, `VerifyMissionAssets.py`, `VerifyOperatorAssets.py`, `VerifyResourceAssets.py`, and `VerifyFlightRuntimeSmoke.py`.
 - Final Win64 Development Editor build passed and reported target up to date.
 - `git diff --check` passed. Source `LogTemp` search returned no matches. Secret scan matches were limited to synthetic test credentials and docs evidence. Scope scan matches were limited to the intended async Unreal HTTP transport from Checkpoint E, existing advisory configuration, route-version tests, and pre-existing mission "no retry" log text.
+- Corrective live E2E proof added sanitized adapter delivery records and `Eden.External.EdenOs.LiveProjectEdenMissionLifecycle`. The test is opt-in and skips when `EDEN_OS_LIVE_E2E_BASE_URL` or `EDEN_OS_LIVE_E2E_BEARER_JWT` is absent.
+- `scripts/Run-EdenOsLiveE2E.ps1 -ProjectEdenRoot 'B:\repo\ProjectEden' -EngineRoot 'K:\Program Files\Epic Games\UE_5.8' -Port 8791` passed. It applied ProjectEden Alembic head through `a6b7c8d9e0f1 add_mission_environment_sessions`, started a real `uvicorn eden_api.main:app` listener at `http://127.0.0.1:8791`, registered/logged in through ProjectEden auth, injected the bearer JWT into Unreal only through process environment, ran the live Unreal automation test, and queried the isolated SQLite DB.
+- Live Unreal evidence: `Saved/Automation/EdenOsLiveE2E/20260808-110140/UnrealLiveE2E.json` recorded `FEdenOsUnrealHttpTransport`, session `dfc2dd9f-42ea-4082-f2ad-8f89818e2532`, scenario `SolarEventEmergency`, mission state `Succeeded`, adapter state `Connected`, zero pending/dropped messages, create 201, telemetry 202, seven event 202 responses, and complete 200. Response bodies contained the public ProjectEden session id and final `succeeded` status; no request body or bearer token was recorded.
+- Live ProjectEden evidence: uvicorn access logs showed real `/api/missions/sessions`, `/telemetry`, seven `/events`, and `/complete` requests. `ProjectEdenDbEvidence.json` verified exactly one `mission_environment` run for the Unreal external session id, `seed` null, `ended_at` populated after completion, DB status `completed`, one telemetry payload/state, seven mission events, `alertsCount = 1`, `ticks = null`, and `highestRiskSystem = null`.
+- Regression validation after live proof: focused `Automation RunTests Eden.Unit.EdenOs.` PASS; focused `Automation RunTests Eden.Integration.EdenOs.` PASS; existing replay verifier PASS; full `Automation RunTests Eden.` found 238 tests and passed, with the external live test skipped because live env vars were unset; repository validation PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and G-scope scans PASS.
 
 ### Latest Checkpoint C Corrective Evidence
 
@@ -138,4 +143,4 @@ Then read `AGENTS.md` and ExecPlan 0007.
 
 ### Next Clean Action
 
-After committing this corrective patch, wait for user re-acceptance of Checkpoint C. Do not begin Checkpoint F until the corrective patch is accepted and the user explicitly authorizes F.
+Wait for Checkpoint F acceptance. Do not begin Checkpoints G-M until the live E2E corrective proof is committed and explicitly accepted.

@@ -34,16 +34,18 @@ bool FEdenOsUnrealHttpTransport::SendAsync(const FEdenOsHttpRequestData& Request
 			}
 
 			const int32 ResponseCode = Response->GetResponseCode();
+			const FString ResponseBody = Response->GetContentAsString();
 			if (FEdenOsTransportModel::IsSuccessfulHttpStatus(ResponseCode))
 			{
-				Completion.ExecuteIfBound(FEdenOsHttpResult::Succeeded(ResponseCode));
+				Completion.ExecuteIfBound(FEdenOsHttpResult::Succeeded(ResponseCode, ResponseBody));
 				return;
 			}
 
 			Completion.ExecuteIfBound(
 				FEdenOsHttpResult::Failed(
 					ResponseCode,
-					FString::Printf(TEXT("HTTP status %d"), ResponseCode)));
+					FString::Printf(TEXT("HTTP status %d"), ResponseCode),
+					ResponseBody));
 		});
 
 	if (!HttpRequest->ProcessRequest())

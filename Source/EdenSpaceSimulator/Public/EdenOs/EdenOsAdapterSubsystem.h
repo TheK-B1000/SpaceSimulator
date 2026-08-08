@@ -34,14 +34,25 @@ public:
 	FString GetDefaultScenarioId() const;
 
 	void SetHttpTransportForTesting(IEdenOsHttpTransport* InTransport);
+	bool IsUsingProductionHttpTransportForTesting() const;
+	TArray<FEdenOsDeliveryRecord> GetDeliveryHistoryForTesting() const;
 
 private:
 	void RefreshSnapshotFromRuntimeConfig();
 	void RegisterTelemetrySinkIfNeeded();
 	void UnregisterTelemetrySink();
 	void PumpOutboundQueue();
-	void HandleTransportCompleted(const FEdenOsHttpResult& Result);
+	void HandleTransportCompleted(
+		const FEdenOsHttpResult& Result,
+		EEdenOsOutboundMessageType MessageType,
+		const FString& RoutePath,
+		int64 SequenceNumber);
 	void ResetTransportRuntimeState();
+	void AppendDeliveryRecord(
+		EEdenOsOutboundMessageType MessageType,
+		const FString& RoutePath,
+		int64 SequenceNumber,
+		const FEdenOsHttpResult& Result);
 
 	FEdenOsConnectionConfig RuntimeConfig;
 	FEdenOsValidationResult LastValidationResult;
@@ -50,6 +61,7 @@ private:
 	FEdenOsConnectionSnapshot ConnectionSnapshot;
 
 	TArray<FEdenOsQueuedRequest> OutboundQueue;
+	TArray<FEdenOsDeliveryRecord> DeliveryHistory;
 	TUniquePtr<IEdenOsHttpTransport> OwnedHttpTransport;
 	IEdenOsHttpTransport* ActiveHttpTransport = nullptr;
 	TUniquePtr<class FEdenOsTelemetrySink> OwnedTelemetrySink;
