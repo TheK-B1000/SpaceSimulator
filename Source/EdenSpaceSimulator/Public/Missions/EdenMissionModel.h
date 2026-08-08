@@ -29,6 +29,13 @@ struct EDENSPACESIMULATOR_API FEdenMissionModel
 	static FEdenMissionRuntimeState CompleteObjective(const FEdenMissionRuntimeState& State, FName ObjectiveId);
 	static FEdenMissionRuntimeState FailObjective(const FEdenMissionRuntimeState& State, FName ObjectiveId);
 
+	static FEdenMissionRuntimeState EvaluateObjectives(
+		const FEdenMissionRuntimeState& State,
+		const FEdenMissionDefinitionConfig& Definition,
+		float ThermalTemperatureCelsius,
+		float PowerBatteryChargeKilowattHours,
+		float FuelQuantityKilograms);
+
 	static EEdenMissionState EvaluateOutcome(
 		const FEdenMissionRuntimeState& State,
 		const FEdenMissionDefinitionConfig& Definition);

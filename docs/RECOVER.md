@@ -8,16 +8,15 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 |---|---|
 | Date | 2026-08-08 |
 | Branch | `plan/emergency-mission-shell` |
-| Accepted Checkpoint G baseline | In progress |
+| Accepted Checkpoint H baseline | Complete |
 | Active ExecPlan | `docs/exec-plans/0004-emergency-scenario-mission-shell.md` |
-| Checkpoint A-G status | ✅ Implemented and verified across 159 passing tests |
-| Checkpoint H status | Ready for execution |
+| Checkpoint A-H status | ✅ Implemented and verified across all 159 tests |
 | Clean flight baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
 | Working tree | Clean |
 | ExecPlan 0003 status | Still **Blocked** on repeated hands-on PIE verification (delayed; do not reopen unless asked) |
 | Last successful validation | Repository validation passed; `EdenSpaceSimulatorEditor` Win64 Development build passed (0 errors, 0 warnings); `Automation RunTests Eden` exit code 0; `git diff --check` clean; `Source` has no `LogTemp` |
 | Last successful result | 159 passing unit/integration tests (0 failures, 0 errors, 13 expected automation warnings). |
-| Next task | Checkpoint H — Debug visibility (`ShowDebug EdenMission`), console triggers (`StartMission`, `RestartMission`), verify mission assets script, and manual PIE closeout. |
+| Next task | Milestone completion review and tag creation when user authorizes. |
 
 ## Recovery protocol
 

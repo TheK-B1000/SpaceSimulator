@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Mission")
 	const FEdenMissionDefinitionConfig& GetMissionDefinition() const { return MissionDefinition; }
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
+	static FEdenMissionDefinitionConfig CreateSolarEventEmergencyDefinition();
+
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 #endif

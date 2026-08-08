@@ -9,6 +9,8 @@
 #include "Flight/EdenSpacecraftPawn.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
+#include "Missions/EdenMissionDefinitionDataAsset.h"
+#include "Missions/EdenMissionSubsystem.h"
 
 AEdenFlightPlayerController::AEdenFlightPlayerController()
 {
@@ -215,5 +217,70 @@ void AEdenFlightPlayerController::LogMissingInputAssetState()
 			TEXT("%s is missing one or more flight input assets. Assign IMC_Flight, IA_FlightTranslate, IA_FlightRotate, and IA_FlightStabilize in BP_EdenFlightPlayerController."),
 			*GetNameSafe(this));
 		bLoggedMissingInputAssetState = true;
+	}
+}
+
+void AEdenFlightPlayerController::StartMission()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (!MissionSubsystem)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s StartMission: UEdenMissionSubsystem not found in world."), *GetNameSafe(this));
+		return;
+	}
+
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Inactive)
+	{
+		const FEdenMissionDefinitionConfig SolarConfig = UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition();
+		MissionSubsystem->LoadMission(SolarConfig);
+		MissionSubsystem->RegisterWithSimulationClock();
+	}
+
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Ready)
+	{
+		MissionSubsystem->StartMission();
+	}
+}
+
+void AEdenFlightPlayerController::RestartMission()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (!MissionSubsystem)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s RestartMission: UEdenMissionSubsystem not found in world."), *GetNameSafe(this));
+		return;
+	}
+
+	MissionSubsystem->ResetMission();
+	const FEdenMissionDefinitionConfig SolarConfig = UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition();
+	MissionSubsystem->LoadMission(SolarConfig);
+	MissionSubsystem->RegisterWithSimulationClock();
+	MissionSubsystem->StartMission();
+}
+
+void AEdenFlightPlayerController::AbortMission()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (MissionSubsystem)
+	{
+		MissionSubsystem->AbortMission();
 	}
 }

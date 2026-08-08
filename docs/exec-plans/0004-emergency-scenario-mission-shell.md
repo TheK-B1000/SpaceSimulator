@@ -29,6 +29,7 @@ Approved — Checkpoints A–E complete; Checkpoint F not started
 | Checkpoint E status | ✅ Implemented and verified (3 tests, 149 total passing) |
 | Checkpoint F status | ✅ Implemented and verified (7 tests, 156 total passing) |
 | Checkpoint G status | ✅ Implemented and verified (3 tests, 159 total passing) |
+| Checkpoint H status | ✅ Implemented and verified |
 | Working tree | Clean |
 
 ---
@@ -311,12 +312,20 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout
+### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout ✅ COMPLETE
 
 **Scope:**
-- `ShowDebug EdenMission` implementation.
-- Extended `ShowDebug EdenSystems` with mission summary.
-- Developer console commands: `StartMission`, `RestartMission`.
-- VerifyMissionAssets.py editor script.
-- Manual PIE verification gate.
-- Final documentation updates (ARCHITECTURE.md, REMEMBER.md, RECOVER.md).
+- `ShowDebug EdenMission` debug HUD overlay in `AEdenFlightHUD` rendering mission ID, lifecycle state, mission phase, elapsed simulation time, objective states (REQ/OPT, target value, Pending/Active/Completed/Failed with color coding), and timeline events (trigger time, command type, float parameter, Pending/Executed).
+- Extended `ShowDebug EdenSystems` with a live one-line mission state summary when a mission is loaded or running.
+- Developer console commands on `AEdenFlightPlayerController`:
+  - `StartMission`: Loads the default Solar Event Emergency definition if inactive, registers with clock, and starts execution.
+  - `RestartMission`: Resets the mission state machine and external modifiers, reloads definition, registers with clock, and starts fresh.
+  - `AbortMission`: Aborts running mission and safely zeroes all mission-applied disturbances.
+- `scripts/Editor/VerifyMissionAssets.py` editor Python script verifying data validation rules and the `SolarEventEmergency` factory configuration.
+- Manual PIE verification instructions documented in `docs/exec-plans/0004-emergency-scenario-mission-shell.md`.
+- Final documentation sync across `ARCHITECTURE.md`, `REMEMBER.md`, `RECOVER.md`, and `0004-emergency-scenario-mission-shell.md`.
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 159 tests passed (0 failures, 0 errors, 13 expected automation warnings).
+- Working tree: Clean.

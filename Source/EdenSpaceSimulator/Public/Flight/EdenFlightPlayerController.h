@@ -33,6 +33,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	FEdenFlightInputCommand GetCurrentFlightInputCommand() const;
 
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void StartMission();
+
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void RestartMission();
+
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void AbortMission();
+
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Flight|Input")
 	TObjectPtr<UInputMappingContext> FlightInputMappingContext;

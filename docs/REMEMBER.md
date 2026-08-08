@@ -31,7 +31,11 @@ This file stores durable, verified project facts that future Codex sessions must
 - `UEdenFlightMovementComponent` implements `IEdenPropulsionDemandSource`; fuel reads propulsion demand through that interface instead of depending on the concrete pawn class.
 - Resource configuration Data Assets exist under `/Game/Eden/Data/Systems`: `DA_EdenFuelConfig`, `DA_EdenPowerConfig`, and `DA_EdenThermalConfig`.
 - `BP_EdenSpacecraftPawn` assigns those resource Data Assets to the inherited C++ resource components.
-- Development builds expose read-only resource visibility through `ShowDebug EdenSystems`.
+- Development builds expose read-only resource visibility through `ShowDebug EdenSystems` and mission visibility through `ShowDebug EdenMission`.
+- Mission simulation uses `UEdenMissionSubsystem` as a world-scoped subsystem registered with `UEdenSimulationClockSubsystem` at Priority 100 (`EdenSimulationClockPriority::Mission`), stepping deterministically after Priority 0 resource components (`EdenSimulationClockPriority::Systems`).
+- Emergency missions are data-driven via `UEdenMissionDefinitionDataAsset` and pure deterministic state machine `FEdenMissionModel`.
+- The reference emergency scenario is `SolarCrisis` (`Solar Event Emergency`), configuring a 50s multi-phase timeline with external heating, power demand, generation adjustments, and four required objectives (`SurviveSolarEvent`, `PreventOverheating`, `RestoreBatteryCharge`, `ConservePropellant`).
+- Developer console commands `StartMission`, `RestartMission`, and `AbortMission` exist on `AEdenFlightPlayerController` for interactive testing.
 - The first vertical slice is a docking and emergency-response trainer.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.

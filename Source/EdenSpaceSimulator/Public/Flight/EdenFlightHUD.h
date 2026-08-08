@@ -20,5 +20,6 @@ public:
 private:
 #if !UE_BUILD_SHIPPING
 	void DrawEdenSystemsOverlay();
+	void DrawEdenMissionOverlay();
 #endif
 };
