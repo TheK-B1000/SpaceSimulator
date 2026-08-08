@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint G implemented and ready for acceptance; Checkpoints H-M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint H implemented and ready for acceptance; Checkpoints I-M locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Checkpoint G validation: build PASS with explicit `EdenOsTransportTests.cpp` compile; focused `Eden.Integration.EdenOs.` PASS with 4 tests including Observe invariant; focused `Eden.Unit.EdenOs.` PASS with 38 tests; live Observe E2E PASS through real ProjectEden FastAPI/auth/service/repository/SQLite; full `Automation RunTests Eden.` PASS with 239 tests; repository validation PASS; editor verifiers PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and added-diff scope scans PASS |
-| Next task | Review/accept Checkpoint G. Do not begin Checkpoints H-M until G is committed and explicitly accepted. Small PIE QoL: `EnableEdenOs` / `SetEdenOsBearerFromEnv` console pair (JWT via env only) |
+| Last successful validation | Checkpoint H validation: Win64 Development Editor build PASS (0 errors, 0 warnings); focused `Eden.Integration.EdenOs.` PASS with 5 tests including the Advisory non-interference invariant; full `Automation RunTests Eden.` PASS with **255 tests / 0 failures / 0 crashes / exit 0** (240 before H, +14 advisory unit tests, +1 advisory integration test); `git diff --check` PASS; Source `LogTemp` scan PASS; narrowed shadow-history ownership scan PASS (all `Previous*`/`Last*`/`Cached*` matches classified as cursors, connection/transport state, or advisory bookkeeping — zero copies of simulation or telemetry truth); I/J/K scope scan PASS (`EdenAdvisoryIssued`, advisory HUD, and command router all absent). Prior Checkpoint G validation: build PASS with explicit `EdenOsTransportTests.cpp` compile; focused `Eden.Integration.EdenOs.` PASS with 4 tests including Observe invariant; focused `Eden.Unit.EdenOs.` PASS with 38 tests; live Observe E2E PASS through real ProjectEden FastAPI/auth/service/repository/SQLite; full `Automation RunTests Eden.` PASS with 239 tests; repository validation PASS; editor verifiers PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and added-diff scope scans PASS |
+| Next task | Review/accept Checkpoint H. Do not begin Checkpoint I until H is explicitly accepted. **Checkpoint I is additionally blocked on a cross-project decision:** ProjectEden has no advisory route or schema (`packages/api/eden_api/routes/` has `missions.py` ingestion only), so a minimal advisory API contract must be proposed and accepted before advisory wire/response work can start. |
 
 ## Recovery protocol
 

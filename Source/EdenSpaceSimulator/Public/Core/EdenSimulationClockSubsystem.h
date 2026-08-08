@@ -14,6 +14,8 @@ namespace EdenSimulationClockPriority
 	constexpr int32 Systems = 0;
 	constexpr int32 Mission = 100;
 	constexpr int32 Observers = 200;
+	/** Advisory evaluation runs strictly after telemetry so it only ever sees settled state. */
+	constexpr int32 Advisory = 300;
 }
 
 USTRUCT()

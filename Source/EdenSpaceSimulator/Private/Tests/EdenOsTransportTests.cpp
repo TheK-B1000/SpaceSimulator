@@ -286,7 +286,11 @@ namespace EdenOsTransportTests
 		FEdenMissionObjectiveConfig Survive;
 		Survive.ObjectiveId = FName("Survive");
 		Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
-		Survive.TargetValue = 0.5f;
+		// 0.7s, not 0.5s: telemetry decimates snapshots every 5 steps, so a 0.5s target made the
+		// mission terminal in the exact step that recorded the first snapshot. The probe then had no
+		// settled Running snapshot at all. 0.7s leaves a Running snapshot at 0.5s and still completes
+		// within the probe's 8 steps, so completion routes and terminal assertions are unaffected.
+		Survive.TargetValue = 0.7f;
 		Survive.bRequired = true;
 		Survive.bActivateOnStart = true;
 		Config.Objectives.Add(Survive);
@@ -369,6 +373,11 @@ namespace EdenOsTransportTests
 		EEdenOsConnectionState EdenConnectionState = EEdenOsConnectionState::Disabled;
 		EEdenOsAuthorityMode EdenAuthorityMode = EEdenOsAuthorityMode::Advisory;
 		FString EdenLastErrorSummary;
+		/** Advisory bookkeeping, deliberately excluded from authoritative-result comparison. */
+		int32 AdvisoryTickCount = 0;
+		int32 AdvisoryEvaluationCount = 0;
+		bool bAdvisoryContextValid = false;
+		int32 AdvisoryContextTriggerReasonCount = 0;
 	};
 
 	FMissionIsolationProbe RunMissionIsolationProbe(
@@ -466,6 +475,12 @@ namespace EdenOsTransportTests
 			Probe.EdenConnectionState = Snapshot.ConnectionState;
 			Probe.EdenAuthorityMode = Snapshot.AuthorityMode;
 			Probe.EdenLastErrorSummary = Snapshot.LastErrorSummary;
+
+			const FEdenOsAdvisoryContext AdvisoryContext = Adapter->GetLastAdvisoryContext();
+			Probe.AdvisoryTickCount = Adapter->GetAdvisoryTickCountForTesting();
+			Probe.AdvisoryEvaluationCount = Adapter->GetAdvisoryEvaluationCount();
+			Probe.bAdvisoryContextValid = AdvisoryContext.bIsValid;
+			Probe.AdvisoryContextTriggerReasonCount = AdvisoryContext.TriggerReasons.Num();
 		}
 		return Probe;
 	}
@@ -1108,7 +1123,54 @@ bool FEdenOsObserveModePreservesAuthoritativeMissionResultTest::RunTest(const FS
 	TestFalse(TEXT("Observe run does not call advisory route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("advis")));
 	TestFalse(TEXT("Observe run does not call command route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("command")));
 
+	// Observe must not enter the advisory-evaluation path at all.
+	TestEqual(TEXT("Observe performs no advisory evaluation"), ObserveProbe.AdvisoryEvaluationCount, 0);
+	TestFalse(TEXT("Observe builds no advisory context"), ObserveProbe.bAdvisoryContextValid);
+
 	return CompareMissionIsolationProbes(*this, DisabledProbe, ObserveProbe);
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisoryModePreservesAuthoritativeMissionResultTest,
+	"Eden.Integration.EdenOs.AdvisoryModePreservesAuthoritativeMissionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisoryModePreservesAuthoritativeMissionResultTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenOsTransportTests;
+
+	const FMissionIsolationProbe DisabledProbe = RunMissionIsolationProbe(false);
+	const FMissionIsolationProbe AdvisoryProbe = RunMissionIsolationProbe(
+		true,
+		EEdenOsAuthorityMode::Advisory,
+		false);
+
+	TestEqual(TEXT("Advisory mode reflected in connection snapshot"), AdvisoryProbe.EdenAuthorityMode, EEdenOsAuthorityMode::Advisory);
+
+	AddInfo(FString::Printf(
+		TEXT("DIAG ticks=%d snapshots=%d events=%d advisoryEvals=%d contextValid=%d"),
+		AdvisoryProbe.AdvisoryTickCount,
+		AdvisoryProbe.TelemetrySnapshotCount,
+		AdvisoryProbe.TelemetryEventCount,
+		AdvisoryProbe.AdvisoryEvaluationCount,
+		AdvisoryProbe.bAdvisoryContextValid ? 1 : 0));
+
+	// Guard against comparing "disabled" against an advisory path that never actually ran.
+	TestTrue(
+		TEXT("Advisory run performed at least one advisory evaluation"),
+		AdvisoryProbe.AdvisoryEvaluationCount > 0);
+	TestTrue(TEXT("Advisory run built a valid context"), AdvisoryProbe.bAdvisoryContextValid);
+	TestTrue(
+		TEXT("Advisory context carries at least one trigger reason"),
+		AdvisoryProbe.AdvisoryContextTriggerReasonCount > 0);
+
+	// H builds context only. No advisory or command route may be contacted yet.
+	TestFalse(TEXT("Advisory run does not call advisory route"), TransportUrlsContain(AdvisoryProbe.EdenTransportUrls, TEXT("advis")));
+	TestFalse(TEXT("Advisory run does not call command route"), TransportUrlsContain(AdvisoryProbe.EdenTransportUrls, TEXT("command")));
+
+	// The decisive invariant: advisory machinery running changes no authoritative simulation truth.
+	return CompareMissionIsolationProbes(*this, DisabledProbe, AdvisoryProbe);
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

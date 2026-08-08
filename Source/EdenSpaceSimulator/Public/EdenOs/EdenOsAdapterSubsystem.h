@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Core/EdenSimulationTickable.h"
+#include "EdenOs/EdenOsAdvisoryTypes.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTypes.h"
 #include "EdenOs/EdenOsTransport.h"
@@ -11,8 +13,10 @@
 
 #include "EdenOsAdapterSubsystem.generated.h"
 
+class UEdenSimulationClockSubsystem;
+
 UCLASS()
-class EDENSPACESIMULATOR_API UEdenOsAdapterSubsystem : public UWorldSubsystem
+class EDENSPACESIMULATOR_API UEdenOsAdapterSubsystem : public UWorldSubsystem, public IEdenSimulationTickable
 {
 	GENERATED_BODY()
 
@@ -20,6 +24,10 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 	virtual bool ShouldCreateSubsystem(UObject* Outer) const override;
+
+	// IEdenSimulationTickable. Observation only: registered at EdenSimulationClockPriority::Advisory
+	// so it runs strictly after systems, mission, and telemetry have settled for the step.
+	virtual void AdvanceSimulation(float FixedDeltaSeconds) override;
 
 	UFUNCTION(BlueprintPure, Category = "Eden|OS")
 	FEdenOsConnectionSnapshot GetConnectionSnapshot() const;
@@ -39,7 +47,22 @@ public:
 	bool IsUsingProductionHttpTransportForTesting() const;
 	TArray<FEdenOsDeliveryRecord> GetDeliveryHistoryForTesting() const;
 
+	/** Most recent advisory context built by a settled-step evaluation. Invalid until one occurs. */
+	FEdenOsAdvisoryContext GetLastAdvisoryContext() const;
+
+	/** Number of advisory evaluations performed since the adapter last reset its advisory cursors. */
+	int32 GetAdvisoryEvaluationCount() const;
+
+	FEdenOsAdvisoryContextBounds GetAdvisoryContextBounds() const;
+	void SetAdvisoryContextBounds(const FEdenOsAdvisoryContextBounds& InBounds);
+
+	bool RegisterWithSimulationClock();
+	bool UnregisterFromSimulationClock();
+
 private:
+	void EvaluateAdvisoryForSettledStep();
+	void ResetAdvisoryRuntimeState();
+
 	void RefreshSnapshotFromRuntimeConfig();
 	void RegisterTelemetrySinkIfNeeded();
 	void UnregisterTelemetrySink();
@@ -73,4 +96,23 @@ private:
 	bool bTransportRequestInFlight = false;
 	bool bAcceptTransportCallbacks = true;
 	bool bHasSuccessfulTransportDelivery = false;
+
+	TWeakObjectPtr<UEdenSimulationClockSubsystem> RegisteredSimulationClock;
+
+	// Advisory bookkeeping. These are cursors into telemetry's own history plus records of this
+	// adapter's evaluations. They are deliberately NOT copies of simulation or telemetry truth:
+	// trend and transition detection read accepted 0006 history, never a shadow copy of it.
+	FEdenOsAdvisoryContextBounds AdvisoryContextBounds;
+	FEdenOsAdvisoryContext LastAdvisoryContext;
+	int64 LastEvaluatedTelemetrySequence = 0;
+	float LastAdvisoryEvaluationSimulationSeconds = 0.0f;
+	bool bHasEvaluatedAdvisory = false;
+	int32 AdvisoryEvaluationCount = 0;
+
+public:
+	/** Settled steps observed. Distinguishes "not ticking" from "ticking but gated" in diagnostics. */
+	int32 GetAdvisoryTickCountForTesting() const { return AdvisoryTickCount; }
+
+private:
+	int32 AdvisoryTickCount = 0;
 };

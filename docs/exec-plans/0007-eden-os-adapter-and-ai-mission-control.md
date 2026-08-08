@@ -678,3 +678,78 @@ Acceptance is controlled by **tests plus audit**, not by branch topology.
 Removing the branch ceremony removes the illusion. What remains is the thing that actually caught the defect: source inspection against locked acceptance criteria (§17).
 
 **Consequence to keep in view:** a green suite on `main` no longer implies any checkpoint was accepted. Approval is recorded in §16, and §16 is the authority on what has been accepted — not the merge history, and not the build badge.
+
+---
+
+## 18. Checkpoint H — advisory contract and context
+
+**Ready for acceptance review. Not accepted.**
+
+### 18.1 Advisory trigger model
+
+Locked triggers only; no speculative additions. Triggers are derived from **telemetry events**, not from diffing state:
+
+| Telemetry event | Trigger reason |
+|---|---|
+| `PhaseChanged` | `MissionPhaseTransition` |
+| `AlertRaised` / `AlertCleared` | `AlertTransition` |
+| `ObjectiveStateChanged` | `ObjectiveTransition` |
+| `OperatorCommandIssued` | `OperatorAction` |
+| *(cadence)* | `Heartbeat` |
+
+`MissionStarted/Succeeded/Failed/Aborted`, `ScheduledEventFired`, and `ResourceStateTransition` are recorded by telemetry but are **not** triggers.
+
+**This is what keeps §5.11 satisfiable.** Detecting "the phase changed" by comparing against a remembered previous phase would require the adapter to shadow mission state. Telemetry already records transitions as immutable events, so the adapter needs only a **sequence cursor** — a position in telemetry's history, never a copy of it.
+
+### 18.2 Deterministic TriggerReason ordering
+
+Canonical order is ascending enum value:
+
+```text
+MissionPhaseTransition(0) → AlertTransition(1) → ObjectiveTransition(2)
+→ OperatorAction(3) → Heartbeat(4)
+```
+
+`AddTriggerReason` de-duplicates then re-sorts, so arrival order cannot affect the emitted sequence.
+
+### 18.3 Same-step coalescing
+
+All triggers for one settled step produce **exactly one** evaluation carrying every reason. Duplicate reasons within an evaluation collapse; reasons are never discarded. Deduplication never spans simulation steps — the cursor only advances past events already folded into an evaluation.
+
+### 18.4 Heartbeat
+
+Consumes the existing Checkpoint B setting `UEdenOsConnectionSettings::AdvisoryHeartbeatSimulationSeconds` (default 5.0). No second constant was introduced. Simulation time only — no wall clock, `FPlatformTime`, frame time, or HTTP timing. A paused clock cannot advance it. The first evaluation of a running mission is always due; terminal missions stop evaluating.
+
+### 18.5 Settled-state ordering
+
+```text
+Systems 0 → Mission 100 → Telemetry 200 → Advisory 300
+```
+
+`EdenSimulationClockPriority::Advisory = 300` was added, and `UEdenOsAdapterSubsystem` now implements `IEdenSimulationTickable` purely to observe.
+
+### 18.6 Context ownership and bounds
+
+Context is built from accepted 0006 telemetry history only. All fields are **value copies**, so no context aliases telemetry's mutable arrays and later simulation cannot alter an already-built context.
+
+Bounds: newest-`MaxSnapshots` (10) and newest-`MaxEvents` (20), oldest dropped first, with `bContextTruncated` recording that it happened and `bUpstreamHistoryTruncated` mirroring 0006's own integrity flag.
+
+Trend semantics are deliberately minimal and documented rather than invented: `LatestValue`, `EarliestValue`, `Delta` across the bounded window, plus `SampleCount`. No forecasting, no prediction, no ML.
+
+### 18.7 Known limitation — snapshot lag versus event immediacy
+
+Telemetry **decimates snapshots** (every 5 steps) but does **not** decimate events. An event-triggered evaluation therefore carries resource and mission fields from the most recent *snapshot*, which may be up to one decimation interval old, while the trigger itself is current.
+
+This is deterministic and bounded, not a race. But EDEN reasoning must not assume the context's state fields are simultaneous with its trigger. Worth revisiting in I if advisory quality depends on tighter coupling.
+
+### 18.8 BLOCKER — no ProjectEden advisory contract exists
+
+Per §12 and §22, ProjectEden was inspected before any wire contract was invented. `packages/api/eden_api/routes/` contains `missions.py` with the accepted D/F ingestion routes and **no advisory route or schema anywhere**.
+
+Therefore H implemented the **internal, transport-neutral** contract only. No advisory request/response DTO, no server route, and no ProjectEden change was made. `/api/simulator` was not reused and no `/api/v1/` was introduced.
+
+**A minimal cross-project advisory API contract must be proposed and accepted before the advisory wire/response work can proceed.** That is a prerequisite for Checkpoint I, not a defect in H.
+
+### 18.9 Scope guard
+
+`EdenAdvisoryIssued` is **not** emitted; no HUD, widget, or presentation change; no command router, no `AuthorizedControl` execution; no followed/ignored semantics. `AuthorizedControl` remains contract-only and disabled by default.

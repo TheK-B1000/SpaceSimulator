@@ -2,6 +2,8 @@
 
 #include "EdenOs/EdenOsAdapterSubsystem.h"
 
+#include "Core/EdenSimulationClockSubsystem.h"
+#include "EdenOs/EdenOsAdvisoryModel.h"
 #include "EdenOs/EdenOsConnectionSettings.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsUnrealHttpTransport.h"
@@ -22,6 +24,9 @@ void UEdenOsAdapterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
+	// Advisory evaluation ticks off the simulation clock, so the clock must exist before we register.
+	Collection.InitializeDependency(UEdenSimulationClockSubsystem::StaticClass());
+
 	OwnedHttpTransport = MakeUnique<FEdenOsUnrealHttpTransport>();
 	ActiveHttpTransport = OwnedHttpTransport.Get();
 	bAcceptTransportCallbacks = true;
@@ -29,11 +34,14 @@ void UEdenOsAdapterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	const UEdenOsConnectionSettings* Settings = GetDefault<UEdenOsConnectionSettings>();
 	ApplyRuntimeConfig(Settings ? Settings->MakeConnectionConfig() : FEdenOsConnectionConfig());
 	RegisterTelemetrySinkIfNeeded();
+	RegisterWithSimulationClock();
 }
 
 void UEdenOsAdapterSubsystem::Deinitialize()
 {
 	bAcceptTransportCallbacks = false;
+	UnregisterFromSimulationClock();
+	ResetAdvisoryRuntimeState();
 	UnregisterTelemetrySink();
 	ResetTransportRuntimeState();
 	RuntimeConfig = FEdenOsConnectionConfig();
@@ -60,12 +68,16 @@ bool UEdenOsAdapterSubsystem::ApplyRuntimeConfig(const FEdenOsConnectionConfig& 
 	const bool bWasEnabled = RuntimeConfig.bEnabled;
 	RuntimeConfig = InConfig;
 	ResetTransportRuntimeState();
+	ResetAdvisoryRuntimeState();
 	RefreshSnapshotFromRuntimeConfig();
 	if (bWasEnabled && !RuntimeConfig.bEnabled)
 	{
 		UnregisterTelemetrySink();
 	}
 	RegisterTelemetrySinkIfNeeded();
+	// Re-attempt clock registration: a world may configure the adapter after subsystem startup, and
+	// the clock rejects duplicate registrations, so this is safe to call repeatedly.
+	RegisterWithSimulationClock();
 	return LastValidationResult.IsValid();
 }
 
@@ -376,4 +388,142 @@ void UEdenOsAdapterSubsystem::ResetTransportRuntimeState()
 	NextOutboundSequenceNumber = 1;
 	bTransportRequestInFlight = false;
 	bHasSuccessfulTransportDelivery = false;
+}
+
+bool UEdenOsAdapterSubsystem::RegisterWithSimulationClock()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	if (!Clock)
+	{
+		return false;
+	}
+
+	if (!Clock->RegisterSimulationTickable(this, EdenSimulationClockPriority::Advisory))
+	{
+		return false;
+	}
+
+	RegisteredSimulationClock = Clock;
+	return true;
+}
+
+bool UEdenOsAdapterSubsystem::UnregisterFromSimulationClock()
+{
+	if (!RegisteredSimulationClock.IsValid())
+	{
+		return false;
+	}
+
+	RegisteredSimulationClock->UnregisterSimulationTickable(this);
+	RegisteredSimulationClock.Reset();
+	return true;
+}
+
+void UEdenOsAdapterSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
+{
+	(void)FixedDeltaSeconds;
+
+	++AdvisoryTickCount;
+
+	// Runs at EdenSimulationClockPriority::Advisory (300), strictly after systems (0), mission (100),
+	// and telemetry (200). Everything read below is therefore settled state for this step.
+	EvaluateAdvisoryForSettledStep();
+}
+
+void UEdenOsAdapterSubsystem::EvaluateAdvisoryForSettledStep()
+{
+	if (!RuntimeConfig.bEnabled)
+	{
+		return;
+	}
+
+	// Observe never enters the advisory-evaluation path.
+	if (!FEdenOsAdvisoryModel::IsAdvisoryEvaluationPermitted(RuntimeConfig.AuthorityMode))
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+	if (!Telemetry)
+	{
+		return;
+	}
+
+	// Telemetry owns history. The adapter reads it and keeps only cursors of its own.
+	const TArray<FEdenTelemetryEvent> Events = Telemetry->GetEventHistory();
+	const TArray<FEdenTelemetrySnapshot> Snapshots = Telemetry->GetSnapshotHistory();
+	if (Snapshots.Num() == 0)
+	{
+		// Nothing settled has been recorded yet; there is no state to reason about.
+		return;
+	}
+
+	const FEdenTelemetrySnapshot& SettledSnapshot = Snapshots.Last();
+
+	FEdenOsAdvisoryEvaluationInput Input;
+	Input.Events = Events;
+	Input.Snapshots = Snapshots;
+	Input.Metadata = Telemetry->GetSessionMetadata();
+	Input.SessionId = Telemetry->GetSessionId();
+	Input.SimulationTimeSeconds = SettledSnapshot.SimulationTimeSeconds;
+	Input.MissionState = SettledSnapshot.Mission.MissionState;
+	Input.AuthorityMode = RuntimeConfig.AuthorityMode;
+	Input.HeartbeatIntervalSimulationSeconds = RuntimeConfig.AdvisoryHeartbeatSimulationSeconds;
+	Input.Bounds = AdvisoryContextBounds;
+	Input.LastEvaluatedSequence = LastEvaluatedTelemetrySequence;
+	Input.LastEvaluationSimulationSeconds = LastAdvisoryEvaluationSimulationSeconds;
+	Input.bHasEvaluatedBefore = bHasEvaluatedAdvisory;
+
+	const FEdenOsAdvisoryEvaluationResult Result = FEdenOsAdvisoryModel::Evaluate(Input);
+	if (!Result.bShouldEvaluate)
+	{
+		return;
+	}
+
+	LastAdvisoryContext = Result.Context;
+	LastEvaluatedTelemetrySequence = Result.NewLastEvaluatedSequence;
+	LastAdvisoryEvaluationSimulationSeconds = Result.NewLastEvaluationSimulationSeconds;
+	bHasEvaluatedAdvisory = true;
+	++AdvisoryEvaluationCount;
+}
+
+void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
+{
+	LastAdvisoryContext = FEdenOsAdvisoryContext();
+	LastEvaluatedTelemetrySequence = 0;
+	LastAdvisoryEvaluationSimulationSeconds = 0.0f;
+	bHasEvaluatedAdvisory = false;
+	AdvisoryEvaluationCount = 0;
+}
+
+FEdenOsAdvisoryContext UEdenOsAdapterSubsystem::GetLastAdvisoryContext() const
+{
+	return LastAdvisoryContext;
+}
+
+int32 UEdenOsAdapterSubsystem::GetAdvisoryEvaluationCount() const
+{
+	return AdvisoryEvaluationCount;
+}
+
+FEdenOsAdvisoryContextBounds UEdenOsAdapterSubsystem::GetAdvisoryContextBounds() const
+{
+	return AdvisoryContextBounds;
+}
+
+void UEdenOsAdapterSubsystem::SetAdvisoryContextBounds(const FEdenOsAdvisoryContextBounds& InBounds)
+{
+	AdvisoryContextBounds = InBounds;
 }
