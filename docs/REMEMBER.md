@@ -17,9 +17,11 @@ This file stores durable, verified project facts that future Codex sessions must
 - Default game map and editor startup map are `/Game/Eden/Maps/L_FlightSandbox`.
 - Flight sandbox GameMode is `/Game/Eden/Blueprints/BP_EdenFlightGameMode.BP_EdenFlightGameMode_C`.
 - Six-axis flight shell C++ classes exist under `Source/EdenSpaceSimulator/Public/Flight` and `Private/Flight`.
-- Flight input assets exist under `/Game/Eden/Input`: `IA_FlightTranslate`, `IA_FlightRotate`, `IA_FlightStabilize`, and `IMC_Flight`.
+- Flight input assets exist under `/Game/Eden/Input`: `IA_FlightTranslate`, `IA_FlightRotate`, `IA_FlightStabilize`, `IA_ThermalMode`, `IA_LoadShed`, `IA_PropulsionPriority`, and `IMC_Flight`.
 - Flight composition Blueprints exist under `/Game/Eden/Blueprints`: `BP_EdenSpacecraftPawn`, `BP_EdenFlightPlayerController`, and `BP_EdenFlightGameMode`.
-- Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
+- Operator HUD widget asset: `/Game/Eden/UI/WBP_EdenOperatorHud` (parent `UEdenOperatorHudWidget`), assigned on `BP_EdenFlightPlayerController`.
+- Operator control config Data Asset: `/Game/Eden/Data/Operations/DA_EdenOperatorControlConfig`.
+- Operator Enhanced Input bindings (first content pass): `T` cycles thermal mode, `L` toggles load-shed, `P` toggles propulsion priority; ownership path is Input → `AEdenFlightPlayerController` → `UEdenOperatorControlComponent` → resource/flight APIs.- Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
 - Flight automation tests use the `Eden.Unit.Flight` prefix.
 - Interactive PIE verification of the six-axis flight shell passed on 2026-07-22, including startup map, possession, camera, six-axis input, stabilization, blocker collision, PIE restart reset, and clean Output Log checks.

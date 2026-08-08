@@ -7,15 +7,13 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Field | Value |
 |---|---|
 | Date | 2026-08-08 |
-| Branch | `main` |
-| Milestone tag | `v0.3.0-emergency-mission` |
-| Active ExecPlan | `docs/exec-plans/0005-operator-systems-control-and-mission-hud.md` (content wiring) |
-| ExecPlan 0003 | Complete — delayed PIE folded into 0004 H session 2026-08-08 |
-| ExecPlan 0004 | **Complete** — Checkpoint H manual PIE passed 2026-08-08 |
-| ExecPlan 0005 | Code on `main` (`6f6f6cb`); next: Blueprint HUD + input wiring + PIE |
-| ExecPlan 0006 | Code on `main` (`ec07143`); next after 0005 content PIE: AAR presentation closeout |
-| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** successes / **0** failures; human PIE 0003+0004 passed |
-| Next task | Create/use feature branch for 0005 content: `WBP_EdenOperatorHud`, operator Input Actions, IMC bindings, BP controller HUD assignment, then 0005 PIE |
+| Branch | `feature/operator-hud-and-input` |
+| Milestone tag (main) | `v0.3.0-emergency-mission` |
+| Active ExecPlan | `docs/exec-plans/0005-operator-systems-control-and-mission-hud.md` |
+| ExecPlan 0005 | Content wiring automated green (F/G); **Checkpoint I PIE remaining** |
+| ExecPlan 0006 | Core on `main`; AAR/presentation after 0005 PIE |
+| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** / **0**; `VerifyOperatorAssets.py` passed |
+| Next task | **0005 PIE** — Solar Crisis operator actions + HUD trade-offs, then docs Complete |
 
 ## Recovery protocol
 
@@ -28,27 +26,38 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff -
 
 Then read `AGENTS.md`, ADR-0002, ExecPlan 0005.
 
+Verify content wiring:
+
+```powershell
+& "K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
+  "K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" `
+  -Unattended -NoSplash -NullRHI -NoP4 `
+  "-ExecutePythonScript=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\scripts\Editor\VerifyOperatorAssets.py"
+```
+
 ## Safe Restart Rules
 
 - Do not discard local changes without inspecting them.
 - Do not delete `Content`, `Config`, or `Source`.
-- Preserve `DA_SolarEventEmergency.uasset` and `DA_EdenOperatorControlConfig.uasset` (Git LFS).
+- Preserve operator Input Actions, `IMC_Flight`, `WBP_EdenOperatorHud`, and `DA_EdenOperatorControlConfig` (Git LFS).
 - Do not reopen ExecPlan 0004 Checkpoint F.
 - Do not rewrite `v0.3.0-emergency-mission` history.
 
 ## Current Known Risks
 
-- Production HUD C++ widget exists; Blueprint `WBP_EdenOperatorHud` still needs content authoring and assignment on `BP_EdenFlightPlayerController`.
-- Operator Enhanced Input actions (`IA_ThermalMode`, `IA_LoadShed`, `IA_PropulsionPriority`) still need asset creation + IMC mapping.
-- Telemetry `LoadMission` history-close policy is explicit `ClearHistory()` (not auto-wired to every mission state transition).
+- Operator keys: `T` thermal cycle, `L` load-shed toggle, `P` propulsion priority toggle.
+- Production HUD formats snapshots in C++ (`UEdenOperatorHudWidget`); Blueprint may extend via `OnHudSnapshotUpdated` without owning simulation state.
+- Telemetry `ClearHistory()` remains explicit (not auto-clear on every mission reset).
 
 ## Session Handoff
 
 ### Completed
 
-- 0004 Checkpoint H + delayed 0003 PIE closeout recorded.
-- Tag `v0.3.0-emergency-mission` created for verified resource simulation + emergency mission shell.
+- Created `IA_ThermalMode`, `IA_LoadShed`, `IA_PropulsionPriority`.
+- Bound them on `IMC_Flight`; assigned on `BP_EdenFlightPlayerController` with `WBP_EdenOperatorHud`.
+- Added `VerifyOperatorAssets.py` + create script; updated `VerifyFlightAssets.py` for additional IMC mappings.
+- Build + 186 Eden automation tests green.
 
 ### Next Clean Action
 
-0005 Blueprint/input wiring on a feature branch from `main`, then 0005 PIE.
+Human 0005 PIE gate on `L_FlightSandbox` during Solar Crisis.

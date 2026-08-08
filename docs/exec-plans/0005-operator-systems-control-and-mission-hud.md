@@ -2,16 +2,14 @@
 
 ## Status
 
-**Approved — implementing (core spine + automation green; HUD Blueprint / input assets / PIE pending).**
+**Approved — content wiring automated green; Checkpoint I (manual PIE) remaining.**
 
-Design locks L1–L5 (section 12) are accepted via ADR-0002. Implementation proceeds on `main`. ExecPlan 0004 Complete/tag remains gated on human PIE evidence; do not reopen Checkpoint F.
+Design locks L1–L5 (section 12) are accepted via ADR-0002. Core operator/alert/HUD C++ spine is on `main`. Branch `feature/operator-hud-and-input` adds Input Actions, `IMC_Flight` bindings, `WBP_EdenOperatorHud`, controller assignment, and `VerifyOperatorAssets.py`. Do not mark 0005 Complete until Checkpoint I PIE evidence is recorded.
 
 ## Prerequisite status
 
 > [!NOTE]
-> 0004 automated remediation is on `main`. Manual PIE for 0004 H (+ delayed 0003) remains outstanding for Complete/tag only. 0005 implementation is authorized without waiting for that PIE closeout.
->
-> 0006 implementation remains blocked until 0005 Checkpoint H scenario tests are green.
+> ExecPlan 0004 is Complete (`v0.3.0-emergency-mission`). 0005 content wiring is on `feature/operator-hud-and-input` with automated verification green. 0006 AAR/presentation closeout remains after 0005 Checkpoint I PIE.
 
 ---
 
@@ -223,10 +221,10 @@ Minimum display: mission name, mission state, mission phase, objective list with
 | **C** | `UEdenOperatorControlComponent`: intent ownership, command dispatch, reset | Integration tests |
 | **D** | `FEdenAlert`, `EEdenAlertSeverity`, `UEdenAlertSubsystem`, transition binding | Integration tests |
 | **E** | `FEdenOperatorHudSnapshot` assembly + query API | Unit tests |
-| **F** | `WBP_EdenOperatorHud` + `UEdenOperatorHudWidget` binding | Editor asset verification |
-| **G** | Enhanced Input actions + `IMC_Flight` additions + Blueprint composition | Asset verification |
-| **H** | Solar Crisis trade-off integration tests, deterministic operator scenarios | Full automation |
-| **I** | Manual PIE acceptance + docs closeout | Hands-on gate |
+| **F** | `WBP_EdenOperatorHud` + `UEdenOperatorHudWidget` binding | ✅ Editor asset verification (`VerifyOperatorAssets.py`) |
+| **G** | Enhanced Input actions + `IMC_Flight` additions + Blueprint composition | ✅ Asset verification (`T`/`L`/`P` → Thermal/LoadShed/Propulsion) |
+| **H** | Solar Crisis trade-off integration tests, deterministic operator scenarios | ✅ Existing operator scenario automation still green (186 `Eden.`) |
+| **I** | Manual PIE acceptance + docs closeout | 🟡 Hands-on gate remaining |
 
 ---
 
