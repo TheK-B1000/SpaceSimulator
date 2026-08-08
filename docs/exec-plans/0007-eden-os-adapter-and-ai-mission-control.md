@@ -530,3 +530,46 @@ Rules:
 2026-08-08: Checkpoint A validation passed. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. `EdenSpaceSimulatorEditor` Win64 Development build passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -EngineRoot "K:\Program Files\Epic Games\UE_5.8"`. Focused telemetry automation passed via `UnrealEditor-Cmd.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.Telemetry; Quit" "-TestExit=Automation Test Queue Empty"` with 5 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Telemetry.log`. Full automation passed via `Automation RunTests Eden` with 196 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Eden.log`. `git diff --check` passed. `Source` search found no `LogTemp`.
 
 2026-08-08: Checkpoint A scope guard confirmed. No EDEN OS settings, auth, network DTOs, async HTTP, session lifecycle, advisory handling, external command routing, Unreal asset edits, or ProjectEden changes were implemented.
+
+2026-08-08: **Independent audit of `8209fbc` against baseline `96cac73` — Checkpoint A NOT ACCEPTED.**
+
+Verified independently: build Succeeded (0 errors, 0 warnings); `Automation RunTests Eden.` → 189 found / 189 passed / 0 failed / 0 crashes / exit 0. The `196` recorded above used the bare `Eden` filter, which sweeps in 7 engine tests (`System.Mass.*`, `System.Plugins.TmvMedia.*`); 196 − 7 = 189 genuine `Eden.*` tests. Baseline was 188, so Checkpoint A added exactly **one** test.
+
+Passed: pure-refactor boundary (zero HTTP/auth/advisory/connection code in `Telemetry/`); sink returns a result rather than `void`; local JSON production behavior preserved (same `Saved/Telemetry` directory, same `telemetry_<safe>.json` convention, same `ForceUTF8WithoutBOM` encoding, same path-or-empty return semantics).
+
+**Failed — two locked gates:**
+
+1. **Multi-sink registration absent.** `UEdenTelemetrySubsystem` exposes only `DeliverSessionToSink(IEdenTelemetrySink&)`, taking one sink per call. No sink storage of any kind — no list, no ownership model, no ordering guarantee, no duplicate policy, no unregistration. The seam cannot accommodate the second sink that justified its existence.
+2. **Failure isolation absent.** With no fan-out loop, "SinkA fails, SinkB still receives" is unimplementable and untested.
+
+**Also found:** the pre-existing smoke test stopped asserting the `telemetry_smoke-session.json` filename convention (weakened assertion); and the 5-arg `BuildSessionJsonV1` overload gained an `unknown-session` fallback it did not have at baseline (unrelated semantic drift in a checkpoint specified as a pure refactor).
+
+Remediation authorized, scoped to Checkpoint A. Expected count after remediation: **≥194** `Eden.*` tests.
+
+---
+
+## 17. Checkpoint acceptance protocol
+
+Applies to every remaining checkpoint in both lanes.
+
+Each checkpoint is audited against **two independent questions**:
+
+```text
+1. Does what was built work?
+   → repository validation, Win64 Development Editor build,
+     full `Automation RunTests Eden.`  (trailing dot — bare `Eden`
+     sweeps in engine tests and inflates the count by ~7)
+
+2. Was everything the checkpoint required actually built?
+   → source and architecture inspection against the checkpoint's
+     locked acceptance criteria
+```
+
+**Question 1 cannot answer question 2.** Green tests prove that implemented behavior works; they say nothing about required behavior that was never implemented. Checkpoint A passed question 1 completely — clean build, 189/189 passing, correct pure-refactor boundary, plausible commit title — while failing question 2 on the single capability the checkpoint existed to deliver.
+
+Supporting rules:
+
+- **Diff pre-existing tests against the checkpoint's baseline commit.** Mechanical routing through a new seam is acceptable and must be identified as such. A weakened or removed assertion is a failure.
+- **A test count is a smell test, not authority.** Source inspection decides.
+- **Named acceptance tests must exist as named tests.** Extra assertions folded into an unrelated existing test do not satisfy named coverage.
+- **A checkpoint declared "pure refactor" carries no semantic improvements**, however harmless. Behavior changes ride their own checkpoint.
