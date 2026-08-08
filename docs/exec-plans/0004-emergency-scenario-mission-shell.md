@@ -22,6 +22,7 @@ Approved — Checkpoint A complete
 | Parent branch | `feature/spacecraft-resource-simulation` at `b19242e` |
 | Resource baseline | Automated validation passing; PIE gate open |
 | Checkpoint A status | ✅ Implemented and verified (30 tests, 131 total passing) |
+| Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
 | Working tree | Clean |
 
 ---
@@ -165,14 +166,17 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint B — Mission subsystem and simulation clock deterministic integration
+### Checkpoint B — Mission subsystem and simulation clock deterministic integration ✅ COMPLETE
 
 **Scope:**
-- Enhance `UEdenSimulationClockSubsystem` with explicit deterministic subscriber ordering (resources before missions) independent of registration order.
-- `Public/Missions/EdenMissionSubsystem.h` and `Private/Missions/EdenMissionSubsystem.cpp` — `UTickableWorldSubsystem`, lifecycle state machine, clock registration, mission definition loading.
-- `Eden.Unit.SimClock.*` clock ordering regression tests.
-- `Eden.Integration.Mission.MissionSubsystemReceivesSimulationSteps`.
-- `Eden.Integration.Mission.MultipleSimulationStepsCatchUp`.
+- Enhance `UEdenSimulationClockSubsystem` with explicit deterministic subscriber ordering (`RegisterSimulationTickable(UObject* Subscriber, int32 Priority = 0)`). Priority 0 (Systems) strictly steps before Priority 100 (Mission). Equal priority preserves registration order via stable sort.
+- `Public/Missions/EdenMissionSubsystem.h` and `Private/Missions/EdenMissionSubsystem.cpp` — `UWorldSubsystem`, implements `IEdenSimulationTickable`, lifecycle state machine (`LoadMission`, `StartMission`, `AbortMission`, `ResetMission`), clock registration, event step execution.
+- `Eden.Unit.SimClock.PriorityOrdersSubscribersDeterministically` and `Eden.Unit.SimClock.EqualPriorityPreservesRegistrationOrder` clock regression tests.
+- `Eden.Integration.Mission.MissionSubsystemReceivesSimulationSteps`, `Eden.Integration.Mission.MultipleSimulationStepsCatchUp`, `Eden.Integration.Mission.ClockOrdersSystemsBeforeMission`, and `Eden.Integration.Mission.LifecycleTransitionsViaSubsystem`.
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 137 tests passed (6 new tests in Checkpoint B, 131 existing tests, 0 failures, 0 errors).
 
 ---
 

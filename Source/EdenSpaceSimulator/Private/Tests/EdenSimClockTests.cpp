@@ -14,6 +14,11 @@ void UEdenSimClockTestSubscriber::AdvanceSimulation(float FixedDeltaSeconds)
 	LastFixedDeltaSeconds = FixedDeltaSeconds;
 	TotalAdvancedSeconds += FixedDeltaSeconds;
 
+	if (ExecutionOrderLog && !SubscriberName.IsNone())
+	{
+		ExecutionOrderLog->Add(SubscriberName);
+	}
+
 	if (AdvanceCallCount == 1 && ClockToMutate.IsValid())
 	{
 		if (bRegisterTargetOnFirstAdvance && SubscriberToRegister.IsValid())
@@ -442,6 +447,79 @@ bool FEdenSimClockEquivalentTimeMatchesBelowCatchUpCapTest::RunTest(const FStrin
 	TestEqual(TEXT("Single and partitioned step counts match below cap"), PartitionedSteps, SingleSteps);
 	TestEqual(TEXT("Single run does not drop steps below cap"), SingleDroppedSteps, 0);
 	EdenSimClockTests::TestFloatNearlyEqual(*this, TEXT("Single and partitioned accumulators match"), PartitionedAccumulatorSeconds, SingleAccumulatorSeconds);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSimClockPriorityOrdersSubscribersDeterministicallyTest,
+	"Eden.Unit.SimClock.PriorityOrdersSubscribersDeterministically",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSimClockPriorityOrdersSubscribersDeterministicallyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UEdenSimulationClockSubsystem* Clock = EdenSimClockTests::MakeClock();
+
+	TArray<FName> ExecutionOrder;
+
+	UEdenSimClockTestSubscriber* MissionSubscriber = NewObject<UEdenSimClockTestSubscriber>();
+	MissionSubscriber->SubscriberName = FName("Mission");
+	MissionSubscriber->ExecutionOrderLog = &ExecutionOrder;
+
+	UEdenSimClockTestSubscriber* SystemSubscriber = NewObject<UEdenSimClockTestSubscriber>();
+	SystemSubscriber->SubscriberName = FName("System");
+	SystemSubscriber->ExecutionOrderLog = &ExecutionOrder;
+
+	// Deliberately register Mission (Priority 100) BEFORE System (Priority 0)
+	TestTrue(TEXT("Mission registers first"), Clock->RegisterSimulationTickable(MissionSubscriber, EdenSimulationClockPriority::Mission));
+	TestTrue(TEXT("System registers second"), Clock->RegisterSimulationTickable(SystemSubscriber, EdenSimulationClockPriority::Systems));
+
+	Clock->Tick(0.1f);
+
+	TestEqual(TEXT("Two subscribers stepped"), ExecutionOrder.Num(), 2);
+	if (ExecutionOrder.Num() == 2)
+	{
+		TestEqual(TEXT("System steps first despite registering second"), ExecutionOrder[0], FName("System"));
+		TestEqual(TEXT("Mission steps second"), ExecutionOrder[1], FName("Mission"));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSimClockEqualPriorityPreservesRegistrationOrderTest,
+	"Eden.Unit.SimClock.EqualPriorityPreservesRegistrationOrder",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSimClockEqualPriorityPreservesRegistrationOrderTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UEdenSimulationClockSubsystem* Clock = EdenSimClockTests::MakeClock();
+
+	TArray<FName> ExecutionOrder;
+
+	UEdenSimClockTestSubscriber* SubA = NewObject<UEdenSimClockTestSubscriber>();
+	SubA->SubscriberName = FName("SubA");
+	SubA->ExecutionOrderLog = &ExecutionOrder;
+
+	UEdenSimClockTestSubscriber* SubB = NewObject<UEdenSimClockTestSubscriber>();
+	SubB->SubscriberName = FName("SubB");
+	SubB->ExecutionOrderLog = &ExecutionOrder;
+
+	TestTrue(TEXT("SubA registers first"), Clock->RegisterSimulationTickable(SubA, 0));
+	TestTrue(TEXT("SubB registers second"), Clock->RegisterSimulationTickable(SubB, 0));
+
+	Clock->Tick(0.1f);
+
+	TestEqual(TEXT("Two subscribers stepped"), ExecutionOrder.Num(), 2);
+	if (ExecutionOrder.Num() == 2)
+	{
+		TestEqual(TEXT("SubA steps first (registration order)"), ExecutionOrder[0], FName("SubA"));
+		TestEqual(TEXT("SubB steps second (registration order)"), ExecutionOrder[1], FName("SubB"));
+	}
 
 	return true;
 }

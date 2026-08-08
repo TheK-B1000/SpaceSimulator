@@ -8,6 +8,29 @@
 
 #include "EdenSimulationClockSubsystem.generated.h"
 
+namespace EdenSimulationClockPriority
+{
+	constexpr int32 Default = 0;
+	constexpr int32 Systems = 0;
+	constexpr int32 Mission = 100;
+	constexpr int32 Observers = 200;
+}
+
+USTRUCT()
+struct FEdenSimulationClockSubscriberEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UObject> Subscriber;
+
+	UPROPERTY(Transient)
+	int32 Priority = 0;
+
+	UPROPERTY(Transient)
+	int32 RegistrationOrder = 0;
+};
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FEdenSimulationClockOverrunSignature, int32, DroppedSteps);
 
 UCLASS()
@@ -23,7 +46,7 @@ public:
 	virtual bool DoesSupportWorldType(EWorldType::Type WorldType) const override;
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Simulation")
-	bool RegisterSimulationTickable(UObject* Subscriber);
+	bool RegisterSimulationTickable(UObject* Subscriber, int32 Priority = 0);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Simulation")
 	bool UnregisterSimulationTickable(UObject* Subscriber);
@@ -75,9 +98,9 @@ public:
 private:
 	bool IsClockConfigurationValid() const;
 	bool IsValidSubscriber(const UObject* Subscriber) const;
-	bool ContainsSubscriber(const TArray<TWeakObjectPtr<UObject>>& SubscriberList, const UObject* Subscriber) const;
+	bool ContainsSubscriber(const TArray<FEdenSimulationClockSubscriberEntry>& SubscriberList, const UObject* Subscriber) const;
 	bool RemoveSubscriberNow(const UObject* Subscriber);
-	void PruneInvalidSubscribers(TArray<TWeakObjectPtr<UObject>>& SubscriberList);
+	void PruneInvalidSubscribers(TArray<FEdenSimulationClockSubscriberEntry>& SubscriberList);
 	void BuildSubscriberSnapshot();
 	void FlushDeferredSubscriberMutations();
 	void LogInvalidConfiguration();
@@ -91,21 +114,22 @@ private:
 	int32 MaxCatchUpSteps = 4;
 
 	UPROPERTY(Transient)
-	TArray<TWeakObjectPtr<UObject>> Subscribers;
+	TArray<FEdenSimulationClockSubscriberEntry> Subscribers;
 
 	UPROPERTY(Transient)
-	TArray<TWeakObjectPtr<UObject>> PendingSubscriberRegistrations;
+	TArray<FEdenSimulationClockSubscriberEntry> PendingSubscriberRegistrations;
 
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<UObject>> PendingSubscriberUnregistrations;
 
 	UPROPERTY(Transient)
-	TArray<TWeakObjectPtr<UObject>> SubscriberSnapshot;
+	TArray<FEdenSimulationClockSubscriberEntry> SubscriberSnapshot;
 
 	float AccumulatorSeconds = 0.0f;
 	float ElapsedSimulationTimeSeconds = 0.0f;
 	int32 LastStepsTaken = 0;
 	int32 LastDroppedSteps = 0;
+	int32 NextRegistrationOrder = 0;
 	bool bPaused = false;
 	bool bIsStepping = false;
 	bool bLoggedInvalidConfiguration = false;

@@ -2,6 +2,7 @@
 
 #include "Core/EdenSimulationClockSubsystem.h"
 
+#include "Algo/StableSort.h"
 #include "Core/EdenFixedStepClockModel.h"
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationTickable.h"
@@ -15,6 +16,7 @@ void UEdenSimulationClockSubsystem::Initialize(FSubsystemCollectionBase& Collect
 	ElapsedSimulationTimeSeconds = 0.0f;
 	LastStepsTaken = 0;
 	LastDroppedSteps = 0;
+	NextRegistrationOrder = 0;
 	bPaused = false;
 	bIsStepping = false;
 	bLoggedInvalidConfiguration = false;
@@ -27,6 +29,7 @@ void UEdenSimulationClockSubsystem::Deinitialize()
 	PendingSubscriberRegistrations.Reset();
 	PendingSubscriberUnregistrations.Reset();
 	SubscriberSnapshot.Reset();
+	NextRegistrationOrder = 0;
 	bIsStepping = false;
 
 	Super::Deinitialize();
@@ -73,9 +76,9 @@ void UEdenSimulationClockSubsystem::Tick(float DeltaTime)
 	bIsStepping = true;
 	for (int32 StepIndex = 0; StepIndex < StepsTaken; ++StepIndex)
 	{
-		for (const TWeakObjectPtr<UObject>& SubscriberWeakObject : SubscriberSnapshot)
+		for (const FEdenSimulationClockSubscriberEntry& Entry : SubscriberSnapshot)
 		{
-			UObject* SubscriberObject = SubscriberWeakObject.Get();
+			UObject* SubscriberObject = Entry.Subscriber.Get();
 			IEdenSimulationTickable* Subscriber = Cast<IEdenSimulationTickable>(SubscriberObject);
 			if (Subscriber)
 			{
@@ -107,7 +110,7 @@ bool UEdenSimulationClockSubsystem::DoesSupportWorldType(EWorldType::Type WorldT
 	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
 }
 
-bool UEdenSimulationClockSubsystem::RegisterSimulationTickable(UObject* Subscriber)
+bool UEdenSimulationClockSubsystem::RegisterSimulationTickable(UObject* Subscriber, int32 Priority)
 {
 	if (!IsValidSubscriber(Subscriber))
 	{
@@ -121,13 +124,18 @@ bool UEdenSimulationClockSubsystem::RegisterSimulationTickable(UObject* Subscrib
 		return false;
 	}
 
+	FEdenSimulationClockSubscriberEntry NewEntry;
+	NewEntry.Subscriber = Subscriber;
+	NewEntry.Priority = Priority;
+	NewEntry.RegistrationOrder = NextRegistrationOrder++;
+
 	if (bIsStepping)
 	{
-		PendingSubscriberRegistrations.Add(Subscriber);
+		PendingSubscriberRegistrations.Add(NewEntry);
 		return true;
 	}
 
-	Subscribers.Add(Subscriber);
+	Subscribers.Add(NewEntry);
 	return true;
 }
 
@@ -141,16 +149,26 @@ bool UEdenSimulationClockSubsystem::UnregisterSimulationTickable(UObject* Subscr
 	if (bIsStepping)
 	{
 		const int32 RemovedFromPendingRegistrations = PendingSubscriberRegistrations.RemoveAll(
-			[Subscriber](const TWeakObjectPtr<UObject>& ExistingSubscriber)
+			[Subscriber](const FEdenSimulationClockSubscriberEntry& ExistingEntry)
 			{
-				return !ExistingSubscriber.IsValid() || ExistingSubscriber.Get() == Subscriber;
+				return !ExistingEntry.Subscriber.IsValid() || ExistingEntry.Subscriber.Get() == Subscriber;
 			});
 		if (RemovedFromPendingRegistrations > 0)
 		{
 			return true;
 		}
 
-		if (ContainsSubscriber(Subscribers, Subscriber) && !ContainsSubscriber(PendingSubscriberUnregistrations, Subscriber))
+		bool bAlreadyPendingUnregister = false;
+		for (const TWeakObjectPtr<UObject>& Existing : PendingSubscriberUnregistrations)
+		{
+			if (Existing.Get() == Subscriber)
+			{
+				bAlreadyPendingUnregister = true;
+				break;
+			}
+		}
+
+		if (ContainsSubscriber(Subscribers, Subscriber) && !bAlreadyPendingUnregister)
 		{
 			PendingSubscriberUnregistrations.Add(Subscriber);
 			return true;
@@ -268,7 +286,7 @@ bool UEdenSimulationClockSubsystem::IsValidSubscriber(const UObject* Subscriber)
 }
 
 bool UEdenSimulationClockSubsystem::ContainsSubscriber(
-	const TArray<TWeakObjectPtr<UObject>>& SubscriberList,
+	const TArray<FEdenSimulationClockSubscriberEntry>& SubscriberList,
 	const UObject* Subscriber) const
 {
 	if (!Subscriber)
@@ -276,9 +294,9 @@ bool UEdenSimulationClockSubsystem::ContainsSubscriber(
 		return false;
 	}
 
-	for (const TWeakObjectPtr<UObject>& ExistingSubscriber : SubscriberList)
+	for (const FEdenSimulationClockSubscriberEntry& ExistingEntry : SubscriberList)
 	{
-		if (ExistingSubscriber.Get() == Subscriber)
+		if (ExistingEntry.Subscriber.Get() == Subscriber)
 		{
 			return true;
 		}
@@ -295,25 +313,25 @@ bool UEdenSimulationClockSubsystem::RemoveSubscriberNow(const UObject* Subscribe
 	}
 
 	const int32 RemovedFromPendingRegistrations = PendingSubscriberRegistrations.RemoveAll(
-		[Subscriber](const TWeakObjectPtr<UObject>& ExistingSubscriber)
+		[Subscriber](const FEdenSimulationClockSubscriberEntry& ExistingEntry)
 		{
-			return !ExistingSubscriber.IsValid() || ExistingSubscriber.Get() == Subscriber;
+			return !ExistingEntry.Subscriber.IsValid() || ExistingEntry.Subscriber.Get() == Subscriber;
 		});
 	const int32 RemovedFromSubscribers = Subscribers.RemoveAll(
-		[Subscriber](const TWeakObjectPtr<UObject>& ExistingSubscriber)
+		[Subscriber](const FEdenSimulationClockSubscriberEntry& ExistingEntry)
 		{
-			return !ExistingSubscriber.IsValid() || ExistingSubscriber.Get() == Subscriber;
+			return !ExistingEntry.Subscriber.IsValid() || ExistingEntry.Subscriber.Get() == Subscriber;
 		});
 
 	return RemovedFromPendingRegistrations > 0 || RemovedFromSubscribers > 0;
 }
 
-void UEdenSimulationClockSubsystem::PruneInvalidSubscribers(TArray<TWeakObjectPtr<UObject>>& SubscriberList)
+void UEdenSimulationClockSubsystem::PruneInvalidSubscribers(TArray<FEdenSimulationClockSubscriberEntry>& SubscriberList)
 {
 	SubscriberList.RemoveAll(
-		[](const TWeakObjectPtr<UObject>& Subscriber)
+		[](const FEdenSimulationClockSubscriberEntry& Entry)
 		{
-			const UObject* SubscriberObject = Subscriber.Get();
+			const UObject* SubscriberObject = Entry.Subscriber.Get();
 			return !SubscriberObject || !SubscriberObject->GetClass()->ImplementsInterface(UEdenSimulationTickable::StaticClass());
 		});
 }
@@ -322,13 +340,24 @@ void UEdenSimulationClockSubsystem::BuildSubscriberSnapshot()
 {
 	SubscriberSnapshot.Reset();
 
-	for (const TWeakObjectPtr<UObject>& Subscriber : Subscribers)
+	for (const FEdenSimulationClockSubscriberEntry& Entry : Subscribers)
 	{
-		if (Subscriber.IsValid())
+		if (Entry.Subscriber.IsValid())
 		{
-			SubscriberSnapshot.Add(Subscriber);
+			SubscriberSnapshot.Add(Entry);
 		}
 	}
+
+	Algo::StableSort(
+		SubscriberSnapshot,
+		[](const FEdenSimulationClockSubscriberEntry& A, const FEdenSimulationClockSubscriberEntry& B)
+		{
+			if (A.Priority != B.Priority)
+			{
+				return A.Priority < B.Priority;
+			}
+			return A.RegistrationOrder < B.RegistrationOrder;
+		});
 }
 
 void UEdenSimulationClockSubsystem::FlushDeferredSubscriberMutations()
@@ -343,12 +372,12 @@ void UEdenSimulationClockSubsystem::FlushDeferredSubscriberMutations()
 	PendingSubscriberUnregistrations.Reset();
 
 	PruneInvalidSubscribers(PendingSubscriberRegistrations);
-	for (const TWeakObjectPtr<UObject>& PendingRegistration : PendingSubscriberRegistrations)
+	for (const FEdenSimulationClockSubscriberEntry& PendingRegistration : PendingSubscriberRegistrations)
 	{
-		UObject* Subscriber = PendingRegistration.Get();
+		UObject* Subscriber = PendingRegistration.Subscriber.Get();
 		if (IsValidSubscriber(Subscriber) && !ContainsSubscriber(Subscribers, Subscriber))
 		{
-			Subscribers.Add(Subscriber);
+			Subscribers.Add(PendingRegistration);
 		}
 	}
 	PendingSubscriberRegistrations.Reset();
