@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E accepted; Checkpoint F locked pending ProjectEden D and explicit authorization |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint C corrective wire-contract patch implemented for review; Checkpoint F locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS with explicit corrective `EdenOsTransportTests.cpp` compile and final up-to-date build; `Automation RunTests Eden.Integration.EdenOs.` PASS with 2 tests; `Automation RunTests Eden.Unit.EdenOs.Transport.` PASS with 10 tests; `Automation RunTests Eden.` PASS with 230 tests; `git diff --check` PASS; Source `LogTemp`, secret, scope, hardcoded URL, and blocking HTTP scans clean or limited to expected contract/async transport matches |
-| Next task | Wait for ProjectEden Checkpoint D completion and explicit Checkpoint F authorization. Do not begin F yet |
+| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS with explicit corrective `EdenOsWireSerializationModel.cpp` and `EdenOsWireSerializationTests.cpp` compile; focused `Automation RunTests Eden.Unit.EdenOs.Wire.` PASS with 13 tests; full `Automation RunTests Eden.` PASS with 232 tests; `git diff --check` PASS; Source `LogTemp`, added-source credential, and added-diff F-scope scans clean |
+| Next task | Commit the Checkpoint C corrective wire-contract patch, then wait for user re-acceptance. Do not begin Checkpoint F yet |
 
 ## Recovery protocol
 
@@ -37,7 +37,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time: A, B, C, E. Do not implement ProjectEden Checkpoint D in this repository.
-- Do not begin Checkpoint F until Checkpoint E is explicitly accepted and ProjectEden Checkpoint D is complete.
+- Do not begin Checkpoint F until the Checkpoint C corrective wire-contract patch is accepted and explicit Checkpoint F authorization is given.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -45,7 +45,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Operator keys: `T` / `L` / `P`.
 - Telemetry export path: `Saved/Telemetry/` (runtime output; not tracked).
 - `ClearHistory()` remains explicit.
-- ProjectEden Checkpoint D is separate and must be complete before Checkpoint F convergence.
+- ProjectEden Checkpoint D completed at `B:\repo\ProjectEden` commit `6442029`, but it exposed DTO mismatches that require Unreal Checkpoint C corrective re-acceptance before Checkpoint F convergence.
 
 ## Session Handoff
 
@@ -57,6 +57,23 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint B was accepted and pushed as `a63de4e`.
 - 0007 Checkpoint C was accepted and committed as `f66cda3`.
 - 0007 Checkpoint E was committed as `32c8f9a`, then accepted at `75fcd90` after the mission-level failure-isolation proof.
+- 0007 Checkpoint F was stopped before implementation after ProjectEden D (`6442029`) revealed create/telemetry/event/complete DTO mismatches against Unreal Checkpoint C.
+- A narrow Checkpoint C corrective wire-contract patch is implemented for review and not yet accepted.
+
+### Latest Checkpoint C Corrective Evidence
+
+- ProjectEden D source of truth inspected: `B:\repo\ProjectEden\packages\api\eden_api\schemas\missions.py` at commit `6442029 feat(missions): add external mission session ingestion`.
+- Unreal create payload now emits only `schemaVersion`, `sessionId`, `scenarioId`, and `startedAt`.
+- Unreal telemetry payload now emits ProjectEden's outer fields `schemaVersion`, `sessionId`, `sequence`, and `simulationTimeSeconds`, while preserving canonical 0006 telemetry under `telemetry`.
+- Unreal event payload now emits `eventId`, `eventType`, `sequence`, `simulationTimeSeconds`, and `payload` directly, without the old nested `event` wrapper.
+- Unreal complete payload now emits `finalStatus` as `succeeded`, `failed`, or `aborted`, `completedAt`, and optional `finalSequence`, `ticks`, `alertsCount`, and `highestRiskSystem` only when known.
+- Canonical 0006 telemetry `missionId` remains unchanged. Future convergence must provide the scenario mapping explicitly; this corrective patch does not implement Checkpoint F.
+- No lifecycle orchestration, HTTP transport, advisory, command, retry/backoff, FastAPI, DB, Unreal asset, or ProjectEden code was changed.
+- Build passed via `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; UBT explicitly compiled `EdenOsWireSerializationModel.cpp` and `EdenOsWireSerializationTests.cpp`, relinked `UnrealEditor-EdenSpaceSimulator.dll`, and returned `Result: Succeeded`.
+- Focused automation passed via `UnrealEditor-Cmd.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Wire.; Quit" "-TestExit=Automation Test Queue Empty" -Log`; `Saved/Logs/EdenSpaceSimulator.log` reported 13 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
+- Full automation passed via `Automation RunTests Eden.` with 232 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
+- Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`.
+- `git diff --check` passed. Source `LogTemp` scan returned no matches. added-source credential and F-scope scans returned no matches.
 
 ### Latest Checkpoint E Evidence
 
@@ -101,4 +118,4 @@ Then read `AGENTS.md` and ExecPlan 0007.
 
 ### Next Clean Action
 
-Wait for ProjectEden Checkpoint D completion and explicit Checkpoint F authorization. Do not begin Checkpoint F until both repositories are ready against the locked contract.
+After committing this corrective patch, wait for user re-acceptance of Checkpoint C. Do not begin Checkpoint F until the corrective patch is accepted and the user explicitly authorizes F.

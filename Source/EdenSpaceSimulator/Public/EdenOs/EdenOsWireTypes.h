@@ -31,9 +31,8 @@ struct EDENSPACESIMULATOR_API FEdenOsWireSerializationResult
 struct EDENSPACESIMULATOR_API FEdenOsMissionSessionCreateRequestV1
 {
 	FString SessionId;
-	FName MissionId = NAME_None;
-	float StartSimulationTimeSeconds = 0.0f;
-	FString StartedAtUtcIso8601;
+	FString ScenarioId;
+	FString StartedAtIso8601;
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsTelemetryIngestionRequestV1
@@ -44,13 +43,25 @@ struct EDENSPACESIMULATOR_API FEdenOsTelemetryIngestionRequestV1
 struct EDENSPACESIMULATOR_API FEdenOsEventIngestionRequestV1
 {
 	FString SessionId;
-	FName MissionId = NAME_None;
 	FEdenTelemetryEvent Event;
+};
+
+enum class EEdenOsMissionFinalStatus : uint8
+{
+	Succeeded,
+	Failed,
+	Aborted
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsSessionCompleteRequestV1
 {
-	FEdenTelemetrySessionPayload Payload;
+	FString SessionId;
+	EEdenOsMissionFinalStatus FinalStatus = EEdenOsMissionFinalStatus::Succeeded;
+	FString CompletedAtUtcIso8601;
+	TOptional<int64> FinalSequence;
+	TOptional<int32> Ticks;
+	TOptional<int32> AlertsCount;
+	TOptional<FString> HighestRiskSystem;
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsWireSerializationModel

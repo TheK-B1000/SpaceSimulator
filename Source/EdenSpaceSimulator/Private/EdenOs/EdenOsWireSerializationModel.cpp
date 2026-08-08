@@ -6,19 +6,24 @@
 
 namespace EdenOsWireSerializationPrivate
 {
-	FString BoolJson(bool bValue)
-	{
-		return bValue ? TEXT("true") : TEXT("false");
-	}
-
-	bool IsNonNegativeFinite(float Value)
-	{
-		return FMath::IsFinite(Value) && Value >= 0.0f;
-	}
-
 	bool HasIdentifier(const FString& Identifier)
 	{
 		return !Identifier.TrimStartAndEnd().IsEmpty();
+	}
+
+	FString FinalStatusToken(EEdenOsMissionFinalStatus Status)
+	{
+		switch (Status)
+		{
+		case EEdenOsMissionFinalStatus::Succeeded:
+			return TEXT("succeeded");
+		case EEdenOsMissionFinalStatus::Failed:
+			return TEXT("failed");
+		case EEdenOsMissionFinalStatus::Aborted:
+			return TEXT("aborted");
+		default:
+			return TEXT("failed");
+		}
 	}
 
 	FName ResolveMissionId(const FEdenTelemetrySessionPayload& Payload)
@@ -69,41 +74,6 @@ namespace EdenOsWireSerializationPrivate
 		}
 
 		return 0.0f;
-	}
-
-	float ResolveEndSimulationTimeSeconds(const FEdenTelemetrySessionPayload& Payload)
-	{
-		if (Payload.Events.Num() > 0)
-		{
-			return Payload.Events.Last().SimulationTimeSeconds;
-		}
-
-		return ResolveLatestSimulationTimeSeconds(Payload);
-	}
-
-	FString ResolveTerminalOutcome(const FEdenTelemetrySessionPayload& Payload)
-	{
-		for (int32 Index = Payload.Events.Num() - 1; Index >= 0; --Index)
-		{
-			switch (Payload.Events[Index].EventType)
-			{
-			case EEdenTelemetryEventType::MissionSucceeded:
-				return TEXT("Succeeded");
-			case EEdenTelemetryEventType::MissionFailed:
-				return TEXT("Failed");
-			case EEdenTelemetryEventType::MissionAborted:
-				return TEXT("Aborted");
-			default:
-				break;
-			}
-		}
-
-		if (Payload.Snapshots.Num() > 0)
-		{
-			return FEdenTelemetryExportModel::EnumToken(Payload.Snapshots.Last().Mission.MissionState);
-		}
-
-		return TEXT("Unknown");
 	}
 
 	bool ValidatePayload(const FEdenTelemetrySessionPayload& Payload, FString& OutErrorMessage)
@@ -217,25 +187,23 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildSessionCreate
 	{
 		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session create requires a non-empty sessionId."));
 	}
-	if (Request.MissionId.IsNone())
+	if (!HasIdentifier(Request.ScenarioId))
 	{
-		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session create requires a missionId."));
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session create requires a scenarioId."));
 	}
-	if (!IsNonNegativeFinite(Request.StartSimulationTimeSeconds))
+	if (!HasIdentifier(Request.StartedAtIso8601))
 	{
-		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session create startSimulationTimeSeconds must be non-negative and finite."));
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session create requires startedAt."));
 	}
 
 	FString Json;
 	Json += TEXT("{\n");
 	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
 	Json += FString::Printf(TEXT("  \"sessionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.SessionId));
-	Json += FString::Printf(TEXT("  \"missionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.MissionId.ToString()));
-	Json += FString::Printf(TEXT("  \"origin\": \"%s\",\n"), EdenOsWireContract::MissionEnvironmentOrigin);
-	Json += FString::Printf(TEXT("  \"startSimulationTimeSeconds\": %.6f,\n"), Request.StartSimulationTimeSeconds);
+	Json += FString::Printf(TEXT("  \"scenarioId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.ScenarioId));
 	Json += FString::Printf(
-		TEXT("  \"startedAtUtc\": \"%s\"\n"),
-		*FEdenTelemetryExportModel::EscapeJsonString(Request.StartedAtUtcIso8601));
+		TEXT("  \"startedAt\": \"%s\"\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.StartedAtIso8601));
 	Json += TEXT("}\n");
 	return FEdenOsWireSerializationResult::Succeeded(Json);
 }
@@ -251,7 +219,6 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildTelemetryJson
 		return FEdenOsWireSerializationResult::Failed(ErrorMessage);
 	}
 
-	const FName MissionId = ResolveMissionId(Request.Payload);
 	const int64 Sequence = ResolveLatestSequence(Request.Payload);
 	const float SimulationTimeSeconds = ResolveLatestSimulationTimeSeconds(Request.Payload);
 	const FString CanonicalTelemetryJson = TrimmedCanonicalTelemetryJson(Request.Payload);
@@ -260,8 +227,6 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildTelemetryJson
 	Json += TEXT("{\n");
 	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
 	Json += FString::Printf(TEXT("  \"sessionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.Payload.SessionId));
-	Json += FString::Printf(TEXT("  \"missionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(MissionId.ToString()));
-	Json += FString::Printf(TEXT("  \"origin\": \"%s\",\n"), EdenOsWireContract::MissionEnvironmentOrigin);
 	Json += FString::Printf(TEXT("  \"sequence\": %lld,\n"), Sequence);
 	Json += FString::Printf(TEXT("  \"simulationTimeSeconds\": %.6f,\n"), SimulationTimeSeconds);
 	Json += TEXT("  \"telemetry\": ");
@@ -279,10 +244,6 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildEventJsonV1(
 	{
 		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS event requires a non-empty sessionId."));
 	}
-	if (Request.MissionId.IsNone())
-	{
-		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS event requires a missionId."));
-	}
 	if (Request.Event.SequenceNumber < 0)
 	{
 		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS event sequence cannot be negative."));
@@ -296,21 +257,21 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildEventJsonV1(
 	Json += TEXT("{\n");
 	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
 	Json += FString::Printf(TEXT("  \"sessionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.SessionId));
-	Json += FString::Printf(TEXT("  \"missionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.MissionId.ToString()));
-	Json += FString::Printf(TEXT("  \"origin\": \"%s\",\n"), EdenOsWireContract::MissionEnvironmentOrigin);
-	Json += TEXT("  \"event\": {\n");
-	Json += FString::Printf(TEXT("    \"sequence\": %lld,\n"), Request.Event.SequenceNumber);
-	Json += FString::Printf(TEXT("    \"simulationTimeSeconds\": %.6f,\n"), Request.Event.SimulationTimeSeconds);
-	Json += FString::Printf(TEXT("    \"missionElapsedTimeSeconds\": %.6f,\n"), Request.Event.MissionElapsedTimeSeconds);
 	Json += FString::Printf(
-		TEXT("    \"type\": \"%s\",\n"),
+		TEXT("  \"eventId\": \"%s\",\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.Event.EventId.ToString()));
+	Json += FString::Printf(
+		TEXT("  \"eventType\": \"%s\",\n"),
 		*FEdenTelemetryExportModel::EscapeJsonString(FEdenTelemetryExportModel::EnumToken(Request.Event.EventType)));
+	Json += FString::Printf(TEXT("  \"sequence\": %lld,\n"), Request.Event.SequenceNumber);
+	Json += FString::Printf(TEXT("  \"simulationTimeSeconds\": %.6f,\n"), Request.Event.SimulationTimeSeconds);
+	Json += TEXT("  \"payload\": {\n");
 	Json += FString::Printf(
 		TEXT("    \"source\": \"%s\",\n"),
 		*FEdenTelemetryExportModel::EscapeJsonString(Request.Event.SourceSystem.ToString()));
 	Json += FString::Printf(
-		TEXT("    \"id\": \"%s\",\n"),
-		*FEdenTelemetryExportModel::EscapeJsonString(Request.Event.EventId.ToString()));
+		TEXT("    \"missionElapsedTimeSeconds\": %.6f,\n"),
+		Request.Event.MissionElapsedTimeSeconds);
 	Json += FString::Printf(
 		TEXT("    \"detail\": \"%s\"\n"),
 		*FEdenTelemetryExportModel::EscapeJsonString(Request.Event.Detail));
@@ -324,43 +285,53 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildSessionComple
 {
 	using namespace EdenOsWireSerializationPrivate;
 
-	FString ErrorMessage;
-	if (!ValidatePayload(Request.Payload, ErrorMessage))
+	if (!HasIdentifier(Request.SessionId))
 	{
-		return FEdenOsWireSerializationResult::Failed(ErrorMessage);
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session complete requires a non-empty sessionId."));
 	}
-
-	const FName MissionId = ResolveMissionId(Request.Payload);
-	const FString TerminalOutcome = ResolveTerminalOutcome(Request.Payload);
-	const float EndSimulationTimeSeconds = ResolveEndSimulationTimeSeconds(Request.Payload);
-	const FString CanonicalTelemetryJson = TrimmedCanonicalTelemetryJson(Request.Payload);
+	if (!HasIdentifier(Request.CompletedAtUtcIso8601))
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session complete requires completedAt."));
+	}
+	if (Request.FinalSequence.IsSet() && Request.FinalSequence.GetValue() < 0)
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session complete finalSequence cannot be negative."));
+	}
+	if (Request.Ticks.IsSet() && Request.Ticks.GetValue() < 0)
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session complete ticks cannot be negative."));
+	}
+	if (Request.AlertsCount.IsSet() && Request.AlertsCount.GetValue() < 0)
+	{
+		return FEdenOsWireSerializationResult::Failed(TEXT("EDEN OS session complete alertsCount cannot be negative."));
+	}
 
 	FString Json;
 	Json += TEXT("{\n");
 	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
-	Json += FString::Printf(TEXT("  \"sessionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.Payload.SessionId));
-	Json += FString::Printf(TEXT("  \"missionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(MissionId.ToString()));
-	Json += FString::Printf(TEXT("  \"origin\": \"%s\",\n"), EdenOsWireContract::MissionEnvironmentOrigin);
-	Json += FString::Printf(TEXT("  \"terminalOutcome\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(TerminalOutcome));
-	Json += FString::Printf(TEXT("  \"endSimulationTimeSeconds\": %.6f,\n"), EndSimulationTimeSeconds);
-	Json += TEXT("  \"integrity\": {\n");
-	Json += FString::Printf(TEXT("    \"historyTruncated\": %s,\n"), *BoolJson(Request.Payload.Metadata.bHistoryTruncated));
-	Json += FString::Printf(TEXT("    \"droppedSnapshots\": %d,\n"), Request.Payload.Metadata.DroppedSnapshotCount);
-	Json += FString::Printf(TEXT("    \"droppedEvents\": %d,\n"), Request.Payload.Metadata.DroppedEventCount);
+	Json += FString::Printf(TEXT("  \"sessionId\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(Request.SessionId));
+	Json += FString::Printf(TEXT("  \"finalStatus\": \"%s\",\n"), *FEdenTelemetryExportModel::EscapeJsonString(FinalStatusToken(Request.FinalStatus)));
 	Json += FString::Printf(
-		TEXT("    \"eventIntegrityCompromised\": %s\n"),
-		*BoolJson(Request.Payload.Metadata.bEventIntegrityCompromised));
-	Json += TEXT("  },\n");
-	Json += TEXT("  \"aggregates\": {\n");
-	Json += FString::Printf(TEXT("    \"peakTemperatureCelsius\": %.6f,\n"), Request.Payload.Metadata.PeakTemperatureCelsius);
-	Json += FString::Printf(
-		TEXT("    \"minimumBatteryChargeFraction\": %.6f,\n"),
-		Request.Payload.Metadata.MinimumBatteryChargeFraction);
-	Json += FString::Printf(TEXT("    \"minimumFuelFraction\": %.6f,\n"), Request.Payload.Metadata.MinimumFuelFraction);
-	Json += FString::Printf(TEXT("    \"snapshotIntervalSeconds\": %.6f\n"), Request.Payload.Metadata.SnapshotIntervalSeconds);
-	Json += TEXT("  },\n");
-	Json += TEXT("  \"telemetry\": ");
-	Json += CanonicalTelemetryJson;
+		TEXT("  \"completedAt\": \"%s\""),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.CompletedAtUtcIso8601));
+	if (Request.FinalSequence.IsSet())
+	{
+		Json += FString::Printf(TEXT(",\n  \"finalSequence\": %lld"), Request.FinalSequence.GetValue());
+	}
+	if (Request.Ticks.IsSet())
+	{
+		Json += FString::Printf(TEXT(",\n  \"ticks\": %d"), Request.Ticks.GetValue());
+	}
+	if (Request.AlertsCount.IsSet())
+	{
+		Json += FString::Printf(TEXT(",\n  \"alertsCount\": %d"), Request.AlertsCount.GetValue());
+	}
+	if (Request.HighestRiskSystem.IsSet() && !Request.HighestRiskSystem.GetValue().TrimStartAndEnd().IsEmpty())
+	{
+		Json += FString::Printf(
+			TEXT(",\n  \"highestRiskSystem\": \"%s\""),
+			*FEdenTelemetryExportModel::EscapeJsonString(Request.HighestRiskSystem.GetValue()));
+	}
 	Json += TEXT("\n}\n");
 	return FEdenOsWireSerializationResult::Succeeded(Json);
 }

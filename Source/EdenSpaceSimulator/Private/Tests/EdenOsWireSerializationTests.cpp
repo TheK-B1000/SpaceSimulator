@@ -75,6 +75,38 @@ namespace EdenOsWireTests
 	{
 		return FEdenTelemetrySessionPayload(Events, Snapshots, Metadata, TEXT("session-001"), TEXT("SolarCrisis"));
 	}
+
+	int32 CountTopLevelFieldLines(const FString& Json)
+	{
+		TArray<FString> Lines;
+		Json.ParseIntoArrayLines(Lines, false);
+
+		int32 Count = 0;
+		for (const FString& Line : Lines)
+		{
+			if (Line.StartsWith(TEXT("  \"")) && !Line.StartsWith(TEXT("    \"")))
+			{
+				++Count;
+			}
+		}
+		return Count;
+	}
+
+	bool ContainsTopLevelField(const FString& Json, const TCHAR* FieldName)
+	{
+		TArray<FString> Lines;
+		Json.ParseIntoArrayLines(Lines, false);
+
+		const FString Prefix = FString::Printf(TEXT("  \"%s\":"), FieldName);
+		for (const FString& Line : Lines)
+		{
+			if (Line.StartsWith(Prefix))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -115,17 +147,20 @@ bool FEdenOsWireSessionCreateSerializesRequiredFieldsOnlyTest::RunTest(const FSt
 
 	FEdenOsMissionSessionCreateRequestV1 Request;
 	Request.SessionId = TEXT("session-001");
-	Request.MissionId = TEXT("SolarCrisis");
-	Request.StartSimulationTimeSeconds = 0.0f;
+	Request.ScenarioId = TEXT("SolarEventEmergency");
+	Request.StartedAtIso8601 = TEXT("2026-08-08T12:00:00Z");
 
 	const FEdenOsWireSerializationResult Result = FEdenOsWireSerializationModel::BuildSessionCreateJsonV1(Request);
 	TestTrue(TEXT("Session create succeeds"), Result.IsSuccess());
+	TestEqual(TEXT("Create top-level key count"), EdenOsWireTests::CountTopLevelFieldLines(Result.Json), 4);
 	TestTrue(TEXT("schemaVersion"), Result.Json.Contains(TEXT("\"schemaVersion\": 1")));
 	TestTrue(TEXT("sessionId"), Result.Json.Contains(TEXT("\"sessionId\": \"session-001\"")));
-	TestTrue(TEXT("missionId"), Result.Json.Contains(TEXT("\"missionId\": \"SolarCrisis\"")));
-	TestTrue(TEXT("origin"), Result.Json.Contains(TEXT("\"origin\": \"mission_environment\"")));
-	TestTrue(TEXT("start simulation time"), Result.Json.Contains(TEXT("\"startSimulationTimeSeconds\": 0.000000")));
-	TestTrue(TEXT("optional timestamp deterministic"), Result.Json.Contains(TEXT("\"startedAtUtc\": \"\"")));
+	TestTrue(TEXT("scenarioId"), Result.Json.Contains(TEXT("\"scenarioId\": \"SolarEventEmergency\"")));
+	TestTrue(TEXT("startedAt"), Result.Json.Contains(TEXT("\"startedAt\": \"2026-08-08T12:00:00Z\"")));
+	TestFalse(TEXT("No missionId"), Result.Json.Contains(TEXT("\"missionId\"")));
+	TestFalse(TEXT("No origin"), Result.Json.Contains(TEXT("\"origin\"")));
+	TestFalse(TEXT("No start simulation time"), Result.Json.Contains(TEXT("\"startSimulationTimeSeconds\"")));
+	TestFalse(TEXT("No startedAtUtc"), Result.Json.Contains(TEXT("\"startedAtUtc\"")));
 	TestFalse(TEXT("No seed fabrication"), Result.Json.Contains(TEXT("\"seed\"")));
 	TestFalse(TEXT("No fake endedAt"), Result.Json.Contains(TEXT("\"endedAt\"")));
 	TestFalse(TEXT("No fake alertsCount"), Result.Json.Contains(TEXT("\"alertsCount\"")));
@@ -159,6 +194,9 @@ bool FEdenOsWireTelemetryWrapsCanonicalExportSchemaV1Test::RunTest(const FString
 	TestTrue(TEXT("Outer sessionId"), Result.Json.Contains(TEXT("\"sessionId\": \"session-001\"")));
 	TestTrue(TEXT("Outer sequence"), Result.Json.Contains(TEXT("\"sequence\": 3")));
 	TestTrue(TEXT("Outer simulation time units"), Result.Json.Contains(TEXT("\"simulationTimeSeconds\": 10.000000")));
+	TestFalse(TEXT("No outer missionId"), EdenOsWireTests::ContainsTopLevelField(Result.Json, TEXT("missionId")));
+	TestFalse(TEXT("No outer origin"), EdenOsWireTests::ContainsTopLevelField(Result.Json, TEXT("origin")));
+	TestFalse(TEXT("No recordedAt fabrication"), EdenOsWireTests::ContainsTopLevelField(Result.Json, TEXT("recordedAt")));
 	TestTrue(TEXT("Canonical telemetry is embedded"), Result.Json.Contains(CanonicalJson));
 	TestTrue(TEXT("Explicit temperature units preserved"), Result.Json.Contains(TEXT("\"temperatureCelsius\": 73.500000")));
 	TestTrue(TEXT("Explicit power units preserved"), Result.Json.Contains(TEXT("\"generationKilowatts\": 2.000000")));
@@ -177,7 +215,6 @@ bool FEdenOsWireEventSerializesFactIdentityTest::RunTest(const FString& Paramete
 
 	FEdenOsEventIngestionRequestV1 Request;
 	Request.SessionId = TEXT("session-001");
-	Request.MissionId = TEXT("SolarCrisis");
 	Request.Event.SequenceNumber = 9;
 	Request.Event.SimulationTimeSeconds = 12.5f;
 	Request.Event.MissionElapsedTimeSeconds = 12.5f;
@@ -188,12 +225,21 @@ bool FEdenOsWireEventSerializesFactIdentityTest::RunTest(const FString& Paramete
 
 	const FEdenOsWireSerializationResult Result = FEdenOsWireSerializationModel::BuildEventJsonV1(Request);
 	TestTrue(TEXT("Event serialization succeeds"), Result.IsSuccess());
+	TestEqual(TEXT("Event top-level key count"), EdenOsWireTests::CountTopLevelFieldLines(Result.Json), 7);
+	TestTrue(TEXT("sessionId"), Result.Json.Contains(TEXT("\"sessionId\": \"session-001\"")));
+	TestTrue(TEXT("eventId"), Result.Json.Contains(TEXT("\"eventId\": \"ThermalWarning\"")));
+	TestTrue(TEXT("eventType"), Result.Json.Contains(TEXT("\"eventType\": \"AlertRaised\"")));
 	TestTrue(TEXT("Event sequence"), Result.Json.Contains(TEXT("\"sequence\": 9")));
 	TestTrue(TEXT("Event simulation time"), Result.Json.Contains(TEXT("\"simulationTimeSeconds\": 12.500000")));
-	TestTrue(TEXT("Event type"), Result.Json.Contains(TEXT("\"type\": \"AlertRaised\"")));
-	TestTrue(TEXT("Event source"), Result.Json.Contains(TEXT("\"source\": \"Alert\"")));
-	TestTrue(TEXT("Event id"), Result.Json.Contains(TEXT("\"id\": \"ThermalWarning\"")));
-	TestTrue(TEXT("Events are facts"), Result.Json.Contains(TEXT("\"detail\": \"[Warning] Thermal warning\"")));
+	TestTrue(TEXT("Event payload"), Result.Json.Contains(TEXT("\"payload\": {")));
+	TestTrue(TEXT("Payload source"), Result.Json.Contains(TEXT("\"source\": \"Alert\"")));
+	TestTrue(TEXT("Payload mission elapsed time"), Result.Json.Contains(TEXT("\"missionElapsedTimeSeconds\": 12.500000")));
+	TestTrue(TEXT("Payload detail"), Result.Json.Contains(TEXT("\"detail\": \"[Warning] Thermal warning\"")));
+	TestFalse(TEXT("No missionId"), Result.Json.Contains(TEXT("\"missionId\"")));
+	TestFalse(TEXT("No origin"), Result.Json.Contains(TEXT("\"origin\"")));
+	TestFalse(TEXT("No nested event object"), Result.Json.Contains(TEXT("\"event\": {")));
+	TestFalse(TEXT("No old type key"), Result.Json.Contains(TEXT("\"type\"")));
+	TestFalse(TEXT("No old id key"), Result.Json.Contains(TEXT("\"id\"")));
 	return true;
 }
 
@@ -205,32 +251,82 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FEdenOsWireCompletionSerializesTerminalFactsTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
-	using namespace EdenOsWireTests;
-
-	TArray<FEdenTelemetryEvent> Events;
-	TArray<FEdenTelemetrySnapshot> Snapshots;
-	FEdenTelemetrySessionMetadata Metadata;
-	PopulateSampleTelemetry(Events, Snapshots, Metadata);
-	FEdenTelemetryEvent Succeeded;
-	Succeeded.SequenceNumber = 4;
-	Succeeded.SimulationTimeSeconds = 50.0f;
-	Succeeded.MissionElapsedTimeSeconds = 50.0f;
-	Succeeded.EventType = EEdenTelemetryEventType::MissionSucceeded;
-	Succeeded.SourceSystem = TEXT("Mission");
-	Succeeded.EventId = TEXT("Succeeded");
-	Events.Add(Succeeded);
-	Metadata.LastAvailableSequence = 4;
-
 	FEdenOsSessionCompleteRequestV1 Request;
-	Request.Payload = MakePayload(Events, Snapshots, Metadata);
+	Request.SessionId = TEXT("session-001");
+	Request.FinalStatus = EEdenOsMissionFinalStatus::Succeeded;
+	Request.CompletedAtUtcIso8601 = TEXT("2026-08-08T12:01:00Z");
+	Request.FinalSequence = 42;
+	Request.Ticks = 500;
+	Request.AlertsCount = 3;
+	Request.HighestRiskSystem = TEXT("Thermal");
 	const FEdenOsWireSerializationResult Result = FEdenOsWireSerializationModel::BuildSessionCompleteJsonV1(Request);
 
 	TestTrue(TEXT("Completion serialization succeeds"), Result.IsSuccess());
-	TestTrue(TEXT("Terminal outcome"), Result.Json.Contains(TEXT("\"terminalOutcome\": \"Succeeded\"")));
-	TestTrue(TEXT("End time"), Result.Json.Contains(TEXT("\"endSimulationTimeSeconds\": 50.000000")));
-	TestTrue(TEXT("Dropped snapshots"), Result.Json.Contains(TEXT("\"droppedSnapshots\": 1")));
-	TestTrue(TEXT("Peak temperature"), Result.Json.Contains(TEXT("\"peakTemperatureCelsius\": 73.500000")));
-	TestTrue(TEXT("Canonical telemetry attached"), Result.Json.Contains(TEXT("\"telemetry\": {")));
+	TestEqual(TEXT("Completion top-level key count"), EdenOsWireTests::CountTopLevelFieldLines(Result.Json), 8);
+	TestTrue(TEXT("schemaVersion"), Result.Json.Contains(TEXT("\"schemaVersion\": 1")));
+	TestTrue(TEXT("sessionId"), Result.Json.Contains(TEXT("\"sessionId\": \"session-001\"")));
+	TestTrue(TEXT("finalStatus"), Result.Json.Contains(TEXT("\"finalStatus\": \"succeeded\"")));
+	TestTrue(TEXT("completedAt"), Result.Json.Contains(TEXT("\"completedAt\": \"2026-08-08T12:01:00Z\"")));
+	TestTrue(TEXT("finalSequence"), Result.Json.Contains(TEXT("\"finalSequence\": 42")));
+	TestTrue(TEXT("ticks"), Result.Json.Contains(TEXT("\"ticks\": 500")));
+	TestTrue(TEXT("alertsCount"), Result.Json.Contains(TEXT("\"alertsCount\": 3")));
+	TestTrue(TEXT("highestRiskSystem"), Result.Json.Contains(TEXT("\"highestRiskSystem\": \"Thermal\"")));
+	TestFalse(TEXT("No terminalOutcome"), Result.Json.Contains(TEXT("\"terminalOutcome\"")));
+	TestFalse(TEXT("No endSimulationTimeSeconds"), Result.Json.Contains(TEXT("\"endSimulationTimeSeconds\"")));
+	TestFalse(TEXT("No integrity"), Result.Json.Contains(TEXT("\"integrity\"")));
+	TestFalse(TEXT("No aggregates"), Result.Json.Contains(TEXT("\"aggregates\"")));
+	TestFalse(TEXT("No telemetry"), Result.Json.Contains(TEXT("\"telemetry\"")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireCompletionOmitsUnknownOptionalFactsTest,
+	"Eden.Unit.EdenOs.Wire.CompletionOmitsUnknownOptionalFacts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireCompletionOmitsUnknownOptionalFactsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenOsSessionCompleteRequestV1 Request;
+	Request.SessionId = TEXT("session-001");
+	Request.FinalStatus = EEdenOsMissionFinalStatus::Failed;
+	Request.CompletedAtUtcIso8601 = TEXT("2026-08-08T12:01:00Z");
+
+	const FEdenOsWireSerializationResult Result = FEdenOsWireSerializationModel::BuildSessionCompleteJsonV1(Request);
+	TestTrue(TEXT("Completion serialization succeeds"), Result.IsSuccess());
+	TestEqual(TEXT("Only required top-level fields"), EdenOsWireTests::CountTopLevelFieldLines(Result.Json), 4);
+	TestTrue(TEXT("finalStatus maps failed"), Result.Json.Contains(TEXT("\"finalStatus\": \"failed\"")));
+	TestFalse(TEXT("No fabricated finalSequence"), Result.Json.Contains(TEXT("\"finalSequence\"")));
+	TestFalse(TEXT("No fabricated ticks"), Result.Json.Contains(TEXT("\"ticks\"")));
+	TestFalse(TEXT("No fabricated alertsCount"), Result.Json.Contains(TEXT("\"alertsCount\"")));
+	TestFalse(TEXT("No fabricated highestRiskSystem"), Result.Json.Contains(TEXT("\"highestRiskSystem\"")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireTerminalStatusMappingMatchesProjectEdenTest,
+	"Eden.Unit.EdenOs.Wire.TerminalStatusMappingMatchesProjectEden",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireTerminalStatusMappingMatchesProjectEdenTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenOsSessionCompleteRequestV1 Request;
+	Request.SessionId = TEXT("session-001");
+	Request.CompletedAtUtcIso8601 = TEXT("2026-08-08T12:01:00Z");
+
+	Request.FinalStatus = EEdenOsMissionFinalStatus::Succeeded;
+	TestTrue(TEXT("succeeded"), FEdenOsWireSerializationModel::BuildSessionCompleteJsonV1(Request).Json.Contains(TEXT("\"finalStatus\": \"succeeded\"")));
+
+	Request.FinalStatus = EEdenOsMissionFinalStatus::Failed;
+	TestTrue(TEXT("failed"), FEdenOsWireSerializationModel::BuildSessionCompleteJsonV1(Request).Json.Contains(TEXT("\"finalStatus\": \"failed\"")));
+
+	Request.FinalStatus = EEdenOsMissionFinalStatus::Aborted;
+	const FEdenOsWireSerializationResult Aborted = FEdenOsWireSerializationModel::BuildSessionCompleteJsonV1(Request);
+	TestTrue(TEXT("aborted"), Aborted.Json.Contains(TEXT("\"finalStatus\": \"aborted\"")));
+	TestFalse(TEXT("completedAt is timestamp, not simulation seconds"), Aborted.Json.Contains(TEXT("50.000000")));
 	return true;
 }
 
@@ -269,8 +365,14 @@ bool FEdenOsWireRejectsMissingIdentifiersTest::RunTest(const FString& Parameters
 	using namespace EdenOsWireTests;
 
 	FEdenOsMissionSessionCreateRequestV1 CreateRequest;
-	CreateRequest.MissionId = TEXT("SolarCrisis");
+	CreateRequest.ScenarioId = TEXT("SolarEventEmergency");
 	TestFalse(TEXT("Create missing session rejected"), FEdenOsWireSerializationModel::BuildSessionCreateJsonV1(CreateRequest).IsSuccess());
+	CreateRequest.SessionId = TEXT("session-001");
+	CreateRequest.ScenarioId.Reset();
+	TestFalse(TEXT("Create missing scenario rejected"), FEdenOsWireSerializationModel::BuildSessionCreateJsonV1(CreateRequest).IsSuccess());
+	CreateRequest.ScenarioId = TEXT("SolarEventEmergency");
+	CreateRequest.StartedAtIso8601.Reset();
+	TestFalse(TEXT("Create missing startedAt rejected"), FEdenOsWireSerializationModel::BuildSessionCreateJsonV1(CreateRequest).IsSuccess());
 
 	TArray<FEdenTelemetryEvent> Events;
 	TArray<FEdenTelemetrySnapshot> Snapshots;
@@ -320,7 +422,6 @@ bool FEdenOsWireRejectsInvalidEventSequenceTest::RunTest(const FString& Paramete
 
 	FEdenOsEventIngestionRequestV1 Request;
 	Request.SessionId = TEXT("session-001");
-	Request.MissionId = TEXT("SolarCrisis");
 	Request.Event.SequenceNumber = -1;
 	Request.Event.SimulationTimeSeconds = 1.0f;
 	Request.Event.MissionElapsedTimeSeconds = 1.0f;
