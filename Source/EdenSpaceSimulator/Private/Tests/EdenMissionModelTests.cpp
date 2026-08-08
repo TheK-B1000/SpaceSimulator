@@ -67,7 +67,9 @@ bool FEdenMissionValidateDefinitionRejectsDuplicateEventIdsTest::RunTest(const F
 {
 	(void)Parameters;
 	FEdenMissionDefinitionConfig Config = EdenMissionModelTests::MakeValidConfig();
-	Config.Events.Add(Config.Events[0]); // Duplicate event
+	// Copy before appending; TArray::Add asserts when the source aliases the array's own storage.
+	const FEdenMissionEventConfig DuplicateEvent = Config.Events[0];
+	Config.Events.Add(DuplicateEvent);
 	TestFalse(TEXT("Duplicate EventIds are rejected"), FEdenMissionModel::ValidateDefinition(Config));
 	return true;
 }
@@ -119,7 +121,9 @@ bool FEdenMissionValidateDefinitionRejectsDuplicateObjectiveIdsTest::RunTest(con
 {
 	(void)Parameters;
 	FEdenMissionDefinitionConfig Config = EdenMissionModelTests::MakeValidConfig();
-	Config.Objectives.Add(Config.Objectives[0]);
+	// Copy before appending; TArray::Add asserts when the source aliases the array's own storage.
+	const FEdenMissionObjectiveConfig DuplicateObjective = Config.Objectives[0];
+	Config.Objectives.Add(DuplicateObjective);
 	TestFalse(TEXT("Duplicate ObjectiveIds are rejected"), FEdenMissionModel::ValidateDefinition(Config));
 	return true;
 }

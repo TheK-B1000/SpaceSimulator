@@ -4,12 +4,11 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "Engine/World.h"
+#include "Flight/EdenSpacecraftPawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
-#include "Engine/World.h"
-#include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
-#include "UObject/UObjectIterator.h"
 
 void UEdenMissionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -20,12 +19,14 @@ void UEdenMissionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	CurrentRuntimeState = FEdenMissionModel::ResetRuntimeState();
 	ActiveMissionDefinition = FEdenMissionDefinitionConfig();
 	RegisteredSimulationClock = nullptr;
+	ClearMissionResourceTargets();
 }
 
 void UEdenMissionSubsystem::Deinitialize()
 {
 	UnregisterFromSimulationClock();
 	ClearMissionExternalModifiers();
+	ClearMissionResourceTargets();
 	CurrentRuntimeState = FEdenMissionModel::ResetRuntimeState();
 	ActiveMissionDefinition = FEdenMissionDefinitionConfig();
 
@@ -73,7 +74,37 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 		{
 			ExecuteMissionEvent(*EventConfigPtr);
 		}
+		else
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s triggered event '%s' but no matching event config was found; dispatch skipped."),
+				*GetNameSafe(this),
+				*EventId.ToString());
+		}
 	}
+
+	const UEdenThermalSystemComponent* ThermalComp = FindThermalComponent();
+	const UEdenPowerSystemComponent* PowerComp = FindPowerComponent();
+	const UEdenFuelSystemComponent* FuelComp = FindFuelComponent();
+
+	const float ThermalTemperatureCelsius = ThermalComp
+		? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
+		: 0.0f;
+	const float PowerBatteryCharge = PowerComp
+		? PowerComp->GetPowerStateSnapshot().BatteryChargeKilowattHours
+		: 0.0f;
+	const float FuelQuantityKilograms = FuelComp
+		? FuelComp->GetFuelStateSnapshot().FuelQuantityKilograms
+		: 0.0f;
+
+	CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
+		CurrentRuntimeState,
+		ActiveMissionDefinition,
+		ThermalTemperatureCelsius,
+		PowerBatteryCharge,
+		FuelQuantityKilograms);
 
 	const EEdenMissionState EvaluatedOutcome = FEdenMissionModel::EvaluateOutcome(
 		CurrentRuntimeState,
@@ -144,6 +175,11 @@ bool UEdenMissionSubsystem::StartMission()
 		return false;
 	}
 
+	if (!GetThermalTarget() && !GetPowerTarget())
+	{
+		TryResolveResourceTargetsFromPossessedSpacecraft();
+	}
+
 	if (!RegisterWithSimulationClock())
 	{
 		UE_LOG(
@@ -187,7 +223,7 @@ bool UEdenMissionSubsystem::AbortMission()
 	UE_LOG(
 		LogEdenMission,
 		Log,
-		TEXT("%s aborted mission '%s'. State is now Inactive."),
+		TEXT("%s aborted mission '%s'. Mission-applied external modifiers were cleared. State is now Inactive."),
 		*GetNameSafe(this),
 		*ActiveMissionDefinition.MissionId.ToString());
 
@@ -217,7 +253,7 @@ bool UEdenMissionSubsystem::ResetMission()
 	UE_LOG(
 		LogEdenMission,
 		Log,
-		TEXT("%s reset mission state to Inactive."),
+		TEXT("%s reset mission runtime/definition state to Inactive and cleared mission-applied external modifiers."),
 		*GetNameSafe(this));
 
 	if (PreviousState != EEdenMissionState::Inactive)
@@ -226,6 +262,28 @@ bool UEdenMissionSubsystem::ResetMission()
 	}
 
 	return true;
+}
+
+bool UEdenMissionSubsystem::SetMissionResourceTargets(UEdenThermalSystemComponent* Thermal, UEdenPowerSystemComponent* Power)
+{
+	CachedThermalTarget = Thermal;
+	CachedPowerTarget = Power;
+
+	UE_LOG(
+		LogEdenMission,
+		Log,
+		TEXT("%s cached mission resource targets. Thermal='%s' Power='%s'."),
+		*GetNameSafe(this),
+		*GetNameSafe(Thermal),
+		*GetNameSafe(Power));
+
+	return true;
+}
+
+void UEdenMissionSubsystem::ClearMissionResourceTargets()
+{
+	CachedThermalTarget.Reset();
+	CachedPowerTarget.Reset();
 }
 
 bool UEdenMissionSubsystem::RegisterWithSimulationClock()
@@ -355,7 +413,7 @@ void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& E
 	UE_LOG(
 		LogEdenMission,
 		Log,
-		TEXT("%s executing mission command '%s' for event '%s' (FloatParam=%.2f, NameParam='%s')."),
+		TEXT("%s dispatching mission command '%s' for event '%s' (FloatParam=%.2f, NameParam='%s')."),
 		*GetNameSafe(this),
 		*UEnum::GetValueAsString(EventConfig.CommandType),
 		*EventConfig.EventId.ToString(),
@@ -366,146 +424,215 @@ void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& E
 	{
 	case EEdenMissionCommandType::SetMissionPhase:
 	{
+		if (!IsFiniteCommandPayload(EventConfig.FloatParameter))
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s rejected SetMissionPhase for event '%s': FloatParameter is not finite."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
+		}
+
 		const EEdenMissionPhase TargetPhase = static_cast<EEdenMissionPhase>(
-			FMath::Clamp(FMath::RoundToInt(EventConfig.FloatParameter), 0, static_cast<int32>(EEdenMissionPhase::Resolved)));
+			FMath::Clamp(
+				FMath::RoundToInt(EventConfig.FloatParameter),
+				0,
+				static_cast<int32>(EEdenMissionPhase::Resolved)));
 		TransitionMissionPhase(TargetPhase);
-		break;
+		return;
 	}
 	case EEdenMissionCommandType::SetExternalHeatingRate:
 	{
-		if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
-		{
-			ThermalComp->SetExternalHeatingRateDegreesCelsiusPerSecond(EventConfig.FloatParameter);
-		}
-		else
+		if (!IsFiniteCommandPayload(EventConfig.FloatParameter))
 		{
 			UE_LOG(
 				LogEdenMission,
 				Warning,
-				TEXT("%s could not find thermal component to apply external heating rate."),
-				*GetNameSafe(this));
+				TEXT("%s rejected SetExternalHeatingRate for event '%s': FloatParameter is not finite."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
 		}
-		break;
+
+		UEdenThermalSystemComponent* ThermalComp = GetThermalTarget();
+		if (!ThermalComp)
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s could not dispatch SetExternalHeatingRate for event '%s': thermal target unavailable. Single attempt, no retry."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
+		}
+
+		ThermalComp->SetExternalHeatingRateDegreesCelsiusPerSecond(EventConfig.FloatParameter);
+		return;
 	}
 	case EEdenMissionCommandType::ClearExternalHeatingRate:
 	{
-		if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
-		{
-			ThermalComp->ClearExternalHeatingRate();
-		}
-		break;
-	}
-	case EEdenMissionCommandType::SetExternalPowerDemand:
-	{
-		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
-		{
-			PowerComp->SetExternalDemandKilowatts(EventConfig.FloatParameter);
-		}
-		else
+		UEdenThermalSystemComponent* ThermalComp = GetThermalTarget();
+		if (!ThermalComp)
 		{
 			UE_LOG(
 				LogEdenMission,
 				Warning,
-				TEXT("%s could not find power component to apply external demand."),
-				*GetNameSafe(this));
+				TEXT("%s could not dispatch ClearExternalHeatingRate for event '%s': thermal target unavailable. Single attempt, no retry."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
 		}
-		break;
+
+		ThermalComp->ClearExternalHeatingRate();
+		return;
+	}
+	case EEdenMissionCommandType::SetExternalPowerDemand:
+	{
+		if (!IsFiniteCommandPayload(EventConfig.FloatParameter))
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s rejected SetExternalPowerDemand for event '%s': FloatParameter is not finite."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
+		}
+
+		UEdenPowerSystemComponent* PowerComp = GetPowerTarget();
+		if (!PowerComp)
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s could not dispatch SetExternalPowerDemand for event '%s': power target unavailable. Single attempt, no retry."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
+		}
+
+		PowerComp->SetExternalDemandKilowatts(EventConfig.FloatParameter);
+		return;
 	}
 	case EEdenMissionCommandType::ClearExternalPowerDemand:
 	{
-		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
-		{
-			PowerComp->ClearExternalDemand();
-		}
-		break;
-	}
-	case EEdenMissionCommandType::SetPowerGeneration:
-	{
-		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
-		{
-			PowerComp->SetGenerationKilowatts(EventConfig.FloatParameter);
-		}
-		break;
+		const UEdenThermalSystemComponent* ThermalComp = FindThermalComponent();
+		const UEdenPowerSystemComponent* PowerComp = FindPowerComponent();
+		const UEdenFuelSystemComponent* FuelComp = FindFuelComponent();
+
+		const float ThermalTemperatureCelsius = ThermalComp
+			? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
+			: 0.0f;
+		const float PowerBatteryCharge = PowerComp
+			? PowerComp->GetPowerStateSnapshot().BatteryChargeKilowattHours
+			: 0.0f;
+		const float FuelQuantityKilograms = FuelComp
+			? FuelComp->GetFuelStateSnapshot().FuelQuantityKilograms
+			: 0.0f;
+
+		CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
+			CurrentRuntimeState,
+			ActiveMissionDefinition,
+			ThermalTemperatureCelsius,
+			PowerBatteryCharge,
+			FuelQuantityKilograms);
 	}
 	case EEdenMissionCommandType::ActivateObjective:
 	{
 		CurrentRuntimeState = FEdenMissionModel::ActivateObjective(CurrentRuntimeState, EventConfig.NameParameter);
-		break;
+		return;
 	}
+	case EEdenMissionCommandType::SetPowerGeneration:
+	case EEdenMissionCommandType::None:
 	default:
-		break;
+	{
+		UE_LOG(
+			LogEdenMission,
+			Warning,
+			TEXT("%s unsupported mission command '%s' for event '%s'. No systems were mutated."),
+			*GetNameSafe(this),
+			*UEnum::GetValueAsString(EventConfig.CommandType),
+			*EventConfig.EventId.ToString());
+		return;
+	}
 	}
 }
 
 void UEdenMissionSubsystem::ClearMissionExternalModifiers()
 {
-	if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
+	if (UEdenThermalSystemComponent* ThermalComp = GetThermalTarget())
 	{
-		ThermalComp->ClearExternalHeatingRate();
+		if (!ThermalComp->ClearExternalHeatingRate())
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s failed to clear external heating rate on thermal target '%s'."),
+				*GetNameSafe(this),
+				*GetNameSafe(ThermalComp));
+		}
 	}
 
-	if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
+	if (UEdenPowerSystemComponent* PowerComp = GetPowerTarget())
 	{
-		PowerComp->ClearExternalDemand();
+		if (!PowerComp->ClearExternalDemand())
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s failed to clear external demand on power target '%s'."),
+				*GetNameSafe(this),
+				*GetNameSafe(PowerComp));
+		}
 	}
 }
 
-UEdenThermalSystemComponent* UEdenMissionSubsystem::FindThermalComponent() const
+bool UEdenMissionSubsystem::TryResolveResourceTargetsFromPossessedSpacecraft()
 {
 	UWorld* World = GetWorld();
 	if (!World)
 	{
-		return nullptr;
+		return false;
 	}
 
-	if (APlayerController* PC = World->GetFirstPlayerController())
+	APlayerController* PlayerController = World->GetFirstPlayerController();
+	if (!PlayerController)
 	{
-		if (APawn* Pawn = PC->GetPawn())
-		{
-			if (UEdenThermalSystemComponent* Comp = Pawn->FindComponentByClass<UEdenThermalSystemComponent>())
-			{
-				return Comp;
-			}
-		}
+		return false;
 	}
 
-	for (TObjectIterator<UEdenThermalSystemComponent> It; It; ++It)
+	AEdenSpacecraftPawn* SpacecraftPawn = Cast<AEdenSpacecraftPawn>(PlayerController->GetPawn());
+	if (!SpacecraftPawn)
 	{
-		if (It->GetWorld() == World)
-		{
-			return *It;
-		}
+		return false;
 	}
 
-	return nullptr;
+	CachedThermalTarget = SpacecraftPawn->GetThermalSystemComponent();
+	CachedPowerTarget = SpacecraftPawn->GetPowerSystemComponent();
+
+	UE_LOG(
+		LogEdenMission,
+		Log,
+		TEXT("%s resolved mission resource targets from possessed spacecraft '%s'."),
+		*GetNameSafe(this),
+		*GetNameSafe(SpacecraftPawn));
+
+	return CachedThermalTarget.IsValid() || CachedPowerTarget.IsValid();
 }
 
-UEdenPowerSystemComponent* UEdenMissionSubsystem::FindPowerComponent() const
+UEdenThermalSystemComponent* UEdenMissionSubsystem::GetThermalTarget() const
 {
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return nullptr;
-	}
+	return CachedThermalTarget.Get();
+}
 
-	if (APlayerController* PC = World->GetFirstPlayerController())
-	{
-		if (APawn* Pawn = PC->GetPawn())
-		{
-			if (UEdenPowerSystemComponent* Comp = Pawn->FindComponentByClass<UEdenPowerSystemComponent>())
-			{
-				return Comp;
-			}
-		}
-	}
+UEdenPowerSystemComponent* UEdenMissionSubsystem::GetPowerTarget() const
+{
+	return CachedPowerTarget.Get();
+}
 
-	for (TObjectIterator<UEdenPowerSystemComponent> It; It; ++It)
-	{
-		if (It->GetWorld() == World)
-		{
-			return *It;
-		}
-	}
-
-	return nullptr;
+bool UEdenMissionSubsystem::IsFiniteCommandPayload(float Value) const
+{
+	return FMath::IsFinite(Value);
 }

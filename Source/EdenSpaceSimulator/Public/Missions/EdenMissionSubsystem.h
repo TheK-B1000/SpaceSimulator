@@ -33,6 +33,15 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FName,
 	EventId);
 
+/**
+ * World-scoped mission orchestrator.
+ *
+ * Fixed-step ordering (locked):
+ * 1) Resource systems advance with modifiers already active.
+ * 2) Mission observes completed authoritative state, advances mission time,
+ *    identifies due events, and dispatches commands.
+ * 3) Newly applied modifiers affect resources on the NEXT fixed step.
+ */
 UCLASS()
 class EDENSPACESIMULATOR_API UEdenMissionSubsystem : public UWorldSubsystem, public IEdenSimulationTickable
 {
@@ -43,7 +52,6 @@ public:
 	virtual void Deinitialize() override;
 	virtual bool DoesSupportWorldType(EWorldType::Type WorldType) const override;
 
-	// IEdenSimulationTickable
 	virtual void AdvanceSimulation(float FixedDeltaSeconds) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
@@ -57,6 +65,17 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
 	bool ResetMission();
+
+	/**
+	 * Caches weak, non-owning command targets for Checkpoint E resource dispatch.
+	 * Prefer calling this when the mission/runtime relationship is established.
+	 * Passing null clears that target slot.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
+	bool SetMissionResourceTargets(UEdenThermalSystemComponent* Thermal, UEdenPowerSystemComponent* Power);
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
+	void ClearMissionResourceTargets();
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
 	bool RegisterWithSimulationClock();
@@ -99,9 +118,10 @@ private:
 	void TransitionMissionPhase(EEdenMissionPhase NewPhase);
 	void ExecuteMissionEvent(const FEdenMissionEventConfig& EventConfig);
 	void ClearMissionExternalModifiers();
-
-	UEdenThermalSystemComponent* FindThermalComponent() const;
-	UEdenPowerSystemComponent* FindPowerComponent() const;
+	bool TryResolveResourceTargetsFromPossessedSpacecraft();
+	UEdenThermalSystemComponent* GetThermalTarget() const;
+	UEdenPowerSystemComponent* GetPowerTarget() const;
+	bool IsFiniteCommandPayload(float Value) const;
 
 	UPROPERTY(Transient)
 	FEdenMissionDefinitionConfig ActiveMissionDefinition;
@@ -111,4 +131,10 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UEdenSimulationClockSubsystem> RegisteredSimulationClock;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEdenThermalSystemComponent> CachedThermalTarget;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEdenPowerSystemComponent> CachedPowerTarget;
 };

@@ -26,6 +26,7 @@ Approved — Checkpoint A complete
 | Checkpoint C status | ✅ Implemented and verified (3 tests, 140 total passing) |
 | Checkpoint D status | ✅ Implemented and verified (6 tests, 146 total passing) |
 | Checkpoint E status | ✅ Implemented and verified (3 tests, 149 total passing) |
+| Checkpoint F status | ✅ Implemented and verified (7 tests, 156 total passing) |
 | Working tree | Clean |
 
 ---
@@ -235,12 +236,29 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint F — Objective and outcome evaluation
+### Checkpoint F — Objective and outcome evaluation ✅ COMPLETE
 
 **Scope:**
-- Objective evaluation against live resource snapshots.
-- Outcome resolution (Success/Failure) and terminal delegate binding.
-- Integration tests: `DeterministicSuccessScenario`, `DeterministicFailureScenario`, `ResourceStateChangeTriggersObjectiveFailure`.
+- Objective evaluation in `FEdenMissionModel::EvaluateObjectives` against live resource snapshots:
+  - `SurviveUntilTime`: Completed when `MissionElapsedTimeSeconds >= TargetValue`.
+  - `KeepTemperatureBelow`: Failed when `ThermalTemperatureCelsius >= TargetValue`.
+  - `RestorePowerAbove`: Completed when `PowerBatteryChargeKilowattHours >= TargetValue`.
+  - `MaintainFuelAbove`: Failed when `FuelQuantityKilograms <= TargetValue`.
+- Live component queries in `UEdenMissionSubsystem::AdvanceSimulation` across `UEdenThermalSystemComponent`, `UEdenPowerSystemComponent`, and `UEdenFuelSystemComponent`.
+- Outcome resolution in `FEdenMissionModel::EvaluateOutcome` transitioning mission state to `Succeeded` or `Failed` with state change delegate broadcasts.
+- Added 4 unit tests in `EdenMissionModelTests.cpp`:
+  - `Eden.Unit.Mission.Objective.EvaluateObjectivesSurviveUntilTime`
+  - `Eden.Unit.Mission.Objective.EvaluateObjectivesKeepTemperatureBelow`
+  - `Eden.Unit.Mission.Objective.EvaluateObjectivesRestorePowerAbove`
+  - `Eden.Unit.Mission.Objective.EvaluateObjectivesMaintainFuelAbove`
+- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
+  - `Eden.Integration.Mission.DeterministicSuccessScenario`
+  - `Eden.Integration.Mission.DeterministicFailureScenario`
+  - `Eden.Integration.Mission.ResourceStateChangeTriggersObjectiveFailure`
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 156 tests passed (7 new tests in Checkpoint F, 149 existing tests, 0 failures, 0 errors).
 
 ---
 

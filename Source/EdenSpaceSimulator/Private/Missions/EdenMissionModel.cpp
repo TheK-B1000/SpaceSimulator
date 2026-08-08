@@ -41,6 +41,22 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 			bIsValid = false;
 			EdenMissionModel::AddValidationError(OutErrors, FString::Printf(TEXT("Invalid TriggerTimeSeconds for EventId: %s"), *Event.EventId.ToString()));
 		}
+
+		const bool bCommandRequiresFiniteFloat =
+			Event.CommandType == EEdenMissionCommandType::SetExternalHeatingRate
+			|| Event.CommandType == EEdenMissionCommandType::SetExternalPowerDemand
+			|| Event.CommandType == EEdenMissionCommandType::SetMissionPhase;
+
+		if (bCommandRequiresFiniteFloat && !FMath::IsFinite(Event.FloatParameter))
+		{
+			bIsValid = false;
+			EdenMissionModel::AddValidationError(
+				OutErrors,
+				FString::Printf(
+					TEXT("FloatParameter must be finite for EventId '%s' command '%s'."),
+					*Event.EventId.ToString(),
+					*UEnum::GetValueAsString(Event.CommandType)));
+		}
 	}
 
 	TSet<FName> SeenObjectiveIds;
