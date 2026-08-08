@@ -13,6 +13,7 @@
 class UEdenSimulationClockSubsystem;
 class UEdenThermalSystemComponent;
 class UEdenPowerSystemComponent;
+class UEdenFuelSystemComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FEdenMissionStateChangedSignature,
@@ -72,7 +73,10 @@ public:
 	 * Passing null clears that target slot.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
-	bool SetMissionResourceTargets(UEdenThermalSystemComponent* Thermal, UEdenPowerSystemComponent* Power);
+	bool SetMissionResourceTargets(
+		UEdenThermalSystemComponent* Thermal,
+		UEdenPowerSystemComponent* Power,
+		UEdenFuelSystemComponent* Fuel = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
 	void ClearMissionResourceTargets();
@@ -121,6 +125,7 @@ private:
 	bool TryResolveResourceTargetsFromPossessedSpacecraft();
 	UEdenThermalSystemComponent* GetThermalTarget() const;
 	UEdenPowerSystemComponent* GetPowerTarget() const;
+	UEdenFuelSystemComponent* GetFuelTarget() const;
 	bool IsFiniteCommandPayload(float Value) const;
 
 	UPROPERTY(Transient)
@@ -137,4 +142,7 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UEdenPowerSystemComponent> CachedPowerTarget;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UEdenFuelSystemComponent> CachedFuelTarget;
 };

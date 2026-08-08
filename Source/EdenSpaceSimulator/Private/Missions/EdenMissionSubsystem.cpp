@@ -264,18 +264,23 @@ bool UEdenMissionSubsystem::ResetMission()
 	return true;
 }
 
-bool UEdenMissionSubsystem::SetMissionResourceTargets(UEdenThermalSystemComponent* Thermal, UEdenPowerSystemComponent* Power)
+bool UEdenMissionSubsystem::SetMissionResourceTargets(
+	UEdenThermalSystemComponent* Thermal,
+	UEdenPowerSystemComponent* Power,
+	UEdenFuelSystemComponent* Fuel)
 {
 	CachedThermalTarget = Thermal;
 	CachedPowerTarget = Power;
+	CachedFuelTarget = Fuel;
 
 	UE_LOG(
 		LogEdenMission,
 		Log,
-		TEXT("%s cached mission resource targets. Thermal='%s' Power='%s'."),
+		TEXT("%s cached mission resource targets. Thermal='%s' Power='%s' Fuel='%s'."),
 		*GetNameSafe(this),
 		*GetNameSafe(Thermal),
-		*GetNameSafe(Power));
+		*GetNameSafe(Power),
+		*GetNameSafe(Fuel));
 
 	return true;
 }
@@ -284,6 +289,7 @@ void UEdenMissionSubsystem::ClearMissionResourceTargets()
 {
 	CachedThermalTarget.Reset();
 	CachedPowerTarget.Reset();
+	CachedFuelTarget.Reset();
 }
 
 bool UEdenMissionSubsystem::RegisterWithSimulationClock()
@@ -518,26 +524,20 @@ void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& E
 	}
 	case EEdenMissionCommandType::ClearExternalPowerDemand:
 	{
-		const UEdenThermalSystemComponent* ThermalComp = FindThermalComponent();
-		const UEdenPowerSystemComponent* PowerComp = FindPowerComponent();
-		const UEdenFuelSystemComponent* FuelComp = FindFuelComponent();
+		UEdenPowerSystemComponent* PowerComp = GetPowerTarget();
+		if (!PowerComp)
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s could not dispatch ClearExternalPowerDemand for event '%s': power target unavailable. Single attempt, no retry."),
+				*GetNameSafe(this),
+				*EventConfig.EventId.ToString());
+			return;
+		}
 
-		const float ThermalTemperatureCelsius = ThermalComp
-			? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
-			: 0.0f;
-		const float PowerBatteryCharge = PowerComp
-			? PowerComp->GetPowerStateSnapshot().BatteryChargeKilowattHours
-			: 0.0f;
-		const float FuelQuantityKilograms = FuelComp
-			? FuelComp->GetFuelStateSnapshot().FuelQuantityKilograms
-			: 0.0f;
-
-		CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
-			CurrentRuntimeState,
-			ActiveMissionDefinition,
-			ThermalTemperatureCelsius,
-			PowerBatteryCharge,
-			FuelQuantityKilograms);
+		PowerComp->ClearExternalDemand();
+		return;
 	}
 	case EEdenMissionCommandType::ActivateObjective:
 	{
@@ -611,6 +611,7 @@ bool UEdenMissionSubsystem::TryResolveResourceTargetsFromPossessedSpacecraft()
 
 	CachedThermalTarget = SpacecraftPawn->GetThermalSystemComponent();
 	CachedPowerTarget = SpacecraftPawn->GetPowerSystemComponent();
+	CachedFuelTarget = SpacecraftPawn->GetFuelSystemComponent();
 
 	UE_LOG(
 		LogEdenMission,
@@ -619,7 +620,7 @@ bool UEdenMissionSubsystem::TryResolveResourceTargetsFromPossessedSpacecraft()
 		*GetNameSafe(this),
 		*GetNameSafe(SpacecraftPawn));
 
-	return CachedThermalTarget.IsValid() || CachedPowerTarget.IsValid();
+	return CachedThermalTarget.IsValid() || CachedPowerTarget.IsValid() || CachedFuelTarget.IsValid();
 }
 
 UEdenThermalSystemComponent* UEdenMissionSubsystem::GetThermalTarget() const
@@ -630,6 +631,11 @@ UEdenThermalSystemComponent* UEdenMissionSubsystem::GetThermalTarget() const
 UEdenPowerSystemComponent* UEdenMissionSubsystem::GetPowerTarget() const
 {
 	return CachedPowerTarget.Get();
+}
+
+UEdenFuelSystemComponent* UEdenMissionSubsystem::GetFuelTarget() const
+{
+	return CachedFuelTarget.Get();
 }
 
 bool UEdenMissionSubsystem::IsFiniteCommandPayload(float Value) const
