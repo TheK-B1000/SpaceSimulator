@@ -2,36 +2,24 @@
 
 ## Status
 
-Approved — automated remediation through Checkpoint H ready for manual PIE closeout
+Complete
 
 ## Prerequisite status
 
-> [!CAUTION]
-> ExecPlan 0003 (spacecraft resource simulation) is implemented and all automated validation passes. However, 0003 remains **Blocked** pending final hands-on PIE verification.
->
-> - Do not mark 0003 Complete.
-> - Do not create the `v0.2.0-resource-simulation` tag.
-> - Do not modify the resource implementation as part of this task.
-> - 0003 PIE verification is independent of Checkpoints A-G of 0004, but must be completed before 0004 Checkpoint H / manual milestone closeout.
+> [!NOTE]
+> Delayed ExecPlan 0003 hands-on PIE was completed in the same 2026-08-08 `L_FlightSandbox` session as 0004 Checkpoint H. Resource simulation is verified; milestone tag is `v0.3.0-emergency-mission` (covers resource + emergency mission shell). A separate `v0.2.0-resource-simulation` tag was not created.
 
 ## Repository state
 
 | Field | Value |
 |---|---|
-| Branch | `plan/emergency-mission-shell` |
-| Parent branch | `feature/spacecraft-resource-simulation` at `b19242e` |
+| Branch | `main` |
+| Milestone tag | `v0.3.0-emergency-mission` |
 | Accepted Checkpoint D baseline | `326057b` |
-| Resource baseline | Automated validation passing; PIE gate open |
-| Checkpoint A status | ✅ Accepted |
-| Checkpoint B status | ✅ Accepted |
-| Checkpoint C status | ✅ Accepted |
-| Checkpoint D status | ✅ Accepted (`326057b`) |
-| Checkpoint E status | ✅ Dispatch retained; latency/order preserved under remediation |
-| Checkpoint F status | ✅ Remediated and automation-verified |
-| Checkpoint G status | ✅ Remediated with real `DA_SolarEventEmergency.uasset` |
-| Checkpoint H status | 🟡 Automated revalidation green; **manual PIE remaining** |
-| Working tree | Remediation pending commit |
-| Latest full `Eden.` automation | 178 tests, exit 0 (`Saved/Logs/Automation-FG-Remediation.log`) |
+| Resource baseline | ✅ Automated + manual PIE verified (folded into 0004 H session) |
+| Checkpoint A–G status | ✅ Accepted / remediated |
+| Checkpoint H status | ✅ Manual PIE passed 2026-08-08 |
+| Latest full `Eden.` automation | 186 tests, exit 0 (post-0005/0006 on `main`) |
 
 ---
 
@@ -331,19 +319,19 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout 🟡 AUTOMATED READY / PIE PENDING
+### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout ✅ COMPLETE
 
 **Automated status:**
 - `ShowDebug EdenMission` read-only overlay exists on `AEdenFlightHUD`
 - `StartMission` / `RestartMission` / `AbortMission` load `DefaultMissionDefinitionAsset` soft path `/Game/Eden/Data/Missions/DA_SolarEventEmergency` (no C++ scenario factory)
 - VerifyFlightAssets / VerifyResourceAssets / VerifyMissionAssets pass
 
-**Manual PIE checklist (remaining human gate):**
-1. PIE `L_FlightSandbox`
-2. `ShowDebug EdenSystems` then `ShowDebug EdenMission`
-3. `StartMission` → observe Nominal → Warning@5 → Impact@10 with pressure → Recovery@30 → Succeeded@50 (or Forced failure path)
-4. `AbortMission` / `RestartMission` clear mission modifiers without resetting temperature/battery/fuel/velocity/clock ownership incorrectly
-5. Confirm Output Log has no unexpected errors / no project `LogTemp`
+**Manual PIE evidence (2026-08-08, maintainer, `L_FlightSandbox`):**
+1. `ShowDebug EdenSystems` / `ShowDebug EdenMission` — overlays readable
+2. `StartMission` timeline observed: Nominal → Warning@5 → Impact@10 (+2.5 C/s heating, +5.0 kW external demand) → Recovery@30 (modifiers clear) → resolve@50
+3. `AbortMission` / `RestartMission` cleanup verified
+4. Delayed 0003 checks: thrust decreases fuel; release stops propulsion consumption; thermal/power behave sensibly; stop/restart PIE leaves runtime clean
+5. Output Log: no project `LogTemp`; no unexpected `LogEdenMission` errors; no duplicate registrations / stale targets / repeated mission outcome
 
-**Do not mark ExecPlan 0004 Complete until PIE evidence is recorded.**
+**Milestone:** ExecPlan 0004 Complete. Tag `v0.3.0-emergency-mission`.
 

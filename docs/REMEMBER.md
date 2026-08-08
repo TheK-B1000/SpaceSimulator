@@ -24,7 +24,7 @@ This file stores durable, verified project facts that future Codex sessions must
 - Flight automation tests use the `Eden.Unit.Flight` prefix.
 - Interactive PIE verification of the six-axis flight shell passed on 2026-07-22, including startup map, possession, camera, six-axis input, stabilization, blocker collision, PIE restart reset, and clean Output Log checks.
 - Verified six-axis flight shell baseline tag: `v0.1.0-flight-shell` on commit `ed7fb55`.
-- Resource simulation work proceeds on branch `feature/spacecraft-resource-simulation` from that tagged baseline.
+- Verified spacecraft resource simulation + emergency mission shell tag: `v0.3.0-emergency-mission` (manual PIE 2026-08-08 on `L_FlightSandbox`).
 - Resource simulation uses `UEdenSimulationClockSubsystem` as the world-scoped fixed-step simulation clock for Game and PIE worlds.
 - `AEdenSpacecraftPawn` creates `FuelSystem`, `PowerSystem`, and `ThermalSystem` as inherited C++ default subobjects.
 - `UEdenFuelSystemComponent`, `UEdenPowerSystemComponent`, and `UEdenThermalSystemComponent` are the authoritative owners for fuel, power, and thermal runtime state.
@@ -32,13 +32,13 @@ This file stores durable, verified project facts that future Codex sessions must
 - Resource configuration Data Assets exist under `/Game/Eden/Data/Systems`: `DA_EdenFuelConfig`, `DA_EdenPowerConfig`, and `DA_EdenThermalConfig`.
 - `BP_EdenSpacecraftPawn` assigns those resource Data Assets to the inherited C++ resource components.
 - Development builds expose read-only resource visibility through `ShowDebug EdenSystems`.
-- Mission debug visibility through `ShowDebug EdenMission` is part of ExecPlan 0004 and should be promoted to a durable fact only after implementation and verification.
+- Development builds expose read-only mission visibility through `ShowDebug EdenMission`.
 - Mission simulation uses `UEdenMissionSubsystem` as a world-scoped subsystem registered with `UEdenSimulationClockSubsystem` at Priority 100 (`EdenSimulationClockPriority::Mission`), stepping deterministically after Priority 0 resource components (`EdenSimulationClockPriority::Systems`).
 - Emergency missions are data-driven via `UEdenMissionDefinitionDataAsset` and pure deterministic state machine `FEdenMissionModel`.
 - Approved mission resource disturbance commands are external heating and external power demand only. `SetPowerGeneration` remains unsupported for the emergency-mission milestone.
 - The reference emergency scenario is `SolarCrisis` (`Solar Event Emergency`), authored as `/Game/Eden/Data/Missions/DA_SolarEventEmergency`, configuring a 50s multi-phase timeline with external heating, external power demand, and four required objectives (`SurviveSolarEvent`, `PreventOverheating`, `RestoreBatteryCharge`, `ConservePropellant`).
-- Developer console commands such as `StartMission`, `RestartMission`, and `AbortMission` are implemented against the Solar Event Data Asset soft path, but interactive PIE verification remains outstanding before treating operator workflow as fully closed out.
-- Product goal for the first vertical slice: a docking and emergency-response trainer. Emergency mission infrastructure is being implemented first; docking gameplay is a later milestone unless separately verified complete.
+- Developer console commands `StartMission`, `RestartMission`, and `AbortMission` load the Solar Event Data Asset soft path; interactive PIE verification of that operator workflow passed on 2026-08-08.
+- Product goal for the first vertical slice: a docking and emergency-response trainer. Emergency mission infrastructure is verified; docking gameplay is a later milestone unless separately verified complete.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.
 - Telemetry observes state and does not mutate it.

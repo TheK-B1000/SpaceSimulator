@@ -1,16 +1,12 @@
 # Spacecraft Resource Simulation
 
 ## Status
-Blocked
+Complete
 
 ## Implementation blocker
 
-> [!CAUTION]
-> The verified six-axis flight shell baseline is committed and tagged as `v0.1.0-flight-shell` on commit `ed7fb55`, and resource work is on `feature/spacecraft-resource-simulation`.
->
-> Checkpoint A clock implementation was accepted and committed as `9bede83`. Checkpoint B fuel implementation was accepted and committed as `88788c0`. Checkpoint C power and thermal implementation was accepted and committed as `e410878`. Checkpoint D pawn integration, propulsion-demand coupling, and integration tests were accepted and committed as `5bce7ab`. Checkpoint E development-only debug visibility was accepted and committed as `9a4eca0`. Checkpoint F Blueprint composition and configuration assets were accepted and committed as `867da77`.
->
-> Checkpoint G automated validation, editor commandlet verification, source-control review, and documentation updates have been completed. Hands-on PIE later found the manual acceptance gate blocked by debug-display visibility and live-observability defects. The bounded defect-fix pass removed the automatic `ShowDebug EdenSystems` toggle race, added serialized Blueprint HUD verification, and added runtime composition/reset regression tests. The milestone is still not marked Complete because the required hands-on PIE verification must be repeated and recorded. Do not begin the next gameplay milestone until that manual PIE pass is completed and recorded.
+> [!NOTE]
+> Hands-on PIE for ExecPlan 0003 was completed on 2026-08-08 in the same `L_FlightSandbox` session as ExecPlan 0004 Checkpoint H. Evidence is recorded in `docs/exec-plans/0004-emergency-scenario-mission-shell.md` Checkpoint H. Combined milestone tag: `v0.3.0-emergency-mission` (no separate `v0.2.0-resource-simulation` tag).
 
 ## Problem and outcome
 
@@ -995,12 +991,14 @@ Required implementation evidence:
 - [x] Blocked-gate verifier update: `VerifyFlightAssets.py` now proves `BP_EdenFlightGameMode` serializes `AEdenFlightHUD` as its HUD class in addition to the existing Blueprint pawn/controller, input, map, and sandbox checks.
 - [x] Blocked-gate runtime regression coverage: added `Eden.Integration.Runtime.BlueprintPawnUsesRuntimeSystems` and `Eden.Integration.Runtime.FlightResetClearsPossessedRuntimeState` to verify Blueprint pawn runtime composition, game-world simulation clock subsystem, resource registration, Data Asset-backed runtime config, single propulsion-demand source, nonzero-demand fuel use, zero-demand no-consumption, power/thermal advancement, resource reset, controller intent reset, and movement velocity reset.
 - [x] Blocked-gate validation: repository validation passed; `EdenSpaceSimulatorEditor` Win64 Development build passed; full `Automation RunTests Eden` passed with 101 automation tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; updated flight asset verifier, resource asset verifier, and flight runtime smoke verifier passed; `Source` search found no project `LogTemp` and no remaining automatic EdenSystems debug startup toggle calls.
-- [ ] Manual PIE: fuel consumption visible during flight via `ShowDebug EdenSystems`
-- [ ] Manual PIE: state transitions logged on threshold crossings with previous/new state
-- [ ] Manual PIE: power drain visible over time
-- [ ] Manual PIE: thermal change visible over time; dissipation moves toward ambient
-- [ ] Manual PIE: PIE restart resets all resource state to configured initial values
-- [ ] Manual PIE: no LogTemp, no per-frame spam
+- [x] Manual PIE: fuel consumption visible during flight via `ShowDebug EdenSystems`
+- [x] Manual PIE: state transitions logged on threshold crossings with previous/new state
+- [x] Manual PIE: power drain visible over time
+- [x] Manual PIE: thermal change visible over time; dissipation moves toward ambient
+- [x] Manual PIE: PIE restart resets all resource state to configured initial values
+- [x] Manual PIE: no LogTemp, no per-frame spam
+
+**Closeout note (2026-08-08):** Delayed 0003 PIE checks were completed during ExecPlan 0004 Checkpoint H closeout in `L_FlightSandbox` (thrust→fuel, release stops consumption, thermal/power sensible, stop/restart PIE clean). See ExecPlan 0004 Checkpoint H evidence. Tag: `v0.3.0-emergency-mission`.
 - [ ] Manual PIE: `ShowDebug EdenSystems` shows fuel, power, and thermal values
 - [ ] Manual: Data Validation in editor catches invalid threshold ordering
 - [x] Documentation: RECOVER.md updated
