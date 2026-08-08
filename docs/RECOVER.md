@@ -7,15 +7,15 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Field | Value |
 |---|---|
 | Date | 2026-08-08 |
-| Branch | `plan/emergency-mission-shell` |
+| Branch | `main` (PR #3 merged; plan branch retained for follow-on docs) |
 | Active ExecPlan | `docs/exec-plans/0004-emergency-scenario-mission-shell.md` |
 | Checkpoint A–E | Accepted architecture baseline through D `326057b`; E dispatch retained and corrected under remediation |
-| Checkpoint F | Remediated and automation-green (objective/outcome integration) |
-| Checkpoint G | Remediated with real `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset`; VerifyMissionAssets validates the actual asset |
-| Checkpoint H | Code present and automated-revalidated against corrected F/G; **manual PIE remains the final human gate** |
-| ExecPlan 0003 | Still blocked on delayed hands-on PIE |
-| Last successful validation | Repo validate; Win64 Development Editor build; `Automation RunTests Eden.` exit 0 (178 project `Eden.*` tests); VerifyFlightAssets / VerifyResourceAssets / VerifyMissionAssets passed; no `LogTemp` / no mission `TObjectIterator` |
-| Next task | Manual PIE closeout for 0004 Checkpoint H (and delayed 0003 PIE). Do not mark 0004 Complete until PIE evidence is recorded. |
+| Checkpoint F | Remediated and automation-green — **do not reopen** |
+| Checkpoint G | ✅ Real `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset` (LFS); VerifyMissionAssets passed on `main` |
+| Checkpoint H | Code present; **manual PIE remains the only 0004 blocker** |
+| ExecPlan 0003 | Still blocked on delayed hands-on PIE (fold into same PIE session) |
+| Last successful validation | VerifyMissionAssets: `/Game/Eden/Data/Missions/DA_SolarEventEmergency` (4 objectives, 7 events). Prior full suite: `Automation RunTests Eden.` → **179** project `Eden.*` tests, exit 0. |
+| Next task | Human PIE closeout for 0004 H (+ delayed 0003). Do not mark 0004 Complete / do not tag `v0.3.0-emergency-mission` until PIE evidence is recorded. Do not change 0004 code again before PIE unless the editor exposes a real defect. |
 
 ## Recovery protocol
 
@@ -55,10 +55,10 @@ Then read `AGENTS.md` and mandatory docs, then ExecPlan 0004.
 
 ### Remaining Work
 
-- Hands-on PIE checklist for ShowDebug EdenMission / StartMission / RestartMission / AbortMission.
+- Hands-on PIE checklist for ShowDebug EdenMission / StartMission / RestartMission / AbortMission (plus delayed 0003 resource checks).
 - Mark ExecPlan 0004 Complete only after PIE evidence.
 - Create `v0.3.0-emergency-mission` only after Complete.
 
 ### Next Clean Action
 
-Perform manual PIE closeout. Do not start unrelated milestone implementation as part of 0004.
+Perform manual PIE closeout. Asset creation and factory regression fix are done. Do not reopen Checkpoint F. Do not change 0004 code again before PIE unless PIE exposes a real defect.
