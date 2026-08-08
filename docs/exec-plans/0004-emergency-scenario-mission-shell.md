@@ -24,6 +24,7 @@ Approved — Checkpoint A complete
 | Checkpoint A status | ✅ Implemented and verified (30 tests, 131 total passing) |
 | Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
 | Checkpoint C status | ✅ Implemented and verified (3 tests, 140 total passing) |
+| Checkpoint D status | ✅ Implemented and verified (6 tests, 146 total passing) |
 | Working tree | Clean |
 
 ---
@@ -194,13 +195,24 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint D — External modifier APIs on resource components
+### Checkpoint D — External modifier APIs on resource components ✅ COMPLETE
 
 **Scope:**
-- `UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond` / `ClearExternalHeatingRate`.
-- `UEdenPowerSystemComponent::SetExternalDemandKilowatts` / `ClearExternalDemand`.
-- Update `FEdenThermalModel` and `FEdenPowerModel` step calculations.
-- Regression tests for existing resource systems + new external modifier tests.
+- `UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond(float)` and `ClearExternalHeatingRate()`.
+- `UEdenPowerSystemComponent::SetExternalDemandKilowatts(float)` and `ClearExternalDemand()`.
+- Updated `FEdenThermalModel` (`FEdenThermalStateSnapshot`, `FEdenThermalStepResult`, `MakeSnapshot`, `Step`) to integrate `ExternalHeatingRateDegreesCelsiusPerSecond` into heat step equations and snapshots.
+- Updated `FEdenPowerModel` (`FEdenPowerStateSnapshot`, `FEdenPowerStepResult`, `MakeSnapshot`, `Step`) to integrate `ExternalDemandKilowatts` into net power equations and snapshots.
+- Added 6 unit tests across `EdenThermalSystemTests.cpp` and `EdenPowerSystemTests.cpp`:
+  - `Eden.Unit.Systems.Thermal.ExternalHeatingRateIncreasesTotalHeating`
+  - `Eden.Unit.Systems.Thermal.ClearExternalHeatingRateResetsToZero`
+  - `Eden.Unit.Systems.Thermal.ExternalHeatingRateSanitizesNegativeAndNaN`
+  - `Eden.Unit.Systems.Power.ExternalDemandIncreasesTotalDemand`
+  - `Eden.Unit.Systems.Power.ClearExternalDemandResetsToZero`
+  - `Eden.Unit.Systems.Power.ExternalDemandSanitizesNegativeAndNaN`
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 146 tests passed (6 new tests in Checkpoint D, 140 existing tests, 0 failures, 0 errors).
 
 ---
 

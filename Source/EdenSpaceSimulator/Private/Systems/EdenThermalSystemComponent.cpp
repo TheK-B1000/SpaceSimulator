@@ -141,7 +141,8 @@ bool UEdenThermalSystemComponent::SetTemperatureCelsius(float TemperatureCelsius
 			ActiveThermalConfig,
 			ClampedTemperatureCelsius,
 			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
-			CurrentSnapshot.DissipationDegreesCelsiusPerSecond),
+			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
 		true);
 
 	return !bTemperatureWasSanitized;
@@ -177,7 +178,8 @@ bool UEdenThermalSystemComponent::SetHeatGenerationDegreesCelsiusPerSecond(float
 			ActiveThermalConfig,
 			CurrentSnapshot.TemperatureCelsius,
 			SanitizedHeatGenerationDegreesCelsiusPerSecond,
-			CurrentSnapshot.DissipationDegreesCelsiusPerSecond),
+			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
 		true);
 
 	return !bHeatGenerationWasSanitized;
@@ -213,10 +215,52 @@ bool UEdenThermalSystemComponent::SetDissipationDegreesCelsiusPerSecond(float Di
 			ActiveThermalConfig,
 			CurrentSnapshot.TemperatureCelsius,
 			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
-			SanitizedDissipationDegreesCelsiusPerSecond),
+			SanitizedDissipationDegreesCelsiusPerSecond,
+			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond),
 		true);
 
 	return !bDissipationWasSanitized;
+}
+
+bool UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond(float ExternalHeatingRateDegreesCelsiusPerSecond)
+{
+	if (!bThermalSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set external heating rate; thermal simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+
+	bool bWasSanitized = false;
+	const float SanitizedRate = FEdenThermalModel::SanitizeNonnegativeDegreesCelsiusPerSecond(
+		ExternalHeatingRateDegreesCelsiusPerSecond,
+		&bWasSanitized);
+
+	if (bWasSanitized)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s sanitized requested external heating rate from %f C/s to %f C/s."),
+			*MakeLogContext(),
+			ExternalHeatingRateDegreesCelsiusPerSecond,
+			SanitizedRate);
+	}
+
+	ApplySnapshot(
+		FEdenThermalModel::MakeSnapshot(
+			ActiveThermalConfig,
+			CurrentSnapshot.TemperatureCelsius,
+			CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
+			CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
+			SanitizedRate),
+		true);
+
+	return !bWasSanitized;
+}
+
+bool UEdenThermalSystemComponent::ClearExternalHeatingRate()
+{
+	return SetExternalHeatingRateDegreesCelsiusPerSecond(0.0f);
 }
 
 bool UEdenThermalSystemComponent::IsThermalSimulationEnabled() const

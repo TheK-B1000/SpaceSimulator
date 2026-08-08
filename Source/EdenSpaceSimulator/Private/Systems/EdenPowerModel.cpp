@@ -175,7 +175,8 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeSnapshot(
 	const FEdenPowerConfig& Config,
 	float BatteryChargeKilowattHours,
 	float GenerationKilowatts,
-	float BaselineDemandKilowatts)
+	float BaselineDemandKilowatts,
+	float ExternalDemandKilowatts)
 {
 	FEdenPowerStateSnapshot Snapshot;
 
@@ -186,9 +187,11 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeSnapshot(
 
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
+	bool bExternalDemandWasSanitized = false;
 	Snapshot.GenerationKilowatts = SanitizeNonnegativeKilowatts(GenerationKilowatts, &bGenerationWasSanitized);
 	Snapshot.BaselineDemandKilowatts = SanitizeNonnegativeKilowatts(BaselineDemandKilowatts, &bBaselineDemandWasSanitized);
-	Snapshot.NetPowerKilowatts = Snapshot.GenerationKilowatts - Snapshot.BaselineDemandKilowatts;
+	Snapshot.ExternalDemandKilowatts = SanitizeNonnegativeKilowatts(ExternalDemandKilowatts, &bExternalDemandWasSanitized);
+	Snapshot.NetPowerKilowatts = Snapshot.GenerationKilowatts - (Snapshot.BaselineDemandKilowatts + Snapshot.ExternalDemandKilowatts);
 	Snapshot.BatteryChargeKilowattHours =
 		ClampBatteryChargeKilowattHours(BatteryChargeKilowattHours, Config.BatteryCapacityKilowattHours);
 	Snapshot.ChargeFraction = Config.BatteryCapacityKilowattHours > 0.0f
@@ -210,7 +213,8 @@ FEdenPowerStateSnapshot FEdenPowerModel::MakeInitialSnapshot(const FEdenPowerCon
 		Config,
 		Config.BatteryCapacityKilowattHours * Config.InitialChargeFraction,
 		Config.GenerationKilowatts,
-		Config.BaselineDemandKilowatts);
+		Config.BaselineDemandKilowatts,
+		0.0f);
 }
 
 FEdenPowerStepResult FEdenPowerModel::Step(
@@ -223,7 +227,8 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 		Config,
 		CurrentSnapshot.BatteryChargeKilowattHours,
 		CurrentSnapshot.GenerationKilowatts,
-		CurrentSnapshot.BaselineDemandKilowatts);
+		CurrentSnapshot.BaselineDemandKilowatts,
+		CurrentSnapshot.ExternalDemandKilowatts);
 
 	if (!ValidateConfig(Config))
 	{
@@ -233,12 +238,16 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
+	bool bExternalDemandWasSanitized = false;
 	const float GenerationKilowatts =
 		SanitizeNonnegativeKilowatts(CurrentSnapshot.GenerationKilowatts, &bGenerationWasSanitized);
 	const float BaselineDemandKilowatts =
 		SanitizeNonnegativeKilowatts(CurrentSnapshot.BaselineDemandKilowatts, &bBaselineDemandWasSanitized);
+	const float ExternalDemandKilowatts =
+		SanitizeNonnegativeKilowatts(CurrentSnapshot.ExternalDemandKilowatts, &bExternalDemandWasSanitized);
 	Result.bGenerationWasSanitized = bGenerationWasSanitized;
 	Result.bBaselineDemandWasSanitized = bBaselineDemandWasSanitized;
+	Result.bExternalDemandWasSanitized = bExternalDemandWasSanitized;
 
 	if (!IsValidDeltaTime(DeltaTimeSeconds))
 	{
@@ -247,19 +256,22 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 			Config,
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			GenerationKilowatts,
-			BaselineDemandKilowatts);
+			BaselineDemandKilowatts,
+			ExternalDemandKilowatts);
 		return Result;
 	}
 
+	const double TotalDemandKilowatts =
+		static_cast<double>(BaselineDemandKilowatts) + static_cast<double>(ExternalDemandKilowatts);
 	const double NetPowerKilowatts =
-		static_cast<double>(GenerationKilowatts) - static_cast<double>(BaselineDemandKilowatts);
+		static_cast<double>(GenerationKilowatts) - TotalDemandKilowatts;
 	const double EnergyDeltaKilowattHours =
 		NetPowerKilowatts * (static_cast<double>(DeltaTimeSeconds) / 3600.0);
 
 	if (!FMath::IsFinite(EnergyDeltaKilowattHours))
 	{
 		Result.EnergyDeltaKilowattHours = 0.0f;
-		Result.Snapshot = MakeSnapshot(Config, 0.0f, GenerationKilowatts, BaselineDemandKilowatts);
+		Result.Snapshot = MakeSnapshot(Config, 0.0f, GenerationKilowatts, BaselineDemandKilowatts, ExternalDemandKilowatts);
 		return Result;
 	}
 
@@ -270,7 +282,8 @@ FEdenPowerStepResult FEdenPowerModel::Step(
 		Config,
 		static_cast<float>(NextChargeKilowattHours),
 		GenerationKilowatts,
-		BaselineDemandKilowatts);
+		BaselineDemandKilowatts,
+		ExternalDemandKilowatts);
 
 	return Result;
 }

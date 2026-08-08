@@ -176,7 +176,8 @@ FEdenThermalStateSnapshot FEdenThermalModel::MakeSnapshot(
 	const FEdenThermalConfig& Config,
 	float TemperatureCelsius,
 	float HeatGenerationDegreesCelsiusPerSecond,
-	float DissipationDegreesCelsiusPerSecond)
+	float DissipationDegreesCelsiusPerSecond,
+	float ExternalHeatingRateDegreesCelsiusPerSecond)
 {
 	FEdenThermalStateSnapshot Snapshot;
 
@@ -190,6 +191,8 @@ FEdenThermalStateSnapshot FEdenThermalModel::MakeSnapshot(
 		SanitizeNonnegativeDegreesCelsiusPerSecond(HeatGenerationDegreesCelsiusPerSecond);
 	Snapshot.DissipationDegreesCelsiusPerSecond =
 		SanitizeNonnegativeDegreesCelsiusPerSecond(DissipationDegreesCelsiusPerSecond);
+	Snapshot.ExternalHeatingRateDegreesCelsiusPerSecond =
+		SanitizeNonnegativeDegreesCelsiusPerSecond(ExternalHeatingRateDegreesCelsiusPerSecond);
 	Snapshot.ThermalState = DeriveThermalState(Config, Snapshot.TemperatureCelsius);
 
 	return Snapshot;
@@ -206,7 +209,8 @@ FEdenThermalStateSnapshot FEdenThermalModel::MakeInitialSnapshot(const FEdenTher
 		Config,
 		Config.InitialTemperatureCelsius,
 		Config.HeatGenerationDegreesCelsiusPerSecond,
-		Config.DissipationDegreesCelsiusPerSecond);
+		Config.DissipationDegreesCelsiusPerSecond,
+		0.0f);
 }
 
 FEdenThermalStepResult FEdenThermalModel::Step(
@@ -227,19 +231,25 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 		Config,
 		ClampTemperatureCelsius(CurrentSnapshot.TemperatureCelsius, Config, &bTemperatureWasSanitized),
 		CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
-		CurrentSnapshot.DissipationDegreesCelsiusPerSecond);
+		CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
+		CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond);
 	Result.bTemperatureWasSanitized = bTemperatureWasSanitized;
 
 	bool bHeatGenerationWasSanitized = false;
 	bool bDissipationWasSanitized = false;
+	bool bExternalHeatingRateWasSanitized = false;
 	const float HeatGenerationDegreesCelsiusPerSecond = SanitizeNonnegativeDegreesCelsiusPerSecond(
 		CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
 		&bHeatGenerationWasSanitized);
 	const float DissipationDegreesCelsiusPerSecond = SanitizeNonnegativeDegreesCelsiusPerSecond(
 		CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
 		&bDissipationWasSanitized);
+	const float ExternalHeatingRateDegreesCelsiusPerSecond = SanitizeNonnegativeDegreesCelsiusPerSecond(
+		CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+		&bExternalHeatingRateWasSanitized);
 	Result.bHeatGenerationWasSanitized = bHeatGenerationWasSanitized;
 	Result.bDissipationWasSanitized = bDissipationWasSanitized;
+	Result.bExternalHeatingRateWasSanitized = bExternalHeatingRateWasSanitized;
 
 	if (!IsValidDeltaTime(DeltaTimeSeconds))
 	{
@@ -248,13 +258,18 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 			Config,
 			Result.Snapshot.TemperatureCelsius,
 			HeatGenerationDegreesCelsiusPerSecond,
-			DissipationDegreesCelsiusPerSecond);
+			DissipationDegreesCelsiusPerSecond,
+			ExternalHeatingRateDegreesCelsiusPerSecond);
 		return Result;
 	}
 
+	const double TotalHeatGenerationDegreesCelsiusPerSecond =
+		static_cast<double>(HeatGenerationDegreesCelsiusPerSecond) +
+		static_cast<double>(ExternalHeatingRateDegreesCelsiusPerSecond);
+
 	const double CurrentTemperatureCelsius = static_cast<double>(Result.Snapshot.TemperatureCelsius);
 	const double HeatDeltaCelsius =
-		static_cast<double>(HeatGenerationDegreesCelsiusPerSecond) * static_cast<double>(DeltaTimeSeconds);
+		TotalHeatGenerationDegreesCelsiusPerSecond * static_cast<double>(DeltaTimeSeconds);
 	double NextTemperatureCelsius = CurrentTemperatureCelsius + HeatDeltaCelsius;
 
 	const double AmbientTemperatureCelsius = static_cast<double>(Config.AmbientTemperatureCelsius);
@@ -277,7 +292,8 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 		Config,
 		ClampedTemperatureCelsius,
 		HeatGenerationDegreesCelsiusPerSecond,
-		DissipationDegreesCelsiusPerSecond);
+		DissipationDegreesCelsiusPerSecond,
+		ExternalHeatingRateDegreesCelsiusPerSecond);
 
 	return Result;
 }

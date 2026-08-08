@@ -448,6 +448,74 @@ bool FEdenPowerMissingAndInvalidConfigDisableSimulationSafelyTest::RunTest(const
 	AddExpectedError(TEXT("invalid power configuration"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Invalid explicit config is rejected"), InvalidConfigComponent->InitializePowerSimulation(InvalidConfig));
 	TestFalse(TEXT("Invalid explicit config disables simulation"), InvalidConfigComponent->IsPowerSimulationEnabled());
+	TestEqual(TEXT("Disabled power state is depleted"), InvalidConfigComponent->GetPowerStateSnapshot().PowerState, EEdenPowerState::Depleted);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenPowerExternalDemandIncreasesTotalDemandTest,
+	"Eden.Unit.Systems.Power.ExternalDemandIncreasesTotalDemand",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenPowerExternalDemandIncreasesTotalDemandTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenPowerConfig Config = EdenPowerSystemTests::MakeValidConfig();
+	Config.GenerationKilowatts = 10.0f;
+	Config.BaselineDemandKilowatts = 2.0f;
+	Config.BatteryCapacityKilowattHours = 10.0f;
+	Config.InitialChargeFraction = 0.5f; // 5 kWh
+
+	UEdenPowerSystemComponent* PowerComponent = EdenPowerSystemTests::MakeInitializedComponent(Config);
+	TestTrue(TEXT("Set external demand succeeds"), PowerComponent->SetExternalDemandKilowatts(3.0f));
+
+	FEdenPowerStateSnapshot Snapshot = PowerComponent->GetPowerStateSnapshot();
+	TestEqual(TEXT("External demand recorded in snapshot"), Snapshot.ExternalDemandKilowatts, 3.0f);
+	// Net power = Generation (10) - Baseline (2) - External (3) = 5 kW
+	EdenPowerSystemTests::TestFloatNearlyEqual(*this, TEXT("Net power reflects baseline plus external demand"), Snapshot.NetPowerKilowatts, 5.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenPowerClearExternalDemandResetsToZeroTest,
+	"Eden.Unit.Systems.Power.ClearExternalDemandResetsToZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenPowerClearExternalDemandResetsToZeroTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenPowerConfig Config = EdenPowerSystemTests::MakeValidConfig();
+	Config.GenerationKilowatts = 10.0f;
+	Config.BaselineDemandKilowatts = 2.0f;
+
+	UEdenPowerSystemComponent* PowerComponent = EdenPowerSystemTests::MakeInitializedComponent(Config);
+	PowerComponent->SetExternalDemandKilowatts(8.0f);
+	TestEqual(TEXT("External demand active"), PowerComponent->GetPowerStateSnapshot().ExternalDemandKilowatts, 8.0f);
+
+	TestTrue(TEXT("Clear external demand succeeds"), PowerComponent->ClearExternalDemand());
+	FEdenPowerStateSnapshot Snapshot = PowerComponent->GetPowerStateSnapshot();
+	TestEqual(TEXT("External demand cleared to zero"), Snapshot.ExternalDemandKilowatts, 0.0f);
+	EdenPowerSystemTests::TestFloatNearlyEqual(*this, TEXT("Net power restored to generation minus baseline"), Snapshot.NetPowerKilowatts, 8.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenPowerExternalDemandSanitizesNegativeAndNaNTest,
+	"Eden.Unit.Systems.Power.ExternalDemandSanitizesNegativeAndNaN",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenPowerExternalDemandSanitizesNegativeAndNaNTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenPowerConfig Config = EdenPowerSystemTests::MakeValidConfig();
+	UEdenPowerSystemComponent* PowerComponent = EdenPowerSystemTests::MakeInitializedComponent(Config);
+
+	AddExpectedError(TEXT("sanitized requested external demand"), EAutomationExpectedErrorFlags::Contains, 2);
+	TestFalse(TEXT("Negative external demand is sanitized"), PowerComponent->SetExternalDemandKilowatts(-5.0f));
+	TestEqual(TEXT("Negative external demand clamped to zero"), PowerComponent->GetPowerStateSnapshot().ExternalDemandKilowatts, 0.0f);
+
+	TestFalse(TEXT("NaN external demand is sanitized"), PowerComponent->SetExternalDemandKilowatts(std::numeric_limits<float>::quiet_NaN()));
+	TestEqual(TEXT("NaN external demand clamped to zero"), PowerComponent->GetPowerStateSnapshot().ExternalDemandKilowatts, 0.0f);
 
 	return true;
 }
