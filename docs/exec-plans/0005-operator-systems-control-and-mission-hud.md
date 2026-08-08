@@ -2,14 +2,14 @@
 
 ## Status
 
-**Approved — content wiring automated green; Checkpoint I (manual PIE) remaining.**
+**Complete**
 
-Design locks L1–L5 (section 12) are accepted via ADR-0002. Core operator/alert/HUD C++ spine is on `main`. Branch `feature/operator-hud-and-input` adds Input Actions, `IMC_Flight` bindings, `WBP_EdenOperatorHud`, controller assignment, and `VerifyOperatorAssets.py`. Do not mark 0005 Complete until Checkpoint I PIE evidence is recorded.
+Manual PIE (Checkpoint I) passed 2026-08-08 on `L_FlightSandbox` (`feature/operator-hud-and-input`). Operator HUD, Enhanced Input (`T`/`L`/`P`), and Solar Crisis trade-off visibility verified.
 
 ## Prerequisite status
 
 > [!NOTE]
-> ExecPlan 0004 is Complete (`v0.3.0-emergency-mission`). 0005 content wiring is on `feature/operator-hud-and-input` with automated verification green. 0006 AAR/presentation closeout remains after 0005 Checkpoint I PIE.
+> ExecPlan 0004 is Complete (`v0.3.0-emergency-mission`). ExecPlan 0005 is Complete. Next active work is ExecPlan 0006 (minimal JSON export + ShowAfterAction).
 
 ---
 
@@ -224,7 +224,15 @@ Minimum display: mission name, mission state, mission phase, objective list with
 | **F** | `WBP_EdenOperatorHud` + `UEdenOperatorHudWidget` binding | ✅ Editor asset verification (`VerifyOperatorAssets.py`) |
 | **G** | Enhanced Input actions + `IMC_Flight` additions + Blueprint composition | ✅ Asset verification (`T`/`L`/`P` → Thermal/LoadShed/Propulsion) |
 | **H** | Solar Crisis trade-off integration tests, deterministic operator scenarios | ✅ Existing operator scenario automation still green (186 `Eden.`) |
-| **I** | Manual PIE acceptance + docs closeout | 🟡 Hands-on gate remaining |
+| **I** | Manual PIE acceptance + docs closeout | ✅ PIE passed 2026-08-08 |
+
+### Checkpoint I — Manual PIE evidence (2026-08-08)
+
+Maintainer PIE on `L_FlightSandbox`:
+- `WBP_EdenOperatorHud` visible
+- `T` / `L` / `P` operator actions update HUD Operator section
+- Solar Crisis trade-offs visible (demand / temperature / thrust authority)
+- Restart/reset and Output Log clean (no project `LogTemp`)
 
 ---
 

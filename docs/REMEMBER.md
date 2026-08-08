@@ -21,7 +21,9 @@ This file stores durable, verified project facts that future Codex sessions must
 - Flight composition Blueprints exist under `/Game/Eden/Blueprints`: `BP_EdenSpacecraftPawn`, `BP_EdenFlightPlayerController`, and `BP_EdenFlightGameMode`.
 - Operator HUD widget asset: `/Game/Eden/UI/WBP_EdenOperatorHud` (parent `UEdenOperatorHudWidget`), assigned on `BP_EdenFlightPlayerController`.
 - Operator control config Data Asset: `/Game/Eden/Data/Operations/DA_EdenOperatorControlConfig`.
-- Operator Enhanced Input bindings (first content pass): `T` cycles thermal mode, `L` toggles load-shed, `P` toggles propulsion priority; ownership path is Input → `AEdenFlightPlayerController` → `UEdenOperatorControlComponent` → resource/flight APIs.- Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
+- Operator Enhanced Input bindings (first content pass): `T` cycles thermal mode, `L` toggles load-shed, `P` toggles propulsion priority; ownership path is Input → `AEdenFlightPlayerController` → `UEdenOperatorControlComponent` → resource/flight APIs.
+- Interactive PIE verification of operator HUD and input passed on 2026-08-08 (`L_FlightSandbox`): HUD visible, `T`/`L`/`P` update operator state, Solar Crisis trade-offs visible, restart/reset clean, Output Log clean.
+- Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
 - Flight automation tests use the `Eden.Unit.Flight` prefix.
 - Interactive PIE verification of the six-axis flight shell passed on 2026-07-22, including startup map, possession, camera, six-axis input, stabilization, blocker collision, PIE restart reset, and clean Output Log checks.

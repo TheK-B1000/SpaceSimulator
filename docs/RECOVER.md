@@ -7,13 +7,13 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Field | Value |
 |---|---|
 | Date | 2026-08-08 |
-| Branch | `feature/operator-hud-and-input` |
+| Branch | `feature/operator-hud-and-input` (merging to `main`) |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | `docs/exec-plans/0005-operator-systems-control-and-mission-hud.md` |
-| ExecPlan 0005 | Content wiring automated green (F/G); **Checkpoint I PIE remaining** |
-| ExecPlan 0006 | Core on `main`; AAR/presentation after 0005 PIE |
-| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** / **0**; `VerifyOperatorAssets.py` passed |
-| Next task | **0005 PIE** — Solar Crisis operator actions + HUD trade-offs, then docs Complete |
+| Active ExecPlan | `docs/exec-plans/0006-telemetry-and-after-action-review.md` |
+| ExecPlan 0005 | **Complete** — Checkpoint I PIE passed 2026-08-08 |
+| ExecPlan 0006 | Core on `main`; next: minimal JSON export + ShowAfterAction (2B) |
+| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** / **0**; `VerifyOperatorAssets.py` passed; human 0005 PIE passed |
+| Next task | Minimal 0006: real `ExportSessionJsonV1`, `Saved/Telemetry/*.json`, `ExportTelemetry` / `ShowAfterAction`, thin AAR WBP (no auto-popup) |
 
 ## Recovery protocol
 
@@ -24,16 +24,7 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
 ```
 
-Then read `AGENTS.md`, ADR-0002, ExecPlan 0005.
-
-Verify content wiring:
-
-```powershell
-& "K:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" `
-  "K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" `
-  -Unattended -NoSplash -NullRHI -NoP4 `
-  "-ExecutePythonScript=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\scripts\Editor\VerifyOperatorAssets.py"
-```
+Then read `AGENTS.md`, ADR-0002, ExecPlan 0006.
 
 ## Safe Restart Rules
 
@@ -42,22 +33,20 @@ Verify content wiring:
 - Preserve operator Input Actions, `IMC_Flight`, `WBP_EdenOperatorHud`, and `DA_EdenOperatorControlConfig` (Git LFS).
 - Do not reopen ExecPlan 0004 Checkpoint F.
 - Do not rewrite `v0.3.0-emergency-mission` history.
+- Do not add automatic AAR popups for 0006 (locked 2B: console/exec only).
 
 ## Current Known Risks
 
 - Operator keys: `T` thermal cycle, `L` load-shed toggle, `P` propulsion priority toggle.
-- Production HUD formats snapshots in C++ (`UEdenOperatorHudWidget`); Blueprint may extend via `OnHudSnapshotUpdated` without owning simulation state.
+- `ExportSessionJsonV1` is still a metadata stub until 0006 closeout; 0007 must consume the finished wire schema.
 - Telemetry `ClearHistory()` remains explicit (not auto-clear on every mission reset).
 
 ## Session Handoff
 
 ### Completed
 
-- Created `IA_ThermalMode`, `IA_LoadShed`, `IA_PropulsionPriority`.
-- Bound them on `IMC_Flight`; assigned on `BP_EdenFlightPlayerController` with `WBP_EdenOperatorHud`.
-- Added `VerifyOperatorAssets.py` + create script; updated `VerifyFlightAssets.py` for additional IMC mappings.
-- Build + 186 Eden automation tests green.
+- 0005 content wiring + PIE closeout.
 
 ### Next Clean Action
 
-Human 0005 PIE gate on `L_FlightSandbox` during Solar Crisis.
+Implement minimal 0006 export/AAR (2B) on `main` after merge.
