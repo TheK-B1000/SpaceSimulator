@@ -9,12 +9,13 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint I implemented and ready for acceptance; Checkpoints J-M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint I **accepted**; Checkpoint J authorized next; K–M locked |
+| Accepted Checkpoint I | `89d47da` + `89761fd` |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Checkpoint I: Win64 Development Editor build PASS; `Eden.Unit.EdenOs.` PASS; `Eden.Integration.EdenOs.` PASS (6 tests including advisory HUD/telemetry issue); full `Automation RunTests Eden.` PASS exit 0; live Advisory E2E PASS via `Run-EdenOsLiveE2E.ps1 -AuthorityMode Advisory` (evidence `Saved/Automation/EdenOsLiveE2E/20260808-135543/`) with successful `/advisories` 201 and persisted `MissionAdvisory` |
-| Next task | Review/accept Checkpoint I. Do not begin Checkpoints J-M until I is explicitly accepted |
+| Last successful validation | Checkpoint I closeout: Win64 Development Editor build PASS; `Eden.Integration.EdenOs.` 6/6; full `Automation RunTests Eden.` **265/265**; live Advisory E2E PASS (`Saved/Automation/EdenOsLiveE2E/20260808-140801/`) with return-path evidence in `UnrealLiveE2E.json` |
+| Next task | Await Checkpoint J brief, then implement the authorized-command boundary (built and tested, disabled by default). Do **not** begin Checkpoint K |
 
 ## Recovery protocol
 
@@ -37,7 +38,8 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time.
-- Do not begin Checkpoints J-M until Checkpoint I is committed and explicitly accepted.
+- Checkpoint I is accepted. Do not begin Checkpoint K until J is accepted.
+- Do not begin Checkpoint J implementation until the maintainer sends the J brief.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -47,19 +49,23 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - `ClearHistory()` remains explicit.
 - Advisory HTTP is gated to mission `Running` and flushes lifecycle create before `/advisories` so ProjectEden session existence is guaranteed.
 - Late in-flight advisories that lose the race to `SessionComplete` may 409; adapter keeps Connected for that case and cancels queued advisories on successful complete.
+- `GetEventHistory()` returns by value — live/automation code that retains pointers into the returned array must keep the `TArray` alive for the duration of use (fixed in `89761fd`).
 
 ## Session Handoff
 
 ### Completed
 
-- 0007 Checkpoint I (advisory wire + response + `EdenAdvisoryIssued` + read-only HUD) implemented for review.
-- ProjectEden H.1 advisory route is live (`POST .../advisories`, plural) and was exercised by Unreal live E2E.
+- 0007 Checkpoint I accepted: advisory wire + response + exactly-once `EdenAdvisoryIssued` + read-only HUD, with live return-path proof.
+- ProjectEden H.1 advisory route is live (`POST .../advisories`, plural) and exercised by Unreal live E2E.
 
-### Checkpoint I evidence (summary)
+### Checkpoint I accepted evidence (summary)
 
-- §5.9 amended to H.1 facts + three timestamps.
-- Wire: five locked trigger strings, advisory request/response DTOs, Json module for response parse.
-- Adapter dispatches advisories asynchronously with evaluationId correlation and stale-callback HUD safety.
-- `RecordObservationEvent` allows only `EdenAdvisoryIssued` into telemetry from the adapter.
-- HUD shows recommendation/rationale/id/issued time only when adapter holds a validated advisory.
-- Live Advisory E2E: create 201, advisories 201, telemetry/events/complete succeeded; DB persisted MissionAdvisory.
+- Commits: `89d47da` (implementation), `89761fd` (live return-path proof).
+- Live evidence dir: `Saved/Automation/EdenOsLiveE2E/20260808-140801/`.
+- `advisoryIssuedCount == 1`; presentation matches ProjectEden response; clocks `0.7 / 0.4 / 0.4`.
+- Full Eden suite 265/265; no J/K leakage in the I evidence patch.
+
+### Next (authorized, not started)
+
+- **J** — validated command boundary (`UEdenExternalCommandRouter` / allowlist / rate limits): built and tested, **disabled by default**. EDEN still must not touch the ship.
+- **K** — locked until J is accepted (Observe / Advisory / AuthorizedControl execution gating).
