@@ -16,6 +16,7 @@ public class EdenSpaceSimulator : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
+			"HTTP",
 			"UMG",
 			"Slate",
 			"SlateCore"

@@ -3,7 +3,10 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTypes.h"
+#include "EdenOs/EdenOsTransport.h"
+#include "Telemetry/EdenTelemetrySink.h"
 #include "Subsystems/WorldSubsystem.h"
 
 #include "EdenOsAdapterSubsystem.generated.h"
@@ -27,13 +30,32 @@ public:
 	void SetRuntimeBearerJwt(const FString& InBearerJwt);
 	void ClearRuntimeBearerJwt();
 	bool LoadRuntimeBearerJwtFromEnvironment(const FString& VariableName);
+	FEdenTelemetrySinkResult EnqueueOutboundRequest(FEdenOsQueuedRequest Request);
+
+	void SetHttpTransportForTesting(IEdenOsHttpTransport* InTransport);
 
 private:
 	void RefreshSnapshotFromRuntimeConfig();
+	void RegisterTelemetrySinkIfNeeded();
+	void UnregisterTelemetrySink();
+	void PumpOutboundQueue();
+	void HandleTransportCompleted(const FEdenOsHttpResult& Result);
+	void ResetTransportRuntimeState();
 
 	FEdenOsConnectionConfig RuntimeConfig;
 	FEdenOsValidationResult LastValidationResult;
 
 	UPROPERTY(Transient)
 	FEdenOsConnectionSnapshot ConnectionSnapshot;
+
+	TArray<FEdenOsQueuedRequest> OutboundQueue;
+	TUniquePtr<IEdenOsHttpTransport> OwnedHttpTransport;
+	IEdenOsHttpTransport* ActiveHttpTransport = nullptr;
+	TUniquePtr<class FEdenOsTelemetrySink> OwnedTelemetrySink;
+	TWeakObjectPtr<class UEdenTelemetrySubsystem> RegisteredTelemetrySubsystem;
+	int32 DroppedOutboundMessageCount = 0;
+	int64 NextOutboundSequenceNumber = 1;
+	bool bTransportRequestInFlight = false;
+	bool bAcceptTransportCallbacks = true;
+	bool bHasSuccessfulTransportDelivery = false;
 };

@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint C ready for acceptance review |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E ready for acceptance review |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS; `Automation RunTests Eden.Unit.EdenOs.Wire.` PASS with 11 tests; `Automation RunTests Eden.` PASS with 217 tests; `git diff --check` PASS; Source `LogTemp`, HTTP/network-scope, and secret scans clean for Checkpoint C |
-| Next task | Review/accept ExecPlan 0007 Checkpoint C. Do not begin Checkpoint E until explicit approval |
+| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS; `Automation RunTests Eden.Unit.EdenOs.Transport.` PASS with 10 tests; `Eden.Integration.EdenOs.` PASS with 1 test; `Eden.Integration.Telemetry.` PASS with 1 test; `Automation RunTests Eden.` PASS with 229 tests; `git diff --check` PASS; Source `LogTemp`, scope, blocking HTTP, hardcoded URL, and secret scans clean for Checkpoint E |
+| Next task | Review/accept ExecPlan 0007 Checkpoint E. Do not begin Checkpoint F until E is accepted and ProjectEden Checkpoint D is complete |
 
 ## Recovery protocol
 
@@ -37,7 +37,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time: A, B, C, E. Do not implement ProjectEden Checkpoint D in this repository.
-- Do not begin Checkpoint E until Checkpoint C is explicitly accepted.
+- Do not begin Checkpoint F until Checkpoint E is explicitly accepted and ProjectEden Checkpoint D is complete.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -55,25 +55,34 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0006 minimal export/AAR surface.
 - 0007 Checkpoint A initial sink seam was rejected at `8209fbc`; remediation was accepted and pushed as `7a42fcf`.
 - 0007 Checkpoint B was accepted and pushed as `a63de4e`.
-- 0007 Checkpoint C has been implemented for review directly on `main`.
+- 0007 Checkpoint C was accepted and committed as `f66cda3`.
+- 0007 Checkpoint E has been implemented for review directly on `main`.
 
-### Latest Checkpoint C Evidence
+### Latest Checkpoint E Evidence
 
-- Implemented `EdenOsWireContract::CurrentSchemaVersion`, route constants, EDEN OS wire DTOs, and `FEdenOsWireSerializationModel`.
-- Session create, telemetry ingestion, event ingestion, and session complete JSON serialization are pure C++ and deterministic. They do not perform UObject lookup, world access, subsystem mutation, filesystem writes, HTTP calls, retries, backoff, queues, or ProjectEden persistence.
-- `schemaVersion` is emitted from one named constant. Telemetry and completion envelopes embed the exact canonical `FEdenTelemetryExportModel::BuildSessionJsonV1(Payload)` output, preserving 0006 Telemetry Export Schema v1 as the canonical export foundation.
-- Session create omits fabricated `seed`, `endedAt`, `alertsCount`, and `ticks`. JWT remains runtime connection state only and is not serialized into wire payloads.
-- Failure policy: serialization returns a failed `FEdenOsWireSerializationResult` for missing identifiers, unsupported/missing/malformed schema versions, non-finite telemetry/event values, invalid negative sequence metadata, or invalid start time. It does not log, mutate state, or partially transmit anything.
-- UBT source-discovery evidence: `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` invalidated the makefile for `source file added`, explicitly compiled `EdenOsWireSerializationModel.cpp` and `EdenOsWireSerializationTests.cpp`, relinked `UnrealEditor-EdenSpaceSimulator.dll`, and returned `Result: Succeeded`.
-- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Wire.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 11 tests found, all `Eden.Unit.EdenOs.Wire.*` tests successful, and exit code 0 in `Saved/Logs/EdenSpaceSimulator.log`.
-- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 217 tests found and exit code 0 in `Saved/Logs/EdenSpaceSimulator.log`.
+- Implemented `FEdenOsTelemetrySink`, `IEdenOsHttpTransport`, `FEdenOsUnrealHttpTransport`, immutable queued request descriptors, URL/request models, and adapter-owned bounded queue/pump state.
+- `FEdenOsTelemetrySink` uses the accepted `IEdenTelemetrySink` seam. `UEdenTelemetrySubsystem` was not special-cased and remains unaware of HTTP/FastAPI details.
+- `UEdenOsAdapterSubsystem` owns runtime connection state, bearer-token presence, pending count, dropped count, sanitized last error summary, bounded outbound queue, one-in-flight FIFO pump, and callback lifetime.
+- Queue depth uses `MaxQueueDepth` as the maximum outstanding count including the in-flight request. Overflow drops the newest message, increments `DroppedMessageCount`, and returns a failed sink result with an observable summary.
+- Production HTTP uses Unreal `FHttpModule` / `IHttpRequest` asynchronously with `Content-Type: application/json` and `Accept: application/json`. HTTP success is 2xx only. Non-2xx, network failure, and request-start failure are failures.
+- Runtime JWT is sent only as an `Authorization: Bearer <token>` header when present. It is not serialized into payload JSON, snapshots, logs, or error summaries.
+- URL construction is centralized through `FEdenOsUrlModel` using validated `BaseUrl` plus Checkpoint C route constants. No localhost or hardcoded endpoint implementation was added outside constants/tests.
+- Timeout mapping: `RequestTimeoutSeconds` maps to `IHttpRequest::SetTimeout`; `ConnectionTimeoutSeconds` remains validated config but is not separately enforceable by Unreal's request API in this checkpoint.
+- Callback lifetime: callbacks capture `TWeakObjectPtr<UEdenOsAdapterSubsystem>` and are ignored after `Deinitialize()`. Deinitialize unregisters the EDEN sink, clears queue/in-flight state, and resets transport ownership.
+- No per-frame Tick or fixed-step pump was added. Enqueue starts the pump when idle; completion starts the next queued request.
+- UBT source-discovery evidence: `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` explicitly compiled the new E source/test files and returned `Result: Succeeded`.
+- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Transport.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 10 tests found and exit code 0 in `Saved/Logs/EdenSpaceSimulator.log`.
+- `UnrealEditor.exe ... "-ExecCmds=Automation RunTests Eden.Integration.EdenOs.; Quit" ...` passed with 1 test found and exit code 0.
+- `UnrealEditor.exe ... "-ExecCmds=Automation RunTests Eden.Integration.Telemetry.; Quit" ...` passed with 1 test found and exit code 0.
+- `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.; Quit" "-TestExit=Automation Test Queue Empty" -Log` passed with 229 tests found and exit code 0 in `Saved/Logs/EdenSpaceSimulator.log`.
 - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1` passed.
 - Final `Build.bat EdenSpaceSimulatorEditor Win64 Development ... -NoMutex -FromMsBuild` passed and reported target up to date.
-- `git diff --check` passed.
+- `git diff --check` passed with a line-ending warning for `EdenSpaceSimulator.Build.cs` only.
 - `Get-ChildItem -Path Source -Recurse -Include *.h,*.cpp | Select-String -Pattern "LogTemp"` returned no matches.
-- Source HTTP/network-scope search found no `FHttpModule`, `IHttpRequest`, HTTP module include, FastAPI call, WebSocket, socket, retry, or backoff implementation; matches were limited to pre-existing mission "no retry" log text.
+- Scope scans found no advisory, TriggerReasons, external command router, retry/backoff, WebSocket, socket, localhost, `127.0.0.1`, or implementation `/api/v1/` usage; matches were limited to pre-existing mission "no retry" log text and route-constant tests.
+- Blocking/synchronous HTTP scan found no wait/sleep pattern around HTTP; matches were unrelated mission `Inf` validation test names.
 - Secret scan found no realistic committed JWT value; matches were limited to synthetic `test-token` literals in EdenOs tests and existing docs evidence.
 
 ### Next Clean Action
 
-Wait for Checkpoint C acceptance. After approval, implement Checkpoint E only: async transport adapter and bounded outbound behavior directly on `main`.
+Wait for Checkpoint E acceptance. After approval, do not begin Checkpoint F until ProjectEden Checkpoint D is complete and both repositories are ready against the locked contract.

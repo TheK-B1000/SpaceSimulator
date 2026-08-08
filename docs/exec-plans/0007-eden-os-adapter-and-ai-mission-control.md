@@ -2,11 +2,11 @@
 
 ## Status
 
-**In Progress - Unreal lane Checkpoint C ready for acceptance review.**
+**In Progress - Unreal lane Checkpoint E ready for acceptance review.**
 
 Unreal lane execution is locked to one checkpoint at a time: A, then B, then C, then E. ProjectEden owns Checkpoint D in its separate repository. Checkpoint F convergence must not begin until Unreal A/B/C/E are all accepted and ProjectEden D is complete.
 
-Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C is implemented in this worktree and awaits user acceptance. Do not begin Checkpoint E until Checkpoint C is explicitly approved.
+Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`. Checkpoint E is implemented in this worktree and awaits user acceptance. Do not begin Checkpoint F until Checkpoint E is explicitly approved and ProjectEden Checkpoint D is complete.
 
 ## Prerequisite status
 
@@ -212,10 +212,10 @@ FORBIDDEN   LLM output ──> any command without validation
 
 ```text
 Simulation step → enqueue (bounded, non-blocking) → return
-Async worker    → drain → HTTP → retry/backoff
+Async worker    → drain → HTTP → record result
 ```
 
-No HTTP, DNS, or unbounded serialization inside `AdvanceSimulation`. Queue overflow drops with a counter, mirroring 0006's truncation-visibility rule.
+No HTTP, DNS, or unbounded serialization inside `AdvanceSimulation`. Queue overflow drops with a counter, mirroring 0006's truncation-visibility rule. Checkpoint E uses one transport attempt per queued message; retry/backoff is deferred until a later checkpoint explicitly designs it.
 
 ### 5.7 EDEN converges on the human command path
 
@@ -385,7 +385,7 @@ This supersedes "HTTP returned 200" as the meaningful test.
 | **B** | EDEN connection / config / auth contract — `UEdenOsConnectionSettings` |
 | **C** | Export Schema v1 network DTO + serialization |
 | **D** | ProjectEden mission-ingestion API — persistence-model decision included here |
-| **E** | Async FastAPI sink — queue / timeout / retry / disconnect |
+| **E** | Async FastAPI sink — bounded queue / timeout mapping / disconnect |
 | **F** | Session lifecycle — create → telemetry/events → complete |
 | **G** | Observe mode end-to-end |
 | **H** | Advisory request/response contract |
@@ -573,6 +573,20 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 2026-08-08: Checkpoint C tests added. `Eden.Unit.EdenOs.Wire.*` covers route/schema constants, session-create required fields only, telemetry wrapping of canonical Export Schema v1, event identity/type/time, completion terminal facts, unsupported/missing/malformed schema versions, missing identifiers, non-finite telemetry values, invalid event sequence metadata, JWT/token exclusion, and deterministic serialization.
 
 2026-08-08: Checkpoint C validation passed. `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` invalidated the makefile for `source file added`, explicitly compiled `EdenOsWireSerializationModel.cpp` and `EdenOsWireSerializationTests.cpp`, relinked `UnrealEditor-EdenSpaceSimulator.dll`, and returned `Result: Succeeded`. Focused automation passed via `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Wire.; Quit" "-TestExit=Automation Test Queue Empty" -Log`; `Saved/Logs/EdenSpaceSimulator.log` reported 11 tests found, all 11 `Eden.Unit.EdenOs.Wire.*` tests completed with `Result={Success}`, and `**** TEST COMPLETE. EXIT CODE: 0 ****`. Full automation passed via `Automation RunTests Eden.`; the log reported 217 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. Final Win64 Development Editor build passed and was up to date. `git diff --check` passed. Source `LogTemp` search returned no matches. Source HTTP/network-scope search found no `FHttpModule`, `IHttpRequest`, HTTP module include, FastAPI call, WebSocket, socket, retry, or backoff implementation; matches were limited to pre-existing mission "no retry" log text. Secret scan found no realistic committed JWT; matches were limited to synthetic `test-token` literals in EdenOs tests and existing docs evidence.
+
+2026-08-08: Checkpoint C was accepted at `f66cda3`. Checkpoint E began directly on `main` after explicit user approval.
+
+2026-08-08: Checkpoint E implemented for review. Added `FEdenOsTelemetrySink`, `IEdenOsHttpTransport`, `FEdenOsUnrealHttpTransport`, `FEdenOsQueuedRequest`, `FEdenOsHttpRequestData`, `FEdenOsHttpResult`, `FEdenOsUrlModel`, and `FEdenOsTransportModel`. `FEdenOsTelemetrySink` plugs into the existing `IEdenTelemetrySink` seam and serializes through Checkpoint C before submitting immutable JSON to `UEdenOsAdapterSubsystem`. `UEdenTelemetrySubsystem` was not special-cased and remains unaware of HTTP/FastAPI details.
+
+2026-08-08: Checkpoint E transport ownership and queue policy locked in code. `UEdenOsAdapterSubsystem` owns runtime connection state, bearer-token presence, pending count, dropped count, last error summary, the bounded outbound queue, one-in-flight pump, and HTTP callback handling. Queue depth uses `FEdenOsConnectionConfig::MaxQueueDepth` as the maximum outstanding messages, including the in-flight request. Overflow deterministically drops the newest message, increments `DroppedMessageCount`, and records a sanitized `LastErrorSummary`. Queue order is FIFO with one in-flight request; failure of one request starts the next without reordering. Queue entries own copied route/body strings and never hold references into mutable telemetry history.
+
+2026-08-08: Checkpoint E HTTP semantics locked. Production transport uses Unreal `FHttpModule` / `IHttpRequest` asynchronously with `Content-Type: application/json` and `Accept: application/json`. When a runtime JWT exists, the production transport sends `Authorization: Bearer <token>` through the HTTP header only; JWT is never serialized into payload JSON, snapshots, logs, or failure summaries. URL construction is centralized through `FEdenOsUrlModel` using validated `BaseUrl` plus Checkpoint C route constants. HTTP success is strictly 2xx; non-2xx and network/start failures record failure. Unreal's HTTP API mapping in this checkpoint applies `RequestTimeoutSeconds` to `IHttpRequest::SetTimeout`; `ConnectionTimeoutSeconds` remains validated configuration but is not separately enforceable by the current Unreal request API.
+
+2026-08-08: Checkpoint E callback lifetime strategy locked. HTTP callbacks capture `TWeakObjectPtr<UEdenOsAdapterSubsystem>` and the subsystem rejects callbacks after `Deinitialize()` by clearing `bAcceptTransportCallbacks`. `Deinitialize()` unregisters the owned EDEN OS telemetry sink from telemetry fan-out, clears the queue, clears in-flight state, clears transport ownership, and resets runtime connection state. No render-frame Tick or fixed-step pump was added; enqueue starts the pump if idle, and async completion starts the next queued request.
+
+2026-08-08: Checkpoint E tests added. `Eden.Unit.EdenOs.Transport.*` covers deterministic URL joining, bearer-header construction without token exposure, FIFO order, queue max-depth enforcement, observable newest-message drop, non-2xx failure, network failure, success connection state, degraded state after prior success then failure, late completion safety, and request-timeout mapping. `Eden.Integration.EdenOs.FailingTransportDoesNotChangeSimulation` compares authoritative fuel, power, and thermal results with EDEN disabled versus failing transport. `Eden.Integration.Telemetry.LocalSinkSurvivesEdenSinkFailure` proves local sink success and history preservation when an EDEN sink fails in the same fan-out.
+
+2026-08-08: Checkpoint E validation passed. `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` invalidated the makefile for added source and explicitly compiled `EdenOsAdapterSubsystem.cpp`, `EdenOsTelemetrySink.cpp`, `EdenOsTransport.cpp`, `EdenOsUnrealHttpTransport.cpp`, and `EdenOsTransportTests.cpp`; final build returned `Result: Succeeded`. Focused transport automation passed via `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.Transport.; Quit" "-TestExit=Automation Test Queue Empty" -Log`; `Saved/Logs/EdenSpaceSimulator.log` reported 10 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`. Integration automation passed for `Eden.Integration.EdenOs.` with 1 test found and exit code 0, and `Eden.Integration.Telemetry.` with 1 test found and exit code 0. Full automation passed via `Automation RunTests Eden.` with 229 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. Final Win64 Development Editor build passed and was up to date. `git diff --check` passed with a line-ending warning for `EdenSpaceSimulator.Build.cs` only. Source `LogTemp` search returned no matches. Hardcoded localhost/API-version scan found no `localhost`, `127.0.0.1`, or implementation `/api/v1/` usage. Scope scan found no advisory, TriggerReasons, external command router, retry/backoff, WebSocket, or socket implementation; matches were limited to pre-existing mission "no retry" log text. Secret scan found no realistic committed JWT; matches were limited to synthetic `test-token` literals in EdenOs tests and existing docs evidence. Blocking/synchronous HTTP pattern scan found no HTTP wait/sleep pattern; matches were unrelated `Inf` mission validation test names.
 
 ---
 
