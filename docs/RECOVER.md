@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint F accepted; Checkpoint G Observe mode authorized next; Checkpoints H-M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint G implemented and ready for acceptance; Checkpoints H-M locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Checkpoint F accepted at `63768ab` + `5249a6a`: real ProjectEden FastAPI server on loopback, real auth, Unreal `FEdenOsUnrealHttpTransport`/`FHttpModule`, create 201, telemetry 202, seven events 202, complete 200, isolated ProjectEden DB persistence verified; replay verifier PASS; focused `Eden.Unit.EdenOs.` PASS; focused `Eden.Integration.EdenOs.` PASS; full `Automation RunTests Eden.` PASS with 238 tests; repository validation PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and scope scans PASS |
-| Next task | Begin Checkpoint G Observe mode on `main`. Do not begin Checkpoints H-M until G is implemented, validated, committed, and explicitly accepted |
+| Last successful validation | Checkpoint G validation: build PASS with explicit `EdenOsTransportTests.cpp` compile; focused `Eden.Integration.EdenOs.` PASS with 4 tests including Observe invariant; focused `Eden.Unit.EdenOs.` PASS with 38 tests; live Observe E2E PASS through real ProjectEden FastAPI/auth/service/repository/SQLite; full `Automation RunTests Eden.` PASS with 239 tests; repository validation PASS; editor verifiers PASS; final Win64 Development Editor build PASS; `git diff --check`, Source `LogTemp`, token, and added-diff scope scans PASS |
+| Next task | Review/accept Checkpoint G. Do not begin Checkpoints H-M until G is committed and explicitly accepted |
 
 ## Recovery protocol
 
@@ -37,7 +37,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time: A, B, C, E. Do not implement ProjectEden Checkpoint D in this repository.
-- Do not begin Checkpoints H-M until Checkpoint G is implemented, validated, committed, and explicitly accepted.
+- Do not begin Checkpoints H-M until Checkpoint G is committed and explicitly accepted.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -60,7 +60,27 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint F was initially stopped before implementation after ProjectEden D (`6442029`) revealed create/telemetry/event/complete DTO mismatches against Unreal Checkpoint C.
 - The narrow Checkpoint C corrective wire-contract patch was accepted at `3f69f9b`.
 - 0007 Checkpoint F session lifecycle convergence plus live cross-process E2E proof are accepted at `63768ab` and `5249a6a`.
-- 0007 Checkpoint G Observe mode is authorized next. Checkpoints H-M remain locked.
+- 0007 Checkpoint G Observe mode is implemented and ready for acceptance. Checkpoints H-M remain locked.
+
+### Latest Checkpoint G Evidence
+
+- Added `Eden.Integration.EdenOs.ObserveModePreservesAuthoritativeMissionResult` in `Source/EdenSpaceSimulator/Private/Tests/EdenOsTransportTests.cpp`.
+- Expanded the mission isolation probe to compare flight and operator telemetry snapshots along with mission outcome, mission phase, mission/objective runtime states, fuel, battery, temperature, telemetry history counts, and clock timing.
+- Observe test verifies EDEN Observe registers the EDEN sink, sends lifecycle telemetry through create/telemetry/events/complete routes, reports `EEdenOsAuthorityMode::Observe`, reaches connected state, and does not call advisory or command routes.
+- `scripts/Run-EdenOsLiveE2E.ps1` now accepts `-AuthorityMode Advisory|Observe` and passes `EDEN_OS_LIVE_E2E_AUTHORITY_MODE` only to the live Unreal process. Evidence now records `authorityMode`; request bodies and bearer tokens remain absent from evidence.
+- Build passed via `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; UBT explicitly compiled `EdenOsTransportTests.cpp` and returned `Result: Succeeded`.
+- Focused `Automation RunTests Eden.Integration.EdenOs.` passed with 4 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007G-IntegrationEdenOs.log`.
+- Focused `Automation RunTests Eden.Unit.EdenOs.` passed with 38 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007G-UnitEdenOs.log`.
+- Live Observe E2E passed via `.\scripts\Run-EdenOsLiveE2E.ps1 -ProjectEdenRoot 'B:\repo\ProjectEden' -EngineRoot 'K:\Program Files\Epic Games\UE_5.8' -Port 8792 -AuthorityMode Observe`.
+- Live Unreal evidence `Saved/Automation/EdenOsLiveE2E/20260808-113526/UnrealLiveE2E.json` recorded `authorityMode = Observe`, session `595fd951-442b-9acf-07e3-7c9e43800f4b`, scenario `SolarEventEmergency`, mission state `Succeeded`, adapter state `Connected`, zero pending/dropped messages, create 201, telemetry 202, seven event 202 responses, and complete 200.
+- Live ProjectEden evidence `Saved/Automation/EdenOsLiveE2E/20260808-113526/ProjectEdenDbEvidence.json` verified one `mission_environment` run, external session id match, `seed = null`, `ended_at` populated, DB status `completed`, one telemetry payload/state, seven events, `alertsCount = 1`, `ticks = null`, and `highestRiskSystem = null`.
+- Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`.
+- Full `Automation RunTests Eden.` passed with 239 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`; the external live test skipped in the full suite because live env vars were unset.
+- Editor verification passed: `VerifyFlightAssets.py`, `VerifyMissionAssets.py`, `VerifyOperatorAssets.py`, `VerifyResourceAssets.py`, and `VerifyFlightRuntimeSmoke.py`.
+- Final Win64 Development Editor build passed and reported target up to date.
+- `git diff --check` passed with the existing LF/CRLF warning on `scripts/Run-EdenOsLiveE2E.ps1`.
+- Source `LogTemp` search returned no matches. Token scan found only existing runtime-header/test-script references and synthetic `test-token` usage. Added-diff scope scan found only authority-mode setup and negative assertions that Observe does not call advisory or command routes.
+- No ProjectEden code, advisory request/response contract, HUD advisory event, external command router, retry/backoff, WebSocket, Blueprint asset, or gameplay feature was added.
 
 ### Latest Checkpoint F Evidence
 

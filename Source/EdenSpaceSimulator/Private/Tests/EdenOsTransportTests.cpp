@@ -72,7 +72,9 @@ namespace EdenOsTransportTests
 		bool bReturnFalseWithoutCompletion = false;
 	};
 
-	FEdenOsConnectionConfig MakeEnabledConfig(int32 MaxQueueDepth = 8)
+	FEdenOsConnectionConfig MakeEnabledConfig(
+		int32 MaxQueueDepth = 8,
+		EEdenOsAuthorityMode AuthorityMode = EEdenOsAuthorityMode::Advisory)
 	{
 		FEdenOsConnectionConfig Config;
 		Config.bEnabled = true;
@@ -81,6 +83,7 @@ namespace EdenOsTransportTests
 		Config.RequestTimeoutSeconds = 5.0f;
 		Config.MaxQueueDepth = MaxQueueDepth;
 		Config.AdvisoryHeartbeatSimulationSeconds = 5.0f;
+		Config.AuthorityMode = AuthorityMode;
 		Config.RuntimeBearerJwt = TEXT("test-token");
 		return Config;
 	}
@@ -352,19 +355,26 @@ namespace EdenOsTransportTests
 		int32 ClockLastDroppedSteps = 0;
 		TArray<FEdenMissionEventRuntime> EventStates;
 		TArray<FEdenMissionObjectiveRuntime> ObjectiveStates;
+		FEdenFlightStateSnapshot Flight;
 		FEdenFuelStateSnapshot Fuel;
 		FEdenPowerStateSnapshot Power;
 		FEdenThermalStateSnapshot Thermal;
+		FEdenOperatorStateSnapshot Operator;
 		int32 TelemetryEventCount = 0;
 		int32 TelemetrySnapshotCount = 0;
 		int32 RegisteredSinkCountBeforeDelivery = 0;
 		int32 TelemetryDeliveryAttempts = 0;
 		int32 EdenTransportAttempts = 0;
+		TArray<FString> EdenTransportUrls;
 		EEdenOsConnectionState EdenConnectionState = EEdenOsConnectionState::Disabled;
+		EEdenOsAuthorityMode EdenAuthorityMode = EEdenOsAuthorityMode::Advisory;
 		FString EdenLastErrorSummary;
 	};
 
-	FMissionIsolationProbe RunMissionIsolationProbe(bool bEnableFailingEden)
+	FMissionIsolationProbe RunMissionIsolationProbe(
+		bool bEnableEden,
+		EEdenOsAuthorityMode AuthorityMode,
+		bool bUseFailingTransport)
 	{
 		FScopedEdenOsMissionWorld ScopedWorld;
 		UWorld* World = ScopedWorld.World;
@@ -400,14 +410,17 @@ namespace EdenOsTransportTests
 
 		FFakeHttpTransport Transport;
 		UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
-		if (bEnableFailingEden)
+		if (bEnableEden)
 		{
-			for (int32 Index = 0; Index < 32; ++Index)
+			if (bUseFailingTransport)
 			{
-				Transport.Results.Add(FEdenOsHttpResult::Failed(0, TEXT("offline")));
+				for (int32 Index = 0; Index < 32; ++Index)
+				{
+					Transport.Results.Add(FEdenOsHttpResult::Failed(0, TEXT("offline")));
+				}
 			}
 			Adapter->SetHttpTransportForTesting(&Transport);
-			Adapter->ApplyRuntimeConfig(MakeEnabledConfig());
+			Adapter->ApplyRuntimeConfig(MakeEnabledConfig(64, AuthorityMode));
 		}
 
 		for (int32 Index = 0; Index < 8; ++Index)
@@ -417,7 +430,7 @@ namespace EdenOsTransportTests
 
 		FMissionIsolationProbe Probe;
 		Probe.RegisteredSinkCountBeforeDelivery = Telemetry->GetRegisteredTelemetrySinkCount();
-		if (bEnableFailingEden)
+		if (bEnableEden)
 		{
 			const FEdenTelemetrySinkDeliverySummary Summary = Telemetry->DeliverSessionToRegisteredSinks();
 			Probe.TelemetryDeliveryAttempts = Summary.AttemptedCount;
@@ -431,19 +444,35 @@ namespace EdenOsTransportTests
 		Probe.ClockLastDroppedSteps = Clock->GetLastDroppedSteps();
 		Probe.EventStates = RuntimeState.EventStates;
 		Probe.ObjectiveStates = RuntimeState.ObjectiveStates;
+		if (const TArray<FEdenTelemetrySnapshot> Snapshots = Telemetry->GetSnapshotHistory(); !Snapshots.IsEmpty())
+		{
+			const FEdenTelemetrySnapshot& LastSnapshot = Snapshots.Last();
+			Probe.Flight = LastSnapshot.Flight;
+			Probe.Operator = LastSnapshot.Operator;
+		}
 		Probe.Fuel = Fuel->GetFuelStateSnapshot();
 		Probe.Power = Power->GetPowerStateSnapshot();
 		Probe.Thermal = Thermal->GetThermalStateSnapshot();
 		Probe.TelemetryEventCount = Telemetry->GetEventHistory().Num();
 		Probe.TelemetrySnapshotCount = Telemetry->GetSnapshotHistory().Num();
-		if (bEnableFailingEden)
+		if (bEnableEden)
 		{
 			const FEdenOsConnectionSnapshot Snapshot = Adapter->GetConnectionSnapshot();
 			Probe.EdenTransportAttempts = Transport.SentRequests.Num();
+			for (const FEdenOsHttpRequestData& Request : Transport.SentRequests)
+			{
+				Probe.EdenTransportUrls.Add(Request.Url);
+			}
 			Probe.EdenConnectionState = Snapshot.ConnectionState;
+			Probe.EdenAuthorityMode = Snapshot.AuthorityMode;
 			Probe.EdenLastErrorSummary = Snapshot.LastErrorSummary;
 		}
 		return Probe;
+	}
+
+	FMissionIsolationProbe RunMissionIsolationProbe(bool bEnableFailingEden)
+	{
+		return RunMissionIsolationProbe(bEnableFailingEden, EEdenOsAuthorityMode::Advisory, bEnableFailingEden);
 	}
 
 	bool CompareMissionIsolationProbes(FAutomationTestBase& Test, const FMissionIsolationProbe& Disabled, const FMissionIsolationProbe& Failing)
@@ -474,9 +503,37 @@ namespace EdenOsTransportTests
 		bPassed &= Test.TestEqual(TEXT("Power state identical"), Failing.Power.PowerState, Disabled.Power.PowerState);
 		bPassed &= Test.TestEqual(TEXT("Thermal temperature identical"), Failing.Thermal.TemperatureCelsius, Disabled.Thermal.TemperatureCelsius);
 		bPassed &= Test.TestEqual(TEXT("Thermal state identical"), Failing.Thermal.ThermalState, Disabled.Thermal.ThermalState);
+		bPassed &= Test.TestEqual(TEXT("Flight thrust authority identical"), Failing.Flight.ThrustAuthority, Disabled.Flight.ThrustAuthority);
+		bPassed &= Test.TestEqual(TEXT("Flight stabilization availability identical"), Failing.Flight.bStabilizationAssistAvailable, Disabled.Flight.bStabilizationAssistAvailable);
+		bPassed &= Test.TestEqual(TEXT("Flight propulsion demand identical"), Failing.Flight.PropulsionDemandNormalized, Disabled.Flight.PropulsionDemandNormalized);
+		bPassed &= Test.TestEqual(TEXT("Operator thermal mode identical"), Failing.Operator.ThermalMode, Disabled.Operator.ThermalMode);
+		bPassed &= Test.TestEqual(TEXT("Operator load shed mode identical"), Failing.Operator.LoadShedMode, Disabled.Operator.LoadShedMode);
+		bPassed &= Test.TestEqual(TEXT("Operator propulsion priority identical"), Failing.Operator.PropulsionPriority, Disabled.Operator.PropulsionPriority);
+		bPassed &= Test.TestEqual(TEXT("Operator demand identical"), Failing.Operator.OperatorDemandKilowatts, Disabled.Operator.OperatorDemandKilowatts);
+		bPassed &= Test.TestEqual(
+			TEXT("Operator dissipation identical"),
+			Failing.Operator.OperatorDissipationDegreesCelsiusPerSecond,
+			Disabled.Operator.OperatorDissipationDegreesCelsiusPerSecond);
+		bPassed &= Test.TestEqual(TEXT("Operator thrust authority identical"), Failing.Operator.ThrustAuthority, Disabled.Operator.ThrustAuthority);
+		bPassed &= Test.TestEqual(
+			TEXT("Operator stabilization availability identical"),
+			Failing.Operator.bStabilizationAssistAvailable,
+			Disabled.Operator.bStabilizationAssistAvailable);
 		bPassed &= Test.TestEqual(TEXT("Telemetry event count identical"), Failing.TelemetryEventCount, Disabled.TelemetryEventCount);
 		bPassed &= Test.TestEqual(TEXT("Telemetry snapshot count identical"), Failing.TelemetrySnapshotCount, Disabled.TelemetrySnapshotCount);
 		return bPassed;
+	}
+
+	bool TransportUrlsContain(const TArray<FString>& Urls, const FString& Fragment)
+	{
+		for (const FString& Url : Urls)
+		{
+			if (Url.Contains(Fragment))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	FString GetLiveEnvVar(const TCHAR* Name)
@@ -520,6 +577,21 @@ namespace EdenOsTransportTests
 		}
 	}
 
+	const TCHAR* AuthorityModeToString(EEdenOsAuthorityMode AuthorityMode)
+	{
+		switch (AuthorityMode)
+		{
+		case EEdenOsAuthorityMode::Observe:
+			return TEXT("Observe");
+		case EEdenOsAuthorityMode::Advisory:
+			return TEXT("Advisory");
+		case EEdenOsAuthorityMode::AuthorizedControl:
+			return TEXT("AuthorizedControl");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
 	int32 CountDeliveryRecordsOfType(const TArray<FEdenOsDeliveryRecord>& Records, EEdenOsOutboundMessageType MessageType)
 	{
 		int32 Count = 0;
@@ -552,6 +624,7 @@ namespace EdenOsTransportTests
 		const FString& SessionId,
 		int32 ExpectedRequestCount,
 		EEdenMissionState MissionState,
+		EEdenOsAuthorityMode AuthorityMode,
 		const FEdenOsConnectionSnapshot& Snapshot,
 		const TArray<FEdenOsDeliveryRecord>& Records)
 	{
@@ -565,6 +638,7 @@ namespace EdenOsTransportTests
 			TEXT("  \"sessionId\": \"%s\",\n"),
 			*FEdenTelemetryExportModel::EscapeJsonString(SessionId));
 		Json += TEXT("  \"scenarioId\": \"SolarEventEmergency\",\n");
+		Json += FString::Printf(TEXT("  \"authorityMode\": \"%s\",\n"), AuthorityModeToString(AuthorityMode));
 		Json += FString::Printf(
 			TEXT("  \"missionState\": \"%s\",\n"),
 			MissionState == EEdenMissionState::Succeeded ? TEXT("Succeeded") : TEXT("Other"));
@@ -710,6 +784,7 @@ namespace EdenOsTransportTests
 					SessionId,
 					ExpectedRequestCount,
 					EEdenMissionState::Succeeded,
+					Snapshot.AuthorityMode,
 					Snapshot,
 					Records));
 
@@ -1006,6 +1081,37 @@ bool FEdenOsFailingTransportPreservesAuthoritativeMissionResultTest::RunTest(con
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsObserveModePreservesAuthoritativeMissionResultTest,
+	"Eden.Integration.EdenOs.ObserveModePreservesAuthoritativeMissionResult",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsObserveModePreservesAuthoritativeMissionResultTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenOsTransportTests;
+
+	const FMissionIsolationProbe DisabledProbe = RunMissionIsolationProbe(false);
+	const FMissionIsolationProbe ObserveProbe = RunMissionIsolationProbe(
+		true,
+		EEdenOsAuthorityMode::Observe,
+		false);
+
+	TestEqual(TEXT("Observe run registers the EDEN sink"), ObserveProbe.RegisteredSinkCountBeforeDelivery, 1);
+	TestEqual(TEXT("Observe sink delivery attempted"), ObserveProbe.TelemetryDeliveryAttempts, 1);
+	TestTrue(TEXT("Observe transport received lifecycle HTTP attempts"), ObserveProbe.EdenTransportAttempts > 1);
+	TestEqual(TEXT("Observe mode reflected in connection snapshot"), ObserveProbe.EdenAuthorityMode, EEdenOsAuthorityMode::Observe);
+	TestEqual(TEXT("Observe transport reports connected after success"), ObserveProbe.EdenConnectionState, EEdenOsConnectionState::Connected);
+	TestTrue(TEXT("Observe run sends create route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, EdenOsWireContract::CreateSessionRoute));
+	TestTrue(TEXT("Observe run sends telemetry route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("/telemetry")));
+	TestTrue(TEXT("Observe run sends event route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("/events")));
+	TestTrue(TEXT("Observe run sends completion route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("/complete")));
+	TestFalse(TEXT("Observe run does not call advisory route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("advis")));
+	TestFalse(TEXT("Observe run does not call command route"), TransportUrlsContain(ObserveProbe.EdenTransportUrls, TEXT("command")));
+
+	return CompareMissionIsolationProbes(*this, DisabledProbe, ObserveProbe);
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenTelemetryLocalSinkSurvivesEdenSinkFailureTest,
 	"Eden.Integration.Telemetry.LocalSinkSurvivesEdenSinkFailure",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1050,6 +1156,7 @@ bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Paramete
 
 	const FString BaseUrl = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_BASE_URL"));
 	const FString RuntimeBearerJwt = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_BEARER_JWT"));
+	const FString RequestedAuthorityMode = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_AUTHORITY_MODE"));
 	FString EvidenceDirectory = GetLiveEnvVar(TEXT("EDEN_OS_LIVE_E2E_EVIDENCE_DIR"));
 	if (EvidenceDirectory.IsEmpty())
 	{
@@ -1106,7 +1213,11 @@ bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Paramete
 	Config.RuntimeBearerJwt = RuntimeBearerJwt;
 	Config.RequestTimeoutSeconds = 10.0f;
 	Config.DefaultScenarioId = TEXT("SolarEventEmergency");
+	Config.AuthorityMode = RequestedAuthorityMode.Equals(TEXT("Observe"), ESearchCase::IgnoreCase)
+		? EEdenOsAuthorityMode::Observe
+		: EEdenOsAuthorityMode::Advisory;
 	TestTrue(TEXT("Live runtime config accepted"), Adapter->ApplyRuntimeConfig(Config));
+	TestEqual(TEXT("Live authority mode applied"), Adapter->GetConnectionSnapshot().AuthorityMode, Config.AuthorityMode);
 	TestEqual(TEXT("EDEN sink registered"), Telemetry->GetRegisteredTelemetrySinkCount(), 1);
 
 	for (int32 Index = 0; Index < 20 && Mission->GetMissionState() == EEdenMissionState::Running; ++Index)

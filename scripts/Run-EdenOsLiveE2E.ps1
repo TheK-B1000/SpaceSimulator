@@ -3,7 +3,9 @@ param(
     [string]$EngineRoot = $env:UE_ENGINE_ROOT,
     [string]$PythonExe = "",
     [int]$Port = 8791,
-    [string]$RunId = ""
+    [string]$RunId = "",
+    [ValidateSet("Advisory", "Observe")]
+    [string]$AuthorityMode = "Advisory"
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +71,7 @@ $PreviousEnv = @{
     EDEN_OS_LIVE_E2E_BASE_URL = $env:EDEN_OS_LIVE_E2E_BASE_URL
     EDEN_OS_LIVE_E2E_BEARER_JWT = $env:EDEN_OS_LIVE_E2E_BEARER_JWT
     EDEN_OS_LIVE_E2E_EVIDENCE_DIR = $env:EDEN_OS_LIVE_E2E_EVIDENCE_DIR
+    EDEN_OS_LIVE_E2E_AUTHORITY_MODE = $env:EDEN_OS_LIVE_E2E_AUTHORITY_MODE
 }
 
 $ServerProcess = $null
@@ -131,6 +134,7 @@ try {
     $env:EDEN_OS_LIVE_E2E_BASE_URL = $BaseUrl
     $env:EDEN_OS_LIVE_E2E_BEARER_JWT = $RuntimeToken
     $env:EDEN_OS_LIVE_E2E_EVIDENCE_DIR = $RunRoot
+    $env:EDEN_OS_LIVE_E2E_AUTHORITY_MODE = $AuthorityMode
 
     & $UnrealEditorCmd `
         $UProject `
@@ -272,6 +276,7 @@ if __name__ == "__main__":
     Write-Host "PASS: live Unreal -> ProjectEden E2E verified."
     Write-Host "Evidence directory: $RunRoot"
     Write-Host "FastAPI base URL: $BaseUrl"
+    Write-Host "Authority mode: $AuthorityMode"
     Write-Host "Runtime JWT: <runtime-token>"
     Write-Host "Database: $DbPath"
 }
