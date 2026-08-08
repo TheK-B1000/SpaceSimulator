@@ -65,6 +65,7 @@ FEdenOsConnectionConfig UEdenOsConnectionSettings::MakeConnectionConfig() const
 	FEdenOsConnectionConfig Config;
 	Config.bEnabled = bEnabled;
 	Config.BaseUrl = BaseUrl;
+	Config.DefaultScenarioId = DefaultScenarioId;
 	Config.ConnectionTimeoutSeconds = ConnectionTimeoutSeconds;
 	Config.RequestTimeoutSeconds = RequestTimeoutSeconds;
 	Config.MaxQueueDepth = MaxQueueDepth;
@@ -101,6 +102,14 @@ FEdenOsValidationResult FEdenOsConnectionConfigModel::Validate(const FEdenOsConn
 	if (Config.bEnabled)
 	{
 		ValidateBaseUrl(Config.BaseUrl, Result);
+		if (Config.DefaultScenarioId.TrimStartAndEnd().IsEmpty())
+		{
+			Result.AddError(TEXT("EDEN OS DefaultScenarioId is required when the connection is enabled."));
+		}
+		if (Config.DefaultScenarioId.Len() > 50)
+		{
+			Result.AddError(TEXT("EDEN OS DefaultScenarioId must be 50 characters or fewer."));
+		}
 		if (Config.RuntimeBearerJwt.IsEmpty())
 		{
 			Result.AddWarning(TEXT("Bearer JWT absent; authenticated EDEN OS calls require runtime token injection."));

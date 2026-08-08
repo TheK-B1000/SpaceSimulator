@@ -155,6 +155,11 @@ FEdenTelemetrySinkResult UEdenOsAdapterSubsystem::EnqueueOutboundRequest(FEdenOs
 	return FEdenTelemetrySinkResult::Succeeded(TEXT("eden-os:queued"));
 }
 
+FString UEdenOsAdapterSubsystem::GetDefaultScenarioId() const
+{
+	return RuntimeConfig.DefaultScenarioId;
+}
+
 void UEdenOsAdapterSubsystem::SetHttpTransportForTesting(IEdenOsHttpTransport* InTransport)
 {
 	ActiveHttpTransport = InTransport ? InTransport : OwnedHttpTransport.Get();
@@ -298,6 +303,10 @@ void UEdenOsAdapterSubsystem::HandleTransportCompleted(const FEdenOsHttpResult& 
 void UEdenOsAdapterSubsystem::ResetTransportRuntimeState()
 {
 	OutboundQueue.Reset();
+	if (OwnedTelemetrySink.IsValid())
+	{
+		OwnedTelemetrySink->ResetSessionDeliveryState();
+	}
 	DroppedOutboundMessageCount = 0;
 	NextOutboundSequenceNumber = 1;
 	bTransportRequestInFlight = false;

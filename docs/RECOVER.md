@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint C corrective wire-contract patch implemented for review; Checkpoint F locked |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint F session lifecycle convergence implemented for review; Checkpoints G-M locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
-| Last successful validation | Repository validation PASS; Win64 Development Editor build PASS with explicit corrective `EdenOsWireSerializationModel.cpp` and `EdenOsWireSerializationTests.cpp` compile; focused `Automation RunTests Eden.Unit.EdenOs.Wire.` PASS with 13 tests; full `Automation RunTests Eden.` PASS with 232 tests; `git diff --check` PASS; Source `LogTemp`, added-source credential, and added-diff F-scope scans clean |
-| Next task | Commit the Checkpoint C corrective wire-contract patch, then wait for user re-acceptance. Do not begin Checkpoint F yet |
+| Last successful validation | Checkpoint F PASS: initial build explicitly compiled new lifecycle source/tests; focused `Eden.Unit.EdenOs.` PASS; focused `Eden.Integration.EdenOs.` PASS with 3 tests; ProjectEden route verifier PASS replaying 7 Unreal-produced lifecycle requests through Pydantic/service/repository/SQLite persistence; full `Automation RunTests Eden.` PASS with 237 tests; repository validation PASS; editor asset verifiers PASS; final Win64 Development Editor build PASS; `git diff --check` and Source `LogTemp` scan PASS |
+| Next task | Commit Checkpoint F, then wait for user acceptance. Do not begin Checkpoints G-M yet |
 
 ## Recovery protocol
 
@@ -37,7 +37,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time: A, B, C, E. Do not implement ProjectEden Checkpoint D in this repository.
-- Do not begin Checkpoint F until the Checkpoint C corrective wire-contract patch is accepted and explicit Checkpoint F authorization is given.
+- Do not begin Checkpoints G-M until Checkpoint F is committed and explicitly accepted.
 - 0007 proceeds directly on `main`; use tests plus source audit as the checkpoint gate, not branch topology.
 
 ## Current Known Risks
@@ -45,7 +45,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - Operator keys: `T` / `L` / `P`.
 - Telemetry export path: `Saved/Telemetry/` (runtime output; not tracked).
 - `ClearHistory()` remains explicit.
-- ProjectEden Checkpoint D completed at `B:\repo\ProjectEden` commit `6442029`, but it exposed DTO mismatches that require Unreal Checkpoint C corrective re-acceptance before Checkpoint F convergence.
+- ProjectEden Checkpoint D completed at `B:\repo\ProjectEden` commit `6442029`. Unreal corrective C was accepted at `3f69f9b`; Checkpoint F now verifies the real Unreal request JSON through ProjectEden routes and persistence.
 
 ## Session Handoff
 
@@ -57,8 +57,28 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint B was accepted and pushed as `a63de4e`.
 - 0007 Checkpoint C was accepted and committed as `f66cda3`.
 - 0007 Checkpoint E was committed as `32c8f9a`, then accepted at `75fcd90` after the mission-level failure-isolation proof.
-- 0007 Checkpoint F was stopped before implementation after ProjectEden D (`6442029`) revealed create/telemetry/event/complete DTO mismatches against Unreal Checkpoint C.
-- A narrow Checkpoint C corrective wire-contract patch is implemented for review and not yet accepted.
+- 0007 Checkpoint F was initially stopped before implementation after ProjectEden D (`6442029`) revealed create/telemetry/event/complete DTO mismatches against Unreal Checkpoint C.
+- The narrow Checkpoint C corrective wire-contract patch was accepted at `3f69f9b`.
+- 0007 Checkpoint F session lifecycle convergence is implemented for review and not yet accepted.
+
+### Latest Checkpoint F Evidence
+
+- `main` was pushed to `origin/main` after Checkpoint C corrective acceptance and before Checkpoint F began.
+- Implemented `FEdenOsMissionLifecycleModel` as the production lifecycle request model. It derives create and completion DTOs from immutable `FEdenTelemetrySessionPayload` values, maps terminal mission facts to `succeeded`, `failed`, or `aborted`, and omits completion when terminal facts are unknown.
+- `FEdenOsTelemetrySink` now sends the ProjectEden lifecycle route sequence through the existing adapter queue: create once per session, telemetry on new sequence, one request per new event sequence, and complete once after a terminal fact.
+- `DefaultScenarioId` is now explicit EDEN OS connection configuration used by session create. Runtime adapter state remains owned by `UEdenOsAdapterSubsystem`; canonical 0006 telemetry remains the telemetry truth.
+- Added `Source/EdenSpaceSimulator/Public/EdenOs/EdenOsMissionLifecycle.h`, `Source/EdenSpaceSimulator/Private/EdenOs/EdenOsMissionLifecycle.cpp`, `Source/EdenSpaceSimulator/Private/Tests/EdenOsLifecycleTests.cpp`, and `scripts/Verify-EdenOsMissionContract.ps1`.
+- Updated the previous E failure-isolation test so it fails every lifecycle HTTP attempt and asserts observable multi-request failure without changing authoritative mission/resource/clock state.
+- Initial F build passed via `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild`; UBT invalidated the makefile for `source file added` and explicitly compiled `EdenOsMissionLifecycle.cpp`, `EdenOsTelemetrySink.cpp`, `EdenOsConnectionConfigTests.cpp`, `EdenOsLifecycleTests.cpp`, and `EdenOsTransportTests.cpp`.
+- Corrective rebuild after the E isolation assertion update explicitly compiled `EdenOsTransportTests.cpp` and passed.
+- Focused automation passed via `UnrealEditor-Cmd.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.; Quit" "-TestExit=Automation Test Queue Empty" -Log`.
+- Focused integration passed via `Automation RunTests Eden.Integration.EdenOs.` with 3 tests found: `FailingTransportDoesNotChangeSimulation`, `FailingTransportPreservesAuthoritativeMissionResult`, and `SessionLifecycleEmitsProjectEdenRouteSequence`.
+- `scripts/Verify-EdenOsMissionContract.ps1` passed against `B:\repo\ProjectEden`: replayed 7 Unreal-produced lifecycle requests through ProjectEden FastAPI routes and verified persisted session, telemetry, events, and completion in isolated SQLite.
+- Full `Automation RunTests Eden.` passed with 237 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****`.
+- Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`.
+- Editor verification passed: `VerifyFlightAssets.py`, `VerifyMissionAssets.py`, `VerifyOperatorAssets.py`, `VerifyResourceAssets.py`, and `VerifyFlightRuntimeSmoke.py`.
+- Final Win64 Development Editor build passed and reported target up to date.
+- `git diff --check` passed. Source `LogTemp` search returned no matches. Secret scan matches were limited to synthetic test credentials and docs evidence. Scope scan matches were limited to the intended async Unreal HTTP transport from Checkpoint E, existing advisory configuration, route-version tests, and pre-existing mission "no retry" log text.
 
 ### Latest Checkpoint C Corrective Evidence
 

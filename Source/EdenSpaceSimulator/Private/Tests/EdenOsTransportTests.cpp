@@ -399,7 +399,10 @@ namespace EdenOsTransportTests
 		UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
 		if (bEnableFailingEden)
 		{
-			Transport.Results.Add(FEdenOsHttpResult::Failed(0, TEXT("offline")));
+			for (int32 Index = 0; Index < 32; ++Index)
+			{
+				Transport.Results.Add(FEdenOsHttpResult::Failed(0, TEXT("offline")));
+			}
 			Adapter->SetHttpTransportForTesting(&Transport);
 			Adapter->ApplyRuntimeConfig(MakeEnabledConfig());
 		}
@@ -744,7 +747,7 @@ bool FEdenOsFailingTransportPreservesAuthoritativeMissionResultTest::RunTest(con
 	TestEqual(TEXT("Disabled run has no EDEN sink"), DisabledProbe.RegisteredSinkCountBeforeDelivery, 0);
 	TestEqual(TEXT("Failing run registers the EDEN sink"), FailingProbe.RegisteredSinkCountBeforeDelivery, 1);
 	TestEqual(TEXT("EDEN sink delivery attempted"), FailingProbe.TelemetryDeliveryAttempts, 1);
-	TestEqual(TEXT("Failing transport received one HTTP attempt"), FailingProbe.EdenTransportAttempts, 1);
+	TestTrue(TEXT("Failing transport received lifecycle HTTP attempts"), FailingProbe.EdenTransportAttempts > 1);
 	TestEqual(TEXT("Failing transport reports disconnected"), FailingProbe.EdenConnectionState, EEdenOsConnectionState::Disconnected);
 	TestTrue(TEXT("Failure summary records offline transport"), FailingProbe.EdenLastErrorSummary.Contains(TEXT("offline")));
 

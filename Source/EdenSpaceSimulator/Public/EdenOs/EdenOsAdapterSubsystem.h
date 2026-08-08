@@ -31,6 +31,7 @@ public:
 	void ClearRuntimeBearerJwt();
 	bool LoadRuntimeBearerJwtFromEnvironment(const FString& VariableName);
 	FEdenTelemetrySinkResult EnqueueOutboundRequest(FEdenOsQueuedRequest Request);
+	FString GetDefaultScenarioId() const;
 
 	void SetHttpTransportForTesting(IEdenOsHttpTransport* InTransport);
 

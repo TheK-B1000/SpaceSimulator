@@ -23,6 +23,9 @@ public:
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
 	FString BaseUrl;
 
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
+	FString DefaultScenarioId = TEXT("SolarEventEmergency");
+
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS", meta = (ClampMin = "0.001", Units = "s"))
 	float ConnectionTimeoutSeconds = 2.0f;
 

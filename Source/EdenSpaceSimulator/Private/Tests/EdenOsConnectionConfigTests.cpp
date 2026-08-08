@@ -81,6 +81,25 @@ bool FEdenOsConfigEnabledRejectsEmptyBaseUrlTest::RunTest(const FString& Paramet
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsConfigEnabledRejectsEmptyScenarioIdTest,
+	"Eden.Unit.EdenOs.Config.EnabledRejectsEmptyScenarioId",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsConfigEnabledRejectsEmptyScenarioIdTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenOsConnectionTests;
+
+	FEdenOsConnectionConfig Config = MakeEnabledValidConfig();
+	Config.DefaultScenarioId.Reset();
+
+	const FEdenOsValidationResult Result = FEdenOsConnectionConfigModel::Validate(Config);
+	TestFalse(TEXT("Enabled empty scenario rejected"), Result.IsValid());
+	TestTrue(TEXT("Error mentions DefaultScenarioId"), ContainsText(Result.Errors, TEXT("DefaultScenarioId")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenOsConfigMalformedBaseUrlRejectedTest,
 	"Eden.Unit.EdenOs.Config.MalformedBaseUrlRejected",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

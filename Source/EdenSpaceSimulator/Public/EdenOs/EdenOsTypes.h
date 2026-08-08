@@ -35,6 +35,9 @@ struct EDENSPACESIMULATOR_API FEdenOsConnectionConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
 	FString BaseUrl;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
+	FString DefaultScenarioId = TEXT("SolarEventEmergency");
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS", meta = (ClampMin = "0.001", Units = "s"))
 	float ConnectionTimeoutSeconds = 2.0f;
 
