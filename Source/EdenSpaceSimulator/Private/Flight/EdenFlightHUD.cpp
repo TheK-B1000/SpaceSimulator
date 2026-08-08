@@ -2,7 +2,6 @@
 
 #include "Flight/EdenFlightHUD.h"
 
-#include "Core/EdenLogCategories.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Flight/EdenSpacecraftPawn.h"
@@ -32,30 +31,11 @@ AEdenFlightHUD::AEdenFlightHUD()
 	bShowHUD = true;
 }
 
-void AEdenFlightHUD::BeginPlay()
-{
-	Super::BeginPlay();
-
-#if !UE_BUILD_SHIPPING
-	EnableEdenSystemsDebugDisplay();
-#endif
-}
-
-void AEdenFlightHUD::ShowDebug(FName DebugType)
-{
-	Super::ShowDebug(DebugType);
-}
-
 void AEdenFlightHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
 #if !UE_BUILD_SHIPPING
-	if (!bRequestedDefaultEdenSystemsDebug)
-	{
-		EnableEdenSystemsDebugDisplay();
-	}
-
 	if (ShouldDisplayDebug(EdenFlightHUDDebug::EdenSystemsDebugName))
 	{
 		DrawEdenSystemsOverlay();
@@ -64,18 +44,6 @@ void AEdenFlightHUD::DrawHUD()
 }
 
 #if !UE_BUILD_SHIPPING
-void AEdenFlightHUD::EnableEdenSystemsDebugDisplay()
-{
-	bRequestedDefaultEdenSystemsDebug = true;
-	ShowDebug(EdenFlightHUDDebug::EdenSystemsDebugName);
-
-	UE_LOG(
-		LogEdenSystems,
-		Log,
-		TEXT("%s requested ShowDebug EdenSystems. Resource overlay draws on the flight HUD viewport."),
-		*GetNameSafe(this));
-}
-
 void AEdenFlightHUD::DrawEdenSystemsOverlay()
 {
 	if (!Canvas || !PlayerOwner)

@@ -15,15 +15,10 @@ class EDENSPACESIMULATOR_API AEdenFlightHUD : public AHUD
 public:
 	AEdenFlightHUD();
 
-	virtual void BeginPlay() override;
 	virtual void DrawHUD() override;
-	virtual void ShowDebug(FName DebugType = NAME_None) override;
 
 private:
 #if !UE_BUILD_SHIPPING
-	void EnableEdenSystemsDebugDisplay();
 	void DrawEdenSystemsOverlay();
-
-	bool bRequestedDefaultEdenSystemsDebug = false;
 #endif
 };
