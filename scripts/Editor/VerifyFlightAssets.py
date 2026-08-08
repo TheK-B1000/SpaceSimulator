@@ -48,10 +48,14 @@ def modifier_names(mapping):
     return [modifier.get_class().get_name() for modifier in mapping.get_editor_property("modifiers")]
 
 
-def verify_input_mapping_context(imc, ia_translate, ia_rotate, ia_stabilize):
+def get_imc_mappings(imc):
     mapping_data = imc.get_editor_property("default_key_mappings")
-    mappings = mapping_data.get_editor_property("mappings")
-    require(len(mappings) == 11, "Expected 11 flight input mappings, found {}".format(len(mappings)))
+    return list(mapping_data.get_editor_property("mappings"))
+
+
+def verify_input_mapping_context(imc, ia_translate, ia_rotate, ia_stabilize):
+    mappings = get_imc_mappings(imc)
+    require(len(mappings) >= 11, "Expected at least 11 flight input mappings, found {}".format(len(mappings)))
 
     expected = {
         ("IA_FlightTranslate", "W"): [],

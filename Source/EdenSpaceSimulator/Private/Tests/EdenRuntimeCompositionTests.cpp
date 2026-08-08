@@ -8,6 +8,7 @@
 #include "Flight/EdenSpacecraftPawn.h"
 #include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Missions/EdenMissionSubsystem.h"
+#include "Operations/EdenOperatorControlComponent.h"
 #include "Systems/EdenFuelConfigDataAsset.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerConfigDataAsset.h"
@@ -222,12 +223,14 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 	UEdenFuelSystemComponent* Fuel = Pawn->GetFuelSystemComponent();
 	UEdenPowerSystemComponent* Power = Pawn->GetPowerSystemComponent();
 	UEdenThermalSystemComponent* Thermal = Pawn->GetThermalSystemComponent();
+	UEdenOperatorControlComponent* Operator = Pawn->GetOperatorControlComponent();
 
 	TestNotNull(TEXT("Flight movement component exists"), Flight);
 	TestNotNull(TEXT("Fuel component exists"), Fuel);
 	TestNotNull(TEXT("Power component exists"), Power);
 	TestNotNull(TEXT("Thermal component exists"), Thermal);
-	if (!Flight || !Fuel || !Power || !Thermal)
+	TestNotNull(TEXT("Operator control component exists"), Operator);
+	if (!Flight || !Fuel || !Power || !Thermal || !Operator)
 	{
 		return false;
 	}
@@ -236,6 +239,7 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 	TestEqual(TEXT("Exactly one fuel component exists"), EdenRuntimeCompositionTests::CountComponents<UEdenFuelSystemComponent>(Pawn), 1);
 	TestEqual(TEXT("Exactly one power component exists"), EdenRuntimeCompositionTests::CountComponents<UEdenPowerSystemComponent>(Pawn), 1);
 	TestEqual(TEXT("Exactly one thermal component exists"), EdenRuntimeCompositionTests::CountComponents<UEdenThermalSystemComponent>(Pawn), 1);
+	TestEqual(TEXT("Exactly one operator control component exists"), EdenRuntimeCompositionTests::CountComponents<UEdenOperatorControlComponent>(Pawn), 1);
 	TestEqual(TEXT("Exactly one propulsion demand source exists"), EdenRuntimeCompositionTests::CountPropulsionDemandSources(Pawn), 1);
 
 	TestTrue(TEXT("Fuel runtime config asset was applied"), Fuel->IsFuelSimulationEnabled());

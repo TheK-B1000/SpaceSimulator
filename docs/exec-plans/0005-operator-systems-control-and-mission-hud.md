@@ -2,16 +2,14 @@
 
 ## Status
 
-**Approved — implementing (core spine + automation green; HUD Blueprint / input assets / PIE pending).**
+**Complete**
 
-Design locks L1–L5 (section 12) are accepted via ADR-0002. Implementation proceeds on `main`. ExecPlan 0004 Complete/tag remains gated on human PIE evidence; do not reopen Checkpoint F.
+Manual PIE (Checkpoint I) passed 2026-08-08 on `L_FlightSandbox` (`feature/operator-hud-and-input`). Operator HUD, Enhanced Input (`T`/`L`/`P`), and Solar Crisis trade-off visibility verified.
 
 ## Prerequisite status
 
 > [!NOTE]
-> 0004 automated remediation is on `main`. Manual PIE for 0004 H (+ delayed 0003) remains outstanding for Complete/tag only. 0005 implementation is authorized without waiting for that PIE closeout.
->
-> 0006 implementation remains blocked until 0005 Checkpoint H scenario tests are green.
+> ExecPlan 0004 is Complete (`v0.3.0-emergency-mission`). ExecPlan 0005 is Complete. Next active work is ExecPlan 0006 (minimal JSON export + ShowAfterAction).
 
 ---
 
@@ -223,10 +221,18 @@ Minimum display: mission name, mission state, mission phase, objective list with
 | **C** | `UEdenOperatorControlComponent`: intent ownership, command dispatch, reset | Integration tests |
 | **D** | `FEdenAlert`, `EEdenAlertSeverity`, `UEdenAlertSubsystem`, transition binding | Integration tests |
 | **E** | `FEdenOperatorHudSnapshot` assembly + query API | Unit tests |
-| **F** | `WBP_EdenOperatorHud` + `UEdenOperatorHudWidget` binding | Editor asset verification |
-| **G** | Enhanced Input actions + `IMC_Flight` additions + Blueprint composition | Asset verification |
-| **H** | Solar Crisis trade-off integration tests, deterministic operator scenarios | Full automation |
-| **I** | Manual PIE acceptance + docs closeout | Hands-on gate |
+| **F** | `WBP_EdenOperatorHud` + `UEdenOperatorHudWidget` binding | ✅ Editor asset verification (`VerifyOperatorAssets.py`) |
+| **G** | Enhanced Input actions + `IMC_Flight` additions + Blueprint composition | ✅ Asset verification (`T`/`L`/`P` → Thermal/LoadShed/Propulsion) |
+| **H** | Solar Crisis trade-off integration tests, deterministic operator scenarios | ✅ Existing operator scenario automation still green (186 `Eden.`) |
+| **I** | Manual PIE acceptance + docs closeout | ✅ PIE passed 2026-08-08 |
+
+### Checkpoint I — Manual PIE evidence (2026-08-08)
+
+Maintainer PIE on `L_FlightSandbox`:
+- `WBP_EdenOperatorHud` visible
+- `T` / `L` / `P` operator actions update HUD Operator section
+- Solar Crisis trade-offs visible (demand / temperature / thrust authority)
+- Restart/reset and Output Log clean (no project `LogTemp`)
 
 ---
 

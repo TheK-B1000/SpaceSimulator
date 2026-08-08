@@ -8,6 +8,13 @@
 
 #include "EdenOperatorHudWidget.generated.h"
 
+class UTextBlock;
+class UVerticalBox;
+
+/**
+ * Production operator HUD. Formats and displays FEdenOperatorHudSnapshot only.
+ * Does not own or mutate authoritative simulation state.
+ */
 UCLASS(Blueprintable, BlueprintType)
 class EDENSPACESIMULATOR_API UEdenOperatorHudWidget : public UUserWidget
 {
@@ -21,10 +28,22 @@ public:
 	FEdenOperatorHudSnapshot GetHudSnapshot() const;
 
 protected:
+	virtual void NativeConstruct() override;
+
 	UFUNCTION(BlueprintImplementableEvent, Category = "Eden|HUD")
 	void OnHudSnapshotUpdated(const FEdenOperatorHudSnapshot& InSnapshot);
 
 private:
+	void EnsureDisplayCreated();
+	void RefreshDisplayFromSnapshot();
+	static FText FormatSnapshot(const FEdenOperatorHudSnapshot& Snapshot);
+
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Eden|HUD", meta = (AllowPrivateAccess = "true"))
 	FEdenOperatorHudSnapshot CurrentSnapshot;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> RootLayout = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> HudTextBlock = nullptr;
 };
