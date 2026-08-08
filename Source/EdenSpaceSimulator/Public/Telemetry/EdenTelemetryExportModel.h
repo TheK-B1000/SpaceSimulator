@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Telemetry/EdenTelemetryTypes.h"
+#include "Telemetry/EdenTelemetrySink.h"
 
 /**
  * Pure Telemetry Export Schema v1 builder.
@@ -17,6 +17,8 @@ struct EDENSPACESIMULATOR_API FEdenTelemetryExportModel
 		const FEdenTelemetrySessionMetadata& Metadata,
 		const FString& SessionId,
 		const FName MissionId);
+
+	static FString BuildSessionJsonV1(const FEdenTelemetrySessionPayload& Payload);
 
 	static FString EscapeJsonString(const FString& Value);
 	static FString EnumToken(const UEnum* Enum, int64 Value);

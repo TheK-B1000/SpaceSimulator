@@ -7,10 +7,7 @@
 #include "Engine/World.h"
 #include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenSpacecraftPawn.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 #include "Misc/Guid.h"
-#include "HAL/FileManager.h"
 #include "Missions/EdenMissionSubsystem.h"
 #include "Operations/EdenAlertSubsystem.h"
 #include "Operations/EdenOperatorControlComponent.h"
@@ -101,44 +98,41 @@ FString UEdenTelemetrySubsystem::GetSessionId() const
 	return ActiveSessionId;
 }
 
-FString UEdenTelemetrySubsystem::ExportSessionJsonV1() const
+FEdenTelemetrySessionPayload UEdenTelemetrySubsystem::BuildSessionPayload() const
 {
-	FName MissionId = NAME_None;
-	if (const UEdenMissionSubsystem* Mission = BoundMission.Get())
-	{
-		MissionId = Mission->GetMissionStateSnapshot().ActiveMissionId;
-	}
-	else if (SnapshotHistory.Num() > 0)
-	{
-		MissionId = SnapshotHistory.Last().Mission.ActiveMissionId;
-	}
-
-	return FEdenTelemetryExportModel::BuildSessionJsonV1(
+	return FEdenTelemetrySessionPayload(
 		EventHistory,
 		SnapshotHistory,
 		SessionMetadata,
-		ActiveSessionId.IsEmpty() ? TEXT("unknown-session") : ActiveSessionId,
-		MissionId);
+		ActiveSessionId,
+		ResolveMissionIdForExport());
+}
+
+FEdenTelemetrySinkResult UEdenTelemetrySubsystem::DeliverSessionToSink(IEdenTelemetrySink& Sink) const
+{
+	const FEdenTelemetrySinkResult Result = Sink.DeliverTelemetrySession(BuildSessionPayload());
+	if (!Result.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenTelemetry,
+			Warning,
+			TEXT("Telemetry sink '%s' failed: %s"),
+			*Sink.GetTelemetrySinkName().ToString(),
+			*Result.ErrorMessage);
+	}
+	return Result;
+}
+
+FString UEdenTelemetrySubsystem::ExportSessionJsonV1() const
+{
+	return FEdenTelemetryExportModel::BuildSessionJsonV1(BuildSessionPayload());
 }
 
 FString UEdenTelemetrySubsystem::WriteSessionJsonV1ToDisk() const
 {
-	const FString Json = ExportSessionJsonV1();
-	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Telemetry"));
-	IFileManager::Get().MakeDirectory(*Directory, true);
-
-	const FString SafeSessionId = ActiveSessionId.IsEmpty() ? TEXT("unknown-session") : ActiveSessionId;
-	const FString Filename = FString::Printf(TEXT("telemetry_%s.json"), *SafeSessionId);
-	const FString AbsolutePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(Directory, Filename));
-
-	if (!FFileHelper::SaveStringToFile(Json, *AbsolutePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
-	{
-		UE_LOG(LogEdenTelemetry, Error, TEXT("Failed to write telemetry export to '%s'."), *AbsolutePath);
-		return FString();
-	}
-
-	UE_LOG(LogEdenTelemetry, Log, TEXT("Wrote telemetry export '%s'."), *AbsolutePath);
-	return AbsolutePath;
+	FEdenLocalJsonTelemetrySink LocalJsonSink;
+	const FEdenTelemetrySinkResult Result = DeliverSessionToSink(LocalJsonSink);
+	return Result.IsSuccess() ? Result.Destination : FString();
 }
 
 FEdenAfterActionResult UEdenTelemetrySubsystem::BuildAfterActionResult() const
@@ -374,6 +368,21 @@ FEdenTelemetrySnapshot UEdenTelemetrySubsystem::AssembleSnapshot() const
 	}
 
 	return Snapshot;
+}
+
+FName UEdenTelemetrySubsystem::ResolveMissionIdForExport() const
+{
+	if (const UEdenMissionSubsystem* Mission = BoundMission.Get())
+	{
+		return Mission->GetMissionStateSnapshot().ActiveMissionId;
+	}
+
+	if (SnapshotHistory.Num() > 0)
+	{
+		return SnapshotHistory.Last().Mission.ActiveMissionId;
+	}
+
+	return NAME_None;
 }
 
 int64 UEdenTelemetrySubsystem::NextSequence()

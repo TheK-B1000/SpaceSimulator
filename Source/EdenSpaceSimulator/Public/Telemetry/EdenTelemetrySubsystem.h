@@ -6,6 +6,7 @@
 #include "Core/EdenSimulationTickable.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Telemetry/EdenTelemetryTypes.h"
+#include "Telemetry/EdenTelemetrySink.h"
 #include "Telemetry/EdenAfterActionModel.h"
 #include "Missions/EdenMissionTypes.h"
 #include "Systems/EdenResourceTypes.h"
@@ -50,6 +51,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Telemetry")
 	FString GetSessionId() const;
 
+	FEdenTelemetrySessionPayload BuildSessionPayload() const;
+	FEdenTelemetrySinkResult DeliverSessionToSink(IEdenTelemetrySink& Sink) const;
+
 	/** Builds Telemetry Export Schema v1 JSON (wire contract for 0007). */
 	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
 	FString ExportSessionJsonV1() const;
@@ -72,6 +76,7 @@ private:
 	void UpdateAggregates(const FEdenTelemetrySnapshot& Snapshot);
 	void StoreSnapshotIfDue(const FEdenTelemetrySnapshot& Snapshot);
 	FEdenTelemetrySnapshot AssembleSnapshot() const;
+	FName ResolveMissionIdForExport() const;
 	int64 NextSequence();
 
 	UFUNCTION()
