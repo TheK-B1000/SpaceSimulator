@@ -9,14 +9,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint L **accepted**; M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint M **AUTOMATION READY; HUMAN PIE PENDING** |
 | Accepted Checkpoint I | `89d47da` + `89761fd` (+ docs `54b38dd`) |
 | Accepted Checkpoint J | `22f8bb9` (+ docs `964c54c`) |
 | Accepted Checkpoint K | `a50bcf1` (+ docs hash `48edc80`) |
-| Accepted Checkpoint L | Unreal `87a5a97` (+ ready-docs `22102ab`); ProjectEden `d2822b2` |
+| Accepted Checkpoint L | Unreal `87a5a97` (+ ready-docs `22102ab` / acceptance docs `5069988`); ProjectEden `d2822b2` |
 | ExecPlan 0004–0006 | Complete |
-| Last successful validation | L acceptance audit: live AuthorizedControl E2E `20260808-155507` (Normal→Shed; Executed=1; `/events` → PE persistence); prior Win64 Dev Editor + `Validate-Project Eden.` PASS; PE API 361 passed; alembic `c8d9e0f1a2b3` |
-| Next task | **Do not begin M** until separately authorized. |
+| Last successful validation | M automation: Win64 Dev Editor PASS; `Eden.` **340/340** exit 0; Unit EdenOs 99/99; Integration EdenOs 44/44; PE pytest 361 passed; alembic `c8d9e0f1a2b3` lifecycle PASS; live Observe/Advisory/AuthorizedControl E2E PASS (`Saved/Automation/EdenOsLiveE2E/20260808-M-*`) |
+| Next task | **Human PIE gate** (§23.8). Do not accept M / do not close 0007 until PIE PASS. |
 
 ## Recovery protocol
 
@@ -27,7 +27,7 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
 ```
 
-Then read `AGENTS.md` and ExecPlan 0007 (§20–§22 J/K/L accepted; M locked).
+Then read `AGENTS.md` and ExecPlan 0007 (§23 M; HUMAN PIE PENDING).
 
 ## Safe Restart Rules
 
@@ -39,8 +39,9 @@ Then read `AGENTS.md` and ExecPlan 0007 (§20–§22 J/K/L accepted; M locked).
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time.
 - Checkpoints I, J, K, and L are accepted.
-- **M remains locked.**
-- Validated ≠ executed until an explicit authorized `ExecuteValidatedExternalCommand` call; L may dry-run validate without deferred execute.
+- Checkpoint M is verification/closeout only — **no new architecture** unless a real defect appears.
+- Codex must **not** self-certify the human PIE gate.
+- Do not mark ExecPlan 0007 complete until M is accepted after human PIE PASS.
 - 0007 proceeds directly on `main`.
 
 ## Current Known Risks
@@ -52,18 +53,17 @@ Then read `AGENTS.md` and ExecPlan 0007 (§20–§22 J/K/L accepted; M locked).
 - `GetEventHistory()` returns by value — keep the `TArray` alive while holding pointers into it.
 - `bExternalCommandValidationEnabled`, `bExternalCommandExecutionEnabled`, and `bExternalCommandAutomationEnabled` default false; none auto-enable from AuthorizedControl alone.
 - AuthorizedControl permits advisory evaluation (required for L accept→proposal chain); Observe still never evaluates.
-- Live L E2E uses deterministic ProjectEden reasoner via `EDEN_COMMAND_PROPOSAL_REASONER=test-load-shed` — not a production AI policy.
-- Optional non-blocking coverage polish (J/K/L soft notes) does not block accepted checkpoints.
+- Live AuthorizedControl E2E / PIE AC path uses deterministic ProjectEden reasoner via `EDEN_COMMAND_PROPOSAL_REASONER=test-load-shed` — not a production AI policy.
+- Temporary PIE Game-config overrides for AC gates must be reverted and must not be committed.
 
 ## Session Handoff
 
 ### Completed
 
-- Checkpoint I accepted (advisory return path).
-- Checkpoint J accepted (`22f8bb9`): typed validation airlock with zero execution.
-- Checkpoint K accepted (`a50bcf1`): authorized execution through `UEdenExternalCommandExecutor` → `UEdenOperatorControlComponent`.
-- Checkpoint L accepted (`87a5a97` / ProjectEden `d2822b2`): outbound `/command-proposals` → J → K; live Normal→Shed; Executed feedback via existing `/events`.
+- Checkpoint I–L accepted.
+- Checkpoint M **automation** complete: mode matrix + live FastAPI + full Unreal/PE regression + source/security audit. Evidence: `Saved/Automation/EdenOsLiveE2E/20260808-M-Closeout/`.
 
-### Next
+### Next (human)
 
-- **M remains locked** until separately authorized.
+- Perform §23.8 PIE checklist; report PASS/FAIL.
+- Only after PASS: record M READY FOR FINAL ACCEPTANCE / closeout docs commit.

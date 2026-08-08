@@ -2,9 +2,9 @@
 
 ## Status
 
-**In Progress — Checkpoint L accepted; M remains locked.**
+**In Progress — Checkpoint M AUTOMATION READY; HUMAN PIE PENDING. Do not close 0007.**
 
-Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J/K/L are accepted. Checkpoint J (`22f8bb9`) is the validated-command airlock. Checkpoint K (`a50bcf1`) is the authorized execution bridge: validated artifact → `UEdenOperatorControlComponent` → optional `EdenExternalCommandExecuted`. Checkpoint L (`87a5a97` / ProjectEden `d2822b2`) is the outbound typed command-proposal transport into that J/K chain (Unreal remains the HTTP client). Validation alone still never mutates the ship. **M remains locked.**
+Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J/K/L are accepted. Checkpoint M is verification/closeout only (no new architecture). Automated mode matrix + live FastAPI evidence are green. **Human PIE is PENDING** and is required before M acceptance / ExecPlan 0007 completion.
 
 Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`; its corrective wire-contract alignment was accepted at `3f69f9b`. Checkpoint E implementation was committed at `32c8f9a`; the follow-up mission-level failure-isolation proof was accepted at `75fcd90`. Checkpoint F implementation commit `63768ab` plus corrective proof commit `5249a6a` are accepted.
 
@@ -670,6 +670,8 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 
 2026-08-08: Checkpoint L accepted. Cross-repo implementation: ProjectEden `d2822b2 feat(commands): add mission command proposal api`; Unreal `87a5a97 feat(eden): automate typed external commands` (+ ready-docs `22102ab`). Final cross-repo audit confirmed: Unreal-only HTTP client; exact closed wire vocabulary; production NoCommand reasoner; no advisory prose→command path; automation default false; dry-run without deferred execute; one automatic request per evaluation; mandatory J then K; stale responses cannot act; EdenAuthorizedControl provenance (no human operator_action); no bespoke `/command-results`; live feedback loop closed through existing `/events` into ProjectEden `mission_environment_events` (`EdenExternalCommandExecuted`, ProposalId/EvaluationId correlated, Normal→Shed). Soft coverage polish notes do not block acceptance. **M remains locked. Do not begin M.**
 
+2026-08-08: Checkpoint M automation verification complete (**AUTOMATION READY; HUMAN PIE PENDING**). Under test: Unreal `5069988` / L feature `87a5a97`; ProjectEden `d2822b2`. No new product capability. Live FastAPI matrix: Observe / Advisory / AuthorizedControl PASS (`20260808-M-*`). AC correlation: Session `0ef13c6e-…`, Eval `eval-1`, Advisory `f78ac9ba-…`, Proposal `b7810b33-…`, `set_load_shed_mode`/`shed`, Normal→Shed, Executed=1 via `/events`. Unreal `Eden.` 340/340 exit 0; PE 361 passed; alembic head `c8d9e0f1a2b3`. See §23. **Do not accept M or close 0007 until human PIE PASS.**
+
 ---
 
 ## 17. Checkpoint acceptance protocol
@@ -1200,6 +1202,112 @@ No bespoke `/command-results`. Successful K convergence emits `EdenExternalComma
 
 Live AuthorizedControl E2E (`scripts/Run-EdenOsLiveE2E.ps1 -AuthorityMode AuthorizedControl`) proved: advisory → 201 command proposal → J Valid → K Executed → LoadShed `Normal→Shed` → exactly one `EdenExternalCommandExecuted` → ProjectEden persisted one proposal → ordinary events transport closed the loop. Evidence dir example: `Saved/Automation/EdenOsLiveE2E/20260808-155507` (JWT never logged).
 
-### 22.9 M remains locked
+### 22.9 M remains locked until authorized
 
-L is accepted. **Do not begin M** until separately authorized.
+L is accepted. Checkpoint M is verification/closeout only.
+
+---
+
+## 23. Checkpoint M — final PIE / FastAPI / product closeout
+
+### 23.1 Scope
+
+M proves H→L as one product loop. **No new capability** unless a gate exposes a real defect. Soft test-polish notes from L remain non-blocking.
+
+### 23.2 Commits under test (automation)
+
+| Repo | Commit |
+|---|---|
+| Unreal | `5069988` (L acceptance docs HEAD); feature L `87a5a97` |
+| ProjectEden | `d2822b2` |
+
+### 23.3 Safe defaults (source ownership)
+
+Owned by `FEdenOsConnectionConfig` / `UEdenOsConnectionSettings` (`Config=Game`):
+
+| Field | Default |
+|---|---|
+| `AuthorityMode` | `Advisory` |
+| `bExternalCommandValidationEnabled` | `false` |
+| `bExternalCommandAutomationEnabled` | `false` |
+| `bExternalCommandExecutionEnabled` | `false` |
+
+`EnableRuntimeConnection` / `EnableEdenOs` enable transport only; they do **not** flip authority or J/K/L gates. Proven by `Eden.Unit.EdenOs.Config.*` and ExternalCommand default tests.
+
+### 23.4 Automated mode matrix (live FastAPI)
+
+| Mode | Evidence dir | Advisories | Command proposals | Executed | LoadShed |
+|---|---|---|---|---|---|
+| Observe | `Saved/Automation/EdenOsLiveE2E/20260808-M-Observe` | 0 | 0 | 0 | n/a |
+| Advisory | `Saved/Automation/EdenOsLiveE2E/20260808-M-Advisory` | 1 | 0 | 0 | n/a |
+| AuthorizedControl (all gates) | `Saved/Automation/EdenOsLiveE2E/20260808-M-AuthorizedControl` | ≥1 | 1 | 1 | Normal→Shed |
+
+EDEN-disabled / failure non-interference preserved by existing G/E isolation + L automation failure tests (HTTP fail / 204 / malformed / stale / dry-run).
+
+### 23.5 AuthorizedControl correlation (`20260808-M-AuthorizedControl`)
+
+| Fact | Value |
+|---|---|
+| SessionId | `0ef13c6e-41f5-fad3-f026-7e8ff4e92f9f` |
+| EvaluationId | `eval-1` |
+| AdvisoryId | `f78ac9ba-7650-4a7b-96bf-88a4a434f916` |
+| ProposalId | `b7810b33-f3a9-4d14-bc85-4346cfd712e8` |
+| Command | `set_load_shed_mode` / `shed` |
+| Operator | Normal → Shed |
+| `EdenExternalCommandExecuted` | 1 (Unreal + PE `mission_environment_events`) |
+| Human `OperatorCommandIssued` | 0 |
+| Feedback | existing `POST …/events` (no `/command-results`) |
+| Mission | Succeeded / PE `completed` |
+
+Sanitized bundle: `Saved/Automation/EdenOsLiveE2E/20260808-M-Closeout/MAutomationEvidence.json`. JWT never logged (`Runtime JWT: <runtime-token>`).
+
+### 23.6 Regression counts
+
+**Unreal** (`Validate-Project.ps1 -Build -RunTests -TestFilter Eden.`): Found **340**, Passed **340**, Failed **0**, Crashes **0**, Exit **0**. Subcounts: `Eden.Unit.EdenOs.` 99/99; `Eden.Integration.EdenOs.` 44/44. Win64 Development Editor build PASS. `git diff --check` clean on Source/docs/scripts. No `LogTemp` in EdenSpaceSimulator Source. No inbound HTTP listener. No committed bearer JWT.
+
+**ProjectEden**: pytest **361 passed**, 52 skipped; alembic single head `c8d9e0f1a2b3`; upgrade / downgrade-to-`b7c8d9e0f1a2` / re-upgrade PASS; focused Ruff on L modules PASS.
+
+### 23.7 Source architecture audit
+
+Chain remains: telemetry → advisory context → PE advisory → typed proposal → J → K → `UEdenOperatorControlComponent` → `EdenExternalCommandExecuted` → `/events` → PE. Absent: inbound Unreal control server; L→operator setter; network→validated artifact; NL→command; command-result endpoint; PE ownership of operator truth.
+
+### 23.8 Human PIE checklist — **PENDING**
+
+Codex must **not** self-certify this gate. Exact procedure:
+
+**A. Basic product (EDEN disabled)**  
+1. Open `EdenSpaceSimulator.uproject` in UE 5.8.  
+2. Open `/Game/Eden/Maps/L_FlightSandbox`.  
+3. PIE. Verify six-axis flight, resource HUD, operator HUD (`T`/`L`/`P`).  
+4. `StartMission` — mission progresses. Do **not** call `EnableEdenOs`.
+
+**B. Advisory (real ProjectEden)**  
+1. Start isolated ProjectEden (same pattern as `scripts/Run-EdenOsLiveE2E.ps1`: alembic upgrade, uvicorn, register/login). Do **not** set `EDEN_COMMAND_PROPOSAL_REASONER` (production NoCommand).  
+2. Set env `EDEN_OS_LIVE_E2E_BASE_URL` / `EDEN_OS_LIVE_E2E_BEARER_JWT` (or paste BaseUrl into `EnableEdenOs`).  
+3. PIE → `EnableEdenOs` → `SetEdenOsBearerFromEnv` → `StartMission`.  
+4. Confirm advisory appears (recommendation + rationale); no confidence/severity; controls unchanged by advisory alone.  
+5. Confirm defaults remain Advisory + validation/automation/execution **false**.
+
+**C. AuthorizedControl remote action (deliberate gates)**  
+1. Restart ProjectEden with `EDEN_COMMAND_PROPOSAL_REASONER=test-load-shed` (test/dev fixture only).  
+2. **Temporarily** (do not commit) set Game config for `UEdenOsConnectionSettings`:  
+   `AuthorityMode=AuthorizedControl`, `bExternalCommandValidationEnabled=True`, `bExternalCommandAutomationEnabled=True`, `bExternalCommandExecutionEnabled=True`.  
+   Or set the same fields on the settings CDO in-editor before PIE.  
+3. PIE → `EnableEdenOs` → `SetEdenOsBearerFromEnv` → `StartMission`.  
+4. Confirm LoadShed **Normal → Shed** from remote proposal (not only the `L` key).  
+5. Confirm no duplicate execution thrash.  
+6. Revert temporary config to safe defaults after the run.
+
+**D. Closeout**  
+1. Let mission complete / `ShowAfterAction`.  
+2. Confirm AAR/telemetry coherent with advisory/execution facts.  
+3. Report PASS/FAIL to Codex with any notes.
+
+### 23.9 Status
+
+```text
+M AUTOMATION READY
+HUMAN PIE PENDING
+```
+
+Do **not** accept M or mark ExecPlan 0007 complete until human PIE PASS is recorded.
