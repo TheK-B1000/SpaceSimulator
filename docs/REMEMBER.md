@@ -36,8 +36,8 @@ This file stores durable, verified project facts that future Codex sessions must
 - Mission simulation uses `UEdenMissionSubsystem` as a world-scoped subsystem registered with `UEdenSimulationClockSubsystem` at Priority 100 (`EdenSimulationClockPriority::Mission`), stepping deterministically after Priority 0 resource components (`EdenSimulationClockPriority::Systems`).
 - Emergency missions are data-driven via `UEdenMissionDefinitionDataAsset` and pure deterministic state machine `FEdenMissionModel`.
 - Approved mission resource disturbance commands are external heating and external power demand only. `SetPowerGeneration` remains unsupported for the emergency-mission milestone.
-- The reference emergency scenario is `SolarCrisis` (`Solar Event Emergency`), configuring a 50s multi-phase timeline with external heating, external power demand, and four required objectives (`SurviveSolarEvent`, `PreventOverheating`, `RestoreBatteryCharge`, `ConservePropellant`).
-- Developer console commands such as `StartMission`, `RestartMission`, and `AbortMission` are part of ExecPlan 0004 Checkpoint H and should be promoted to durable facts only after implementation and verification.
+- The reference emergency scenario is `SolarCrisis` (`Solar Event Emergency`), authored as `/Game/Eden/Data/Missions/DA_SolarEventEmergency`, configuring a 50s multi-phase timeline with external heating, external power demand, and four required objectives (`SurviveSolarEvent`, `PreventOverheating`, `RestoreBatteryCharge`, `ConservePropellant`).
+- Developer console commands such as `StartMission`, `RestartMission`, and `AbortMission` are implemented against the Solar Event Data Asset soft path, but interactive PIE verification remains outstanding before treating operator workflow as fully closed out.
 - Product goal for the first vertical slice: a docking and emergency-response trainer. Emergency mission infrastructure is being implemented first; docking gameplay is a later milestone unless separately verified complete.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.

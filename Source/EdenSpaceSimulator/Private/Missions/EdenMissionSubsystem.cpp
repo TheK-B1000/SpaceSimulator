@@ -7,8 +7,10 @@
 #include "Engine/World.h"
 #include "Flight/EdenSpacecraftPawn.h"
 #include "GameFramework/PlayerController.h"
+#include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
+#include "Missions/EdenMissionDefinitionDataAsset.h"
 
 void UEdenMissionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -52,6 +54,42 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 
 	CurrentRuntimeState = StepResult.UpdatedState;
 
+	const UEdenThermalSystemComponent* ThermalComp = GetThermalTarget();
+	const UEdenPowerSystemComponent* PowerComp = GetPowerTarget();
+	const UEdenFuelSystemComponent* FuelComp = GetFuelTarget();
+
+	// Missing targets must not invent catastrophic resource readings.
+	const float ThermalTemperatureCelsius = ThermalComp
+		? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
+		: TNumericLimits<float>::Lowest();
+	const float PowerChargeFraction = PowerComp
+		? PowerComp->GetPowerStateSnapshot().ChargeFraction
+		: 1.0f;
+	const float FuelFraction = FuelComp
+		? FuelComp->GetFuelStateSnapshot().FuelFraction
+		: 1.0f;
+
+	CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
+		CurrentRuntimeState,
+		ActiveMissionDefinition,
+		ThermalTemperatureCelsius,
+		PowerChargeFraction,
+		FuelFraction);
+
+	const EEdenMissionState EvaluatedOutcome = FEdenMissionModel::EvaluateOutcome(
+		CurrentRuntimeState,
+		ActiveMissionDefinition);
+
+	if (EvaluatedOutcome != CurrentRuntimeState.MissionState)
+	{
+		TransitionMissionState(EvaluatedOutcome);
+	}
+
+	if (CurrentRuntimeState.MissionState != EEdenMissionState::Running)
+	{
+		return;
+	}
+
 	for (const FName& EventId : StepResult.NewlyTriggeredEventIds)
 	{
 		UE_LOG(
@@ -83,36 +121,6 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 				*GetNameSafe(this),
 				*EventId.ToString());
 		}
-	}
-
-	const UEdenThermalSystemComponent* ThermalComp = FindThermalComponent();
-	const UEdenPowerSystemComponent* PowerComp = FindPowerComponent();
-	const UEdenFuelSystemComponent* FuelComp = FindFuelComponent();
-
-	const float ThermalTemperatureCelsius = ThermalComp
-		? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
-		: 0.0f;
-	const float PowerBatteryCharge = PowerComp
-		? PowerComp->GetPowerStateSnapshot().BatteryChargeKilowattHours
-		: 0.0f;
-	const float FuelQuantityKilograms = FuelComp
-		? FuelComp->GetFuelStateSnapshot().FuelQuantityKilograms
-		: 0.0f;
-
-	CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
-		CurrentRuntimeState,
-		ActiveMissionDefinition,
-		ThermalTemperatureCelsius,
-		PowerBatteryCharge,
-		FuelQuantityKilograms);
-
-	const EEdenMissionState EvaluatedOutcome = FEdenMissionModel::EvaluateOutcome(
-		CurrentRuntimeState,
-		ActiveMissionDefinition);
-
-	if (EvaluatedOutcome != CurrentRuntimeState.MissionState)
-	{
-		TransitionMissionState(EvaluatedOutcome);
 	}
 }
 
@@ -146,6 +154,7 @@ bool UEdenMissionSubsystem::LoadMission(const FEdenMissionDefinitionConfig& Defi
 	}
 
 	ActiveMissionDefinition = Definition;
+	const EEdenMissionState PreviousState = CurrentRuntimeState.MissionState;
 	CurrentRuntimeState = FEdenMissionModel::InitializeRuntimeState(Definition);
 
 	UE_LOG(
@@ -157,8 +166,26 @@ bool UEdenMissionSubsystem::LoadMission(const FEdenMissionDefinitionConfig& Defi
 		Definition.Events.Num(),
 		Definition.Objectives.Num());
 
-	OnMissionStateChanged.Broadcast(EEdenMissionState::Inactive, EEdenMissionState::Ready);
+	if (PreviousState != EEdenMissionState::Ready)
+	{
+		OnMissionStateChanged.Broadcast(PreviousState, EEdenMissionState::Ready);
+	}
 	return true;
+}
+
+bool UEdenMissionSubsystem::LoadMissionFromDefinitionAsset(const UEdenMissionDefinitionDataAsset* DefinitionAsset)
+{
+	if (!DefinitionAsset)
+	{
+		UE_LOG(
+			LogEdenMission,
+			Warning,
+			TEXT("%s cannot load mission from a null definition asset."),
+			*GetNameSafe(this));
+		return false;
+	}
+
+	return LoadMission(DefinitionAsset->GetMissionDefinition());
 }
 
 bool UEdenMissionSubsystem::StartMission()
@@ -175,7 +202,7 @@ bool UEdenMissionSubsystem::StartMission()
 		return false;
 	}
 
-	if (!GetThermalTarget() && !GetPowerTarget())
+	if (!GetThermalTarget() && !GetPowerTarget() && !GetFuelTarget())
 	{
 		TryResolveResourceTargetsFromPossessedSpacecraft();
 	}
@@ -419,34 +446,19 @@ void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& E
 	UE_LOG(
 		LogEdenMission,
 		Log,
-		TEXT("%s dispatching mission command '%s' for event '%s' (FloatParam=%.2f, NameParam='%s')."),
+		TEXT("%s dispatching mission command '%s' for event '%s' (FloatParam=%.2f, Phase=%s, NameParam='%s')."),
 		*GetNameSafe(this),
 		*UEnum::GetValueAsString(EventConfig.CommandType),
 		*EventConfig.EventId.ToString(),
 		EventConfig.FloatParameter,
+		*UEnum::GetValueAsString(EventConfig.PhaseParameter),
 		*EventConfig.NameParameter.ToString());
 
 	switch (EventConfig.CommandType)
 	{
 	case EEdenMissionCommandType::SetMissionPhase:
 	{
-		if (!IsFiniteCommandPayload(EventConfig.FloatParameter))
-		{
-			UE_LOG(
-				LogEdenMission,
-				Warning,
-				TEXT("%s rejected SetMissionPhase for event '%s': FloatParameter is not finite."),
-				*GetNameSafe(this),
-				*EventConfig.EventId.ToString());
-			return;
-		}
-
-		const EEdenMissionPhase TargetPhase = static_cast<EEdenMissionPhase>(
-			FMath::Clamp(
-				FMath::RoundToInt(EventConfig.FloatParameter),
-				0,
-				static_cast<int32>(EEdenMissionPhase::Resolved)));
-		TransitionMissionPhase(TargetPhase);
+		TransitionMissionPhase(EventConfig.PhaseParameter);
 		return;
 	}
 	case EEdenMissionCommandType::SetExternalHeatingRate:

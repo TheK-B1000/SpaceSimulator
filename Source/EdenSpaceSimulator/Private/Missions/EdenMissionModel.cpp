@@ -44,8 +44,7 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 
 		const bool bCommandRequiresFiniteFloat =
 			Event.CommandType == EEdenMissionCommandType::SetExternalHeatingRate
-			|| Event.CommandType == EEdenMissionCommandType::SetExternalPowerDemand
-			|| Event.CommandType == EEdenMissionCommandType::SetMissionPhase;
+			|| Event.CommandType == EEdenMissionCommandType::SetExternalPowerDemand;
 
 		if (bCommandRequiresFiniteFloat && !FMath::IsFinite(Event.FloatParameter))
 		{
@@ -56,6 +55,16 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 					TEXT("FloatParameter must be finite for EventId '%s' command '%s'."),
 					*Event.EventId.ToString(),
 					*UEnum::GetValueAsString(Event.CommandType)));
+		}
+
+		if (Event.CommandType == EEdenMissionCommandType::SetPowerGeneration)
+		{
+			bIsValid = false;
+			EdenMissionModel::AddValidationError(
+				OutErrors,
+				FString::Printf(
+					TEXT("Unsupported command SetPowerGeneration for EventId '%s'."),
+					*Event.EventId.ToString()));
 		}
 	}
 
@@ -68,6 +77,29 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 			EdenMissionModel::AddValidationError(OutErrors, FString::Printf(TEXT("Duplicate ObjectiveId: %s"), *Objective.ObjectiveId.ToString()));
 		}
 		SeenObjectiveIds.Add(Objective.ObjectiveId);
+
+		if (!FMath::IsFinite(Objective.TargetValue))
+		{
+			bIsValid = false;
+			EdenMissionModel::AddValidationError(
+				OutErrors,
+				FString::Printf(TEXT("TargetValue must be finite for ObjectiveId '%s'."), *Objective.ObjectiveId.ToString()));
+		}
+
+		const bool bRequiresNormalizedFraction =
+			Objective.ObjectiveType == EEdenObjectiveType::RestorePowerAbove
+			|| Objective.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove;
+
+		if (bRequiresNormalizedFraction
+			&& (Objective.TargetValue < 0.0f || Objective.TargetValue > 1.0f))
+		{
+			bIsValid = false;
+			EdenMissionModel::AddValidationError(
+				OutErrors,
+				FString::Printf(
+					TEXT("TargetValue for ObjectiveId '%s' must be a normalized fraction in [0,1]."),
+					*Objective.ObjectiveId.ToString()));
+		}
 	}
 
 	if (Definition.Objectives.Num() == 0)
@@ -221,6 +253,79 @@ FEdenMissionRuntimeState FEdenMissionModel::FailObjective(const FEdenMissionRunt
 	return NewState;
 }
 
+FEdenMissionRuntimeState FEdenMissionModel::EvaluateObjectives(
+	const FEdenMissionRuntimeState& State,
+	const FEdenMissionDefinitionConfig& Definition,
+	float ThermalTemperatureCelsius,
+	float PowerChargeFraction,
+	float FuelFraction)
+{
+	if (State.MissionState != EEdenMissionState::Running)
+	{
+		return State;
+	}
+
+	TMap<FName, const FEdenMissionObjectiveConfig*> ObjectiveConfigs;
+	for (const FEdenMissionObjectiveConfig& Objective : Definition.Objectives)
+	{
+		ObjectiveConfigs.Add(Objective.ObjectiveId, &Objective);
+	}
+
+	FEdenMissionRuntimeState NewState = State;
+	for (FEdenMissionObjectiveRuntime& ObjectiveRuntime : NewState.ObjectiveStates)
+	{
+		if (ObjectiveRuntime.State != EEdenObjectiveState::Active)
+		{
+			continue;
+		}
+
+		const FEdenMissionObjectiveConfig* const* ConfigPtr = ObjectiveConfigs.Find(ObjectiveRuntime.ObjectiveId);
+		if (!ConfigPtr || !*ConfigPtr)
+		{
+			continue;
+		}
+
+		const FEdenMissionObjectiveConfig& Config = **ConfigPtr;
+		switch (Config.ObjectiveType)
+		{
+		case EEdenObjectiveType::SurviveUntilTime:
+			if (NewState.MissionElapsedTimeSeconds >= Config.TargetValue)
+			{
+				ObjectiveRuntime.State = EEdenObjectiveState::Completed;
+			}
+			break;
+
+		case EEdenObjectiveType::KeepTemperatureBelow:
+			// Equality is valid; fail only when temperature exceeds the limit.
+			if (ThermalTemperatureCelsius > Config.TargetValue)
+			{
+				ObjectiveRuntime.State = EEdenObjectiveState::Failed;
+			}
+			break;
+
+		case EEdenObjectiveType::RestorePowerAbove:
+			if (PowerChargeFraction >= Config.TargetValue)
+			{
+				ObjectiveRuntime.State = EEdenObjectiveState::Completed;
+			}
+			break;
+
+		case EEdenObjectiveType::MaintainFuelAbove:
+			// Equality is valid; fail only when fuel fraction drops below the limit.
+			if (FuelFraction < Config.TargetValue)
+			{
+				ObjectiveRuntime.State = EEdenObjectiveState::Failed;
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	return NewState;
+}
+
 EEdenMissionState FEdenMissionModel::EvaluateOutcome(
 	const FEdenMissionRuntimeState& State,
 	const FEdenMissionDefinitionConfig& Definition)
@@ -230,33 +335,62 @@ EEdenMissionState FEdenMissionModel::EvaluateOutcome(
 		return State.MissionState;
 	}
 
-	bool bAllRequiredCompleted = true;
-	bool bHasRequired = false;
-
-	TMap<FName, bool> IsRequiredMap;
-	for (const FEdenMissionObjectiveConfig& Obj : Definition.Objectives)
+	TMap<FName, const FEdenMissionObjectiveConfig*> ObjectiveConfigs;
+	for (const FEdenMissionObjectiveConfig& Objective : Definition.Objectives)
 	{
-		IsRequiredMap.Add(Obj.ObjectiveId, Obj.bRequired);
+		ObjectiveConfigs.Add(Objective.ObjectiveId, &Objective);
 	}
+
+	bool bHasRequired = false;
+	bool bHasRequiredCompleteSeeking = false;
+	bool bAllCompleteSeekingCompleted = true;
+	bool bAllConstraintsHeld = true;
 
 	for (const FEdenMissionObjectiveRuntime& ObjState : State.ObjectiveStates)
 	{
-		const bool* bIsRequired = IsRequiredMap.Find(ObjState.ObjectiveId);
-		if (bIsRequired && *bIsRequired)
+		const FEdenMissionObjectiveConfig* const* ConfigPtr = ObjectiveConfigs.Find(ObjState.ObjectiveId);
+		if (!ConfigPtr || !*ConfigPtr || !(*ConfigPtr)->bRequired)
 		{
-			bHasRequired = true;
-			if (ObjState.State == EEdenObjectiveState::Failed)
+			continue;
+		}
+
+		bHasRequired = true;
+		const FEdenMissionObjectiveConfig& Config = **ConfigPtr;
+
+		if (ObjState.State == EEdenObjectiveState::Failed)
+		{
+			return EEdenMissionState::Failed;
+		}
+
+		const bool bFailOnlyConstraint =
+			Config.ObjectiveType == EEdenObjectiveType::KeepTemperatureBelow
+			|| Config.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove;
+
+		if (bFailOnlyConstraint)
+		{
+			if (ObjState.State != EEdenObjectiveState::Active
+				&& ObjState.State != EEdenObjectiveState::Completed)
 			{
-				return EEdenMissionState::Failed;
+				bAllConstraintsHeld = false;
 			}
-			if (ObjState.State != EEdenObjectiveState::Completed)
-			{
-				bAllRequiredCompleted = false;
-			}
+			continue;
+		}
+
+		bHasRequiredCompleteSeeking = true;
+		if (ObjState.State != EEdenObjectiveState::Completed)
+		{
+			bAllCompleteSeekingCompleted = false;
 		}
 	}
 
-	if (bHasRequired && bAllRequiredCompleted)
+	if (!bHasRequired)
+	{
+		return EEdenMissionState::Running;
+	}
+
+	// Complete-seeking required objectives (SurviveUntilTime / RestorePowerAbove) must Complete.
+	// Fail-only constraints may remain Active; they block success only by Failed.
+	if (bHasRequiredCompleteSeeking && bAllCompleteSeekingCompleted && bAllConstraintsHeld)
 	{
 		return EEdenMissionState::Succeeded;
 	}

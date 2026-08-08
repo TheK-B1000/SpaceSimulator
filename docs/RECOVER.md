@@ -8,82 +8,57 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 |---|---|
 | Date | 2026-08-08 |
 | Branch | `plan/emergency-mission-shell` |
-| Accepted Checkpoint H baseline | Complete |
 | Active ExecPlan | `docs/exec-plans/0004-emergency-scenario-mission-shell.md` |
-| Checkpoint A-H status | ✅ Implemented and verified across all 159 tests |
-| Clean flight baseline tag | `v0.1.0-flight-shell` on commit `ed7fb55` |
-| Working tree | Clean |
-| ExecPlan 0003 status | Still **Blocked** on repeated hands-on PIE verification (delayed; do not reopen unless asked) |
-| Last successful validation | Repository validation passed; `EdenSpaceSimulatorEditor` Win64 Development build passed (0 errors, 0 warnings); `Automation RunTests Eden` exit code 0; `git diff --check` clean; `Source` has no `LogTemp` |
-| Last successful result | 159 passing unit/integration tests (0 failures, 0 errors, 13 expected automation warnings). |
-| Next task | Milestone completion review and tag creation when user authorizes. |
+| Checkpoint A–E | Accepted architecture baseline through D `326057b`; E dispatch retained and corrected under remediation |
+| Checkpoint F | Remediated and automation-green (objective/outcome integration) |
+| Checkpoint G | Remediated with real `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset`; VerifyMissionAssets validates the actual asset |
+| Checkpoint H | Code present and automated-revalidated against corrected F/G; **manual PIE remains the final human gate** |
+| ExecPlan 0003 | Still blocked on delayed hands-on PIE |
+| Last successful validation | Repo validate; Win64 Development Editor build; `Automation RunTests Eden.` exit 0 (178 project `Eden.*` tests); VerifyFlightAssets / VerifyResourceAssets / VerifyMissionAssets passed; no `LogTemp` / no mission `TObjectIterator` |
+| Next task | Manual PIE closeout for 0004 Checkpoint H (and delayed 0003 PIE). Do not mark 0004 Complete until PIE evidence is recorded. |
 
 ## Recovery protocol
-
-Run from the Git root:
 
 ```powershell
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator status --short --untracked-files=all
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator branch --show-current
-git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -5 --oneline
-git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator tag -l "v0.1.0*"
+git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8 --oneline
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
-git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff
 ```
 
-Then:
-
-1. Read `AGENTS.md`.
-2. Read all mandatory documents in its preflight order.
-3. Read `docs/exec-plans/0004-emergency-scenario-mission-shell.md`.
-4. Confirm the current branch is `plan/emergency-mission-shell`.
-5. Confirm Checkpoint D acceptance baseline `326057b` and that Checkpoint E is the active authorized scope.
-6. Confirm Checkpoint F / G / H work has not leaked into the tree (no resource objective evaluation wiring, no `DA_SolarEventEmergency`, no Solar Event end-to-end runtime tests).
-7. Do not begin Checkpoint F until Checkpoint E is accepted.
+Then read `AGENTS.md` and mandatory docs, then ExecPlan 0004.
 
 ## Safe Restart Rules
 
 - Do not discard local changes without inspecting them.
-- Do not run broad asset-fix, redirector, clean, or regeneration operations before a checkpoint.
 - Do not delete `Content`, `Config`, or `Source`.
-- Generated folders may be removed only when the editor is closed and the task requires a clean rebuild.
-- Preserve logs or screenshots that provide the only evidence of a failure.
-- If the build cannot be reproduced, mark the checkpoint unverified and investigate before adding features.
-- If resource work must be abandoned, return to tag `v0.1.0-flight-shell`.
-- If mission-shell work must be abandoned, return to accepted Checkpoint D commit `326057b` on `plan/emergency-mission-shell`.
+- Preserve `DA_SolarEventEmergency.uasset` (Git LFS).
+- Do not revert historical premature G/H commits merely because claims were early; fix forward.
+- Parallel 0005 planning may exist as an untracked/local ExecPlan; do not mix it into 0004 remediation commits unless requested.
 
 ## Current Known Risks
 
-- ExecPlan 0003 remains blocked on hands-on PIE verification; that gate is delayed and independent of 0004 Checkpoint E.
-- Earlier sketch commits on this branch (`8a0b10e`, `51dd40e`) claimed E/F completion incorrectly; Checkpoint E was corrected to the locked architecture (cached targets, no generation dispatch, no objective evaluation). Treat false “Checkpoint F complete” claims in old commit messages as invalid.
-- Mission event failure semantics: due events are marked `Executed` by `FEdenMissionModel::StepTimeline` even when command dispatch fails (missing target / unsupported command). This is intentional single-attempt behavior with no automatic retry.
-- Target resolution depends on explicit `SetMissionResourceTargets` or possessed-spacecraft resolve at `StartMission`. Missions without a valid cached target log and skip resource mutation safely.
-- Exact machine-local Unreal Engine installation path remains machine-specific and must not be committed.
-- Git prints a warning that it cannot access `C:\Users\K-B/.config/git/ignore`; this is outside the repository and did not block validation.
-- Unreal platform validation still reports non-Win64 SDK gaps for Android, Linux, LinuxArm64, VisionOS, etc.; Win64 is valid.
-- Automation logs include expected negative-path warnings from SimClock/Systems/Fuel/Power/Thermal/Flight tests plus intentional Checkpoint E `LogEdenMission` warnings.
-- The broad `Automation RunTests Eden` filter also lists a few engine/plugin tests whose names contain matching text.
+- Manual PIE for 0004 H and delayed 0003 resource PIE are still outstanding.
+- Historical commits `3f2dfd5` / `9662bea` / `4a12241` claimed G/H prematurely; current tree is corrected by remediation.
+- Fail-only objectives (`KeepTemperatureBelow`, `MaintainFuelAbove`) remain Active when held; EvaluateOutcome treats them as satisfied for success once required complete-seeking objectives Complete.
+- Missing resource targets no longer invent depleted fuel/power readings during objective evaluation.
+- `SetPowerGeneration` remains unsupported and is rejected by definition validation.
+- Platform INVALID SDK noise and expected negative-path automation warnings remain.
 
 ## Session Handoff
 
-### Completed (ExecPlan 0004 through Checkpoint E)
+### Completed in remediation
 
-- Checkpoint A–D accepted; D baseline `326057b`.
-- Checkpoint E mission event execution and command dispatch implemented against the locked fixed-step ordering (resources → mission observe/advance/dispatch → modifiers affect next step).
-- Target resolution: weak cached thermal/power component pointers; no `TObjectIterator` / world-wide search every step.
-- Abort/Reset clear mission-applied external modifiers only.
-- Full Checkpoint E integration matrix verified.
-- Documentation updated in ExecPlan 0004 and this file.
-- Stopped before Checkpoint F.
+- F: EvaluateObjectives implemented with ChargeFraction/FuelFraction; AdvanceSimulation order corrected; typed PhaseParameter; LoadMission previous-state broadcast; cached weak targets preserved; production Succeeded/Failed paths wired.
+- G: Real `DA_SolarEventEmergency` created (MissionId `SolarCrisis`); factory helper removed; verifier loads actual `.uasset`; Solar Event integration tests green.
+- H automated: Start/Restart/Abort load the Data Asset (soft path); ShowDebug EdenMission code remains read-only; asset verifiers pass.
 
 ### Remaining Work
 
-- Maintainer acceptance of Checkpoint E, then commit if requested.
-- Checkpoint F: resource-based objective evaluation and mission outcome resolution.
-- Checkpoint G: `DA_SolarEventEmergency` and end-to-end runtime integration.
-- Checkpoint H: debug visibility, console triggers, manual PIE closeout.
-- ExecPlan 0003 repeated PIE verification remains delayed.
+- Hands-on PIE checklist for ShowDebug EdenMission / StartMission / RestartMission / AbortMission.
+- Mark ExecPlan 0004 Complete only after PIE evidence.
+- Create `v0.3.0-emergency-mission` only after Complete.
 
 ### Next Clean Action
 
-Accept/commit Checkpoint E if satisfied. Do not authorize or implement Checkpoint F until then.
+Perform manual PIE closeout. Do not start unrelated milestone implementation as part of 0004.

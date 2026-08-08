@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved — Checkpoints A–E complete; Checkpoint F not started
+Approved — automated remediation through Checkpoint H ready for manual PIE closeout
 
 ## Prerequisite status
 
@@ -22,15 +22,16 @@ Approved — Checkpoints A–E complete; Checkpoint F not started
 | Parent branch | `feature/spacecraft-resource-simulation` at `b19242e` |
 | Accepted Checkpoint D baseline | `326057b` |
 | Resource baseline | Automated validation passing; PIE gate open |
-| Checkpoint A status | ✅ Implemented and verified (30 tests, 131 total passing) |
-| Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
-| Checkpoint C status | ✅ Implemented and verified (3 tests, 140 total passing) |
-| Checkpoint D status | ✅ Implemented and verified (6 tests, 146 total passing) |
-| Checkpoint E status | ✅ Implemented and verified (3 tests, 149 total passing) |
-| Checkpoint F status | ✅ Implemented and verified (7 tests, 156 total passing) |
-| Checkpoint G status | ✅ Implemented and verified (3 tests, 159 total passing) |
-| Checkpoint H status | ✅ Implemented and verified |
-| Working tree | Clean |
+| Checkpoint A status | ✅ Accepted |
+| Checkpoint B status | ✅ Accepted |
+| Checkpoint C status | ✅ Accepted |
+| Checkpoint D status | ✅ Accepted (`326057b`) |
+| Checkpoint E status | ✅ Dispatch retained; latency/order preserved under remediation |
+| Checkpoint F status | ✅ Remediated and automation-verified |
+| Checkpoint G status | ✅ Remediated with real `DA_SolarEventEmergency.uasset` |
+| Checkpoint H status | 🟡 Automated revalidation green; **manual PIE remaining** |
+| Working tree | Remediation pending commit |
+| Latest full `Eden.` automation | 178 tests, exit 0 (`Saved/Logs/Automation-FG-Remediation.log`) |
 
 ---
 
@@ -264,68 +265,85 @@ Explicit absolute mission times (configured in Data Asset):
   - AutomationController warnings remain the established expected negative-path set (`LogEdenSimClock`, `LogEdenSystems`, flight input missing-asset, etc.).
   - New Checkpoint E expected `LogEdenMission` warnings only for intentional negative paths (missing thermal/power target, unsupported `SetPowerGeneration`, cannot-start-when-Inactive). No unexpected mission-dispatch warnings.
 
-**Stop condition:** Checkpoint E only. Checkpoint F (resource objective evaluation / mission outcome wiring) is not started.
+**Stop condition (historical):** Checkpoint E originally stopped before F. Later remediation continued through automated H readiness.
 
 ---
 
-### Checkpoint F — Objective and outcome evaluation ✅ COMPLETE
+### Checkpoint F — Objective and outcome evaluation ✅ REMEDIATED
 
-**Scope:**
-- Objective evaluation in `FEdenMissionModel::EvaluateObjectives` against live resource snapshots:
-  - `SurviveUntilTime`: Completed when `MissionElapsedTimeSeconds >= TargetValue`.
-  - `KeepTemperatureBelow`: Failed when `ThermalTemperatureCelsius >= TargetValue`.
-  - `RestorePowerAbove`: Completed when `PowerBatteryChargeKilowattHours >= TargetValue`.
-  - `MaintainFuelAbove`: Failed when `FuelQuantityKilograms <= TargetValue`.
-- Live component queries in `UEdenMissionSubsystem::AdvanceSimulation` across `UEdenThermalSystemComponent`, `UEdenPowerSystemComponent`, and `UEdenFuelSystemComponent`.
-- Outcome resolution in `FEdenMissionModel::EvaluateOutcome` transitioning mission state to `Succeeded` or `Failed` with state change delegate broadcasts.
-- Added 4 unit tests in `EdenMissionModelTests.cpp`:
-  - `Eden.Unit.Mission.Objective.EvaluateObjectivesSurviveUntilTime`
-  - `Eden.Unit.Mission.Objective.EvaluateObjectivesKeepTemperatureBelow`
-  - `Eden.Unit.Mission.Objective.EvaluateObjectivesRestorePowerAbove`
-  - `Eden.Unit.Mission.Objective.EvaluateObjectivesMaintainFuelAbove`
-- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
-  - `Eden.Integration.Mission.DeterministicSuccessScenario`
-  - `Eden.Integration.Mission.DeterministicFailureScenario`
-  - `Eden.Integration.Mission.ResourceStateChangeTriggersObjectiveFailure`
+**Corrected semantics:**
+- `SurviveUntilTime`: Complete when `MissionElapsedTimeSeconds >= TargetValue`
+- `KeepTemperatureBelow`: Fail when `TemperatureCelsius > TargetValue` (equality safe)
+- `RestorePowerAbove`: Complete when `ChargeFraction >= TargetValue` (normalized [0,1])
+- `MaintainFuelAbove`: Fail when `FuelFraction < TargetValue` (equality safe; normalized [0,1])
+
+**Production wiring:**
+- `AdvanceSimulation` order: StepTimeline → read cached weak targets → EvaluateObjectives → EvaluateOutcome → if still Running, dispatch due events
+- Cached weak thermal/power/fuel targets only (no Find*/iterator discovery)
+- Typed `EEdenMissionPhase PhaseParameter` for `SetMissionPhase` (no float enum decode)
+- `LoadMission` broadcasts actual previous lifecycle state
+- Terminal Succeeded/Failed stop further mission time and event dispatch
+- Fail-only required constraints may remain Active; they do not block success once required complete-seeking objectives Complete
+- Missing fuel/power targets do not invent depleted observations
 
 **Evidence:**
-- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
-- Automation: 156 tests passed (7 new tests in Checkpoint F, 149 existing tests, 0 failures, 0 errors).
+- Build green; `Automation RunTests Eden.` exit 0
+- Unit + integration coverage includes DeterministicSuccess/Failure, fraction thresholds, typed phase, LoadMission previous state
 
 ---
 
-### Checkpoint G — Solar Event Emergency Data Asset and runtime integration ✅ COMPLETE
+### Checkpoint G — Solar Event Emergency Data Asset and runtime integration ✅ REMEDIATED
 
-**Scope:**
-- `UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition()` factory definition providing the complete Solar Event Emergency scenario configuration ($T=0$ start, $T=5$ warning phase, $T=10$ impact phase + 40 C/s solar flare heating + 15 kW auxiliary power demand, $T=30$ recovery phase + heating cleared + demand cleared + 25 kW power generation boost, $T=50$ survival deadline).
-- Live end-to-end integration tests exercising the entire solar timeline with live thermal, power, and fuel components.
-- Reset and restart cleanliness verification under active disturbances.
-- Data asset validation via `IsDataValid` and `FEdenMissionModel::ValidateDefinition`.
-- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
-  - `Eden.Integration.Mission.SolarEventEmergencyDefinitionIsValid`
-  - `Eden.Integration.Mission.SolarEventEmergencyEndToEndSurvival`
-  - `Eden.Integration.Mission.SolarEventEmergencyRestartCleanliness`
+**Actual asset:**
+- Path: `/Game/Eden/Data/Missions/DA_SolarEventEmergency`
+- Class: `UEdenMissionDefinitionDataAsset`
+- MissionId: `SolarCrisis`
+- Tracked via Git LFS (`*.uasset`)
+
+**Timeline:**
+- T=0 Nominal
+- T=5 Warning (typed phase)
+- T=10 Impact + external heating + external demand
+- T=30 Recovery + clear heating + clear demand
+- T=50 SurviveUntilTime resolution
+
+**Disturbance values (chosen against sandbox DA configs without retuning them):**
+- Sandbox power: generation 2 kW, baseline demand 1 kW, capacity 20 kWh, initial charge 1.0
+- Sandbox thermal: initial 20 C, heat 1 C/s, dissipation 0.5 C/s, critical 100 C
+- Selected external heating: **2.5 C/s**
+- Selected external demand: **5.0 kW**
+- Rationale: observable pressure over the 20s impact window; peak thermal remains under critical with margin; battery drain is modest on a full pack so success remains reachable; failure is still expressible by authoritative overheating/fuel violation
+
+**Objectives:**
+- `SurviveSolarEvent` SurviveUntilTime 50s
+- `PreventOverheating` KeepTemperatureBelow 100 C
+- `RestoreBatteryCharge` RestorePowerAbove 0.10 fraction
+- `ConservePropellant` MaintainFuelAbove 0.20 fraction
+
+**No SetPowerGeneration.** No production `CreateSolarEventEmergencyDefinition()` factory.
+
+**Verifier:** `scripts/Editor/VerifyMissionAssets.py` loads and validates the real `.uasset`.
 
 **Evidence:**
-- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
-- Automation: 159 tests passed (3 new tests in Checkpoint G, 156 existing tests, 0 failures, 0 errors).
+- VerifyMissionAssets passed
+- Solar Event integration tests green
+- Runtime composition can load mission subsystem + asset
 
 ---
 
-### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout ✅ COMPLETE
+### Checkpoint H — Debug visibility, console triggers, and manual PIE closeout 🟡 AUTOMATED READY / PIE PENDING
 
-**Scope:**
-- `ShowDebug EdenMission` debug HUD overlay in `AEdenFlightHUD` rendering mission ID, lifecycle state, mission phase, elapsed simulation time, objective states (REQ/OPT, target value, Pending/Active/Completed/Failed with color coding), and timeline events (trigger time, command type, float parameter, Pending/Executed).
-- Extended `ShowDebug EdenSystems` with a live one-line mission state summary when a mission is loaded or running.
-- Developer console commands on `AEdenFlightPlayerController`:
-  - `StartMission`: Loads the default Solar Event Emergency definition if inactive, registers with clock, and starts execution.
-  - `RestartMission`: Resets the mission state machine and external modifiers, reloads definition, registers with clock, and starts fresh.
-  - `AbortMission`: Aborts running mission and safely zeroes all mission-applied disturbances.
-- `scripts/Editor/VerifyMissionAssets.py` editor Python script verifying data validation rules and the `SolarEventEmergency` factory configuration.
-- Manual PIE verification instructions documented in `docs/exec-plans/0004-emergency-scenario-mission-shell.md`.
-- Final documentation sync across `ARCHITECTURE.md`, `REMEMBER.md`, `RECOVER.md`, and `0004-emergency-scenario-mission-shell.md`.
+**Automated status:**
+- `ShowDebug EdenMission` read-only overlay exists on `AEdenFlightHUD`
+- `StartMission` / `RestartMission` / `AbortMission` load `DefaultMissionDefinitionAsset` soft path `/Game/Eden/Data/Missions/DA_SolarEventEmergency` (no C++ scenario factory)
+- VerifyFlightAssets / VerifyResourceAssets / VerifyMissionAssets pass
 
-**Evidence:**
-- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
-- Automation: 159 tests passed (0 failures, 0 errors, 13 expected automation warnings).
-- Working tree: Clean.
+**Manual PIE checklist (remaining human gate):**
+1. PIE `L_FlightSandbox`
+2. `ShowDebug EdenSystems` then `ShowDebug EdenMission`
+3. `StartMission` → observe Nominal → Warning@5 → Impact@10 with pressure → Recovery@30 → Succeeded@50 (or Forced failure path)
+4. `AbortMission` / `RestartMission` clear mission modifiers without resetting temperature/battery/fuel/velocity/clock ownership incorrectly
+5. Confirm Output Log has no unexpected errors / no project `LogTemp`
+
+**Do not mark ExecPlan 0004 Complete until PIE evidence is recorded.**
+

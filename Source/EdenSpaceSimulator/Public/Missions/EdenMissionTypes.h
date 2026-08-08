@@ -82,6 +82,10 @@ struct EDENSPACESIMULATOR_API FEdenMissionEventConfig
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	float FloatParameter = 0.0f;
 
+	/** Typed phase payload for SetMissionPhase. Do not encode phases through FloatParameter. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	EEdenMissionPhase PhaseParameter = EEdenMissionPhase::Nominal;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	FName NameParameter;
 };

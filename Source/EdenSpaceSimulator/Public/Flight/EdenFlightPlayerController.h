@@ -11,6 +11,7 @@
 struct FInputActionValue;
 class UInputAction;
 class UInputMappingContext;
+class UEdenMissionDefinitionDataAsset;
 
 UCLASS(BlueprintType, Blueprintable)
 class EDENSPACESIMULATOR_API AEdenFlightPlayerController : public APlayerController
@@ -41,6 +42,10 @@ public:
 
 	UFUNCTION(Exec, Category = "Eden|Mission")
 	void AbortMission();
+
+	/** Default mission definition loaded by StartMission/RestartMission. Soft reference; no hard package dependency. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Mission")
+	TSoftObjectPtr<UEdenMissionDefinitionDataAsset> DefaultMissionDefinitionAsset;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Flight|Input")

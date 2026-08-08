@@ -14,6 +14,7 @@ class UEdenSimulationClockSubsystem;
 class UEdenThermalSystemComponent;
 class UEdenPowerSystemComponent;
 class UEdenFuelSystemComponent;
+class UEdenMissionDefinitionDataAsset;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FEdenMissionStateChangedSignature,
@@ -39,9 +40,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
  *
  * Fixed-step ordering (locked):
  * 1) Resource systems advance with modifiers already active.
- * 2) Mission observes completed authoritative state, advances mission time,
- *    identifies due events, and dispatches commands.
- * 3) Newly applied modifiers affect resources on the NEXT fixed step.
+ * 2) Mission advances timeline and identifies due events.
+ * 3) Mission reads authoritative resource snapshots and evaluates objectives/outcome.
+ * 4) If still Running, newly due events are dispatched.
+ * 5) Newly applied modifiers affect resources on the NEXT fixed step.
  */
 UCLASS()
 class EDENSPACESIMULATOR_API UEdenMissionSubsystem : public UWorldSubsystem, public IEdenSimulationTickable
@@ -57,6 +59,10 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
 	bool LoadMission(const FEdenMissionDefinitionConfig& Definition);
+
+	/** Generic convenience loader. Does not embed scenario-specific knowledge. */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
+	bool LoadMissionFromDefinitionAsset(const UEdenMissionDefinitionDataAsset* DefinitionAsset);
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Mission")
 	bool StartMission();

@@ -747,4 +747,162 @@ bool FEdenMissionDataAssetAccessorsReturnValuesTest::RunTest(const FString& Para
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionEvaluateObjectivesSurviveUntilTimeTest,
+	"Eden.Unit.Mission.Objective.EvaluateObjectivesSurviveUntilTime",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionEvaluateObjectivesSurviveUntilTimeTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("SurviveMission");
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = FName("Survive");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 1.0f;
+	Survive.bRequired = true;
+	Survive.bActivateOnStart = true;
+	Config.Objectives.Add(Survive);
+
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Config);
+	State.MissionState = EEdenMissionState::Running;
+	State.MissionElapsedTimeSeconds = 0.999f;
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 1.0f, 1.0f);
+	TestEqual(TEXT("Survive remains Active just below deadline"), State.ObjectiveStates[0].State, EEdenObjectiveState::Active);
+
+	State.MissionElapsedTimeSeconds = 1.0f;
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 1.0f, 1.0f);
+	TestEqual(TEXT("Survive Completes at exact deadline"), State.ObjectiveStates[0].State, EEdenObjectiveState::Completed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionEvaluateObjectivesKeepTemperatureBelowTest,
+	"Eden.Unit.Mission.Objective.EvaluateObjectivesKeepTemperatureBelow",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionEvaluateObjectivesKeepTemperatureBelowTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("ThermalMission");
+	FEdenMissionObjectiveConfig Thermal;
+	Thermal.ObjectiveId = FName("KeepCool");
+	Thermal.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+	Thermal.TargetValue = 100.0f;
+	Thermal.bRequired = true;
+	Thermal.bActivateOnStart = true;
+	Config.Objectives.Add(Thermal);
+
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Config);
+	State.MissionState = EEdenMissionState::Running;
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 100.0f, 1.0f, 1.0f);
+	TestEqual(TEXT("Equality is valid / safe"), State.ObjectiveStates[0].State, EEdenObjectiveState::Active);
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 100.1f, 1.0f, 1.0f);
+	TestEqual(TEXT("Temperature above threshold fails"), State.ObjectiveStates[0].State, EEdenObjectiveState::Failed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionEvaluateObjectivesRestorePowerAboveTest,
+	"Eden.Unit.Mission.Objective.EvaluateObjectivesRestorePowerAbove",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionEvaluateObjectivesRestorePowerAboveTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("PowerMission");
+	FEdenMissionObjectiveConfig Power;
+	Power.ObjectiveId = FName("RestorePower");
+	Power.ObjectiveType = EEdenObjectiveType::RestorePowerAbove;
+	Power.TargetValue = 0.25f;
+	Power.bRequired = true;
+	Power.bActivateOnStart = true;
+	Config.Objectives.Add(Power);
+
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Config);
+	State.MissionState = EEdenMissionState::Running;
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 0.249f, 1.0f);
+	TestEqual(TEXT("ChargeFraction below threshold remains Active"), State.ObjectiveStates[0].State, EEdenObjectiveState::Active);
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 0.25f, 1.0f);
+	TestEqual(TEXT("ChargeFraction at threshold Completes"), State.ObjectiveStates[0].State, EEdenObjectiveState::Completed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionEvaluateObjectivesMaintainFuelAboveTest,
+	"Eden.Unit.Mission.Objective.EvaluateObjectivesMaintainFuelAbove",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionEvaluateObjectivesMaintainFuelAboveTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("FuelMission");
+	FEdenMissionObjectiveConfig Fuel;
+	Fuel.ObjectiveId = FName("KeepFuel");
+	Fuel.ObjectiveType = EEdenObjectiveType::MaintainFuelAbove;
+	Fuel.TargetValue = 0.2f;
+	Fuel.bRequired = true;
+	Fuel.bActivateOnStart = true;
+	Config.Objectives.Add(Fuel);
+
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Config);
+	State.MissionState = EEdenMissionState::Running;
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 1.0f, 0.2f);
+	TestEqual(TEXT("FuelFraction equality is valid / safe"), State.ObjectiveStates[0].State, EEdenObjectiveState::Active);
+
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 20.0f, 1.0f, 0.199f);
+	TestEqual(TEXT("FuelFraction below threshold fails"), State.ObjectiveStates[0].State, EEdenObjectiveState::Failed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionEvaluateOutcomeFailOnlyConstraintsDoNotBlockSuccessTest,
+	"Eden.Unit.Mission.Outcome.EvaluateOutcomeFailOnlyConstraintsDoNotBlockSuccess",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionEvaluateOutcomeFailOnlyConstraintsDoNotBlockSuccessTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("ConstraintMission");
+
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = FName("Survive");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 1.0f;
+	Survive.bRequired = true;
+	Survive.bActivateOnStart = true;
+	Config.Objectives.Add(Survive);
+
+	FEdenMissionObjectiveConfig Thermal;
+	Thermal.ObjectiveId = FName("KeepCool");
+	Thermal.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+	Thermal.TargetValue = 100.0f;
+	Thermal.bRequired = true;
+	Thermal.bActivateOnStart = true;
+	Config.Objectives.Add(Thermal);
+
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Config);
+	State.MissionState = EEdenMissionState::Running;
+	State.MissionElapsedTimeSeconds = 1.0f;
+	State = FEdenMissionModel::EvaluateObjectives(State, Config, 80.0f, 1.0f, 1.0f);
+
+	TestEqual(TEXT("Survive completed"), State.ObjectiveStates[0].State, EEdenObjectiveState::Completed);
+	TestEqual(TEXT("Thermal constraint remains Active"), State.ObjectiveStates[1].State, EEdenObjectiveState::Active);
+	TestEqual(
+		TEXT("Held fail-only constraints do not block success"),
+		FEdenMissionModel::EvaluateOutcome(State, Config),
+		EEdenMissionState::Succeeded);
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

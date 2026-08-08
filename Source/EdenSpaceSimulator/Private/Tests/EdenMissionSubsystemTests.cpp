@@ -8,6 +8,7 @@
 #include "Misc/AutomationTest.h"
 #include "Missions/EdenMissionModel.h"
 #include "Missions/EdenMissionSubsystem.h"
+#include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
 #include "UObject/Package.h"
@@ -75,9 +76,22 @@ FEdenMissionDefinitionConfig MakeRequiredObjectiveDefinition(FName MissionId)
 
 	FEdenMissionObjectiveConfig Obj;
 	Obj.ObjectiveId = FName("Survive");
+	Obj.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Obj.TargetValue = 3600.0f;
 	Obj.bRequired = true;
 	Obj.bActivateOnStart = true;
 	Config.Objectives.Add(Obj);
+	return Config;
+}
+
+FEdenFuelConfig MakeFuelConfig()
+{
+	FEdenFuelConfig Config;
+	Config.CapacityKilograms = 100.0f;
+	Config.ConsumptionRateKilogramsPerSecond = 0.0f;
+	Config.InitialFuelFraction = 1.0f;
+	Config.WarningThresholdFraction = 0.25f;
+	Config.CriticalThresholdFraction = 0.1f;
 	return Config;
 }
 
@@ -782,13 +796,10 @@ bool FEdenMissionUnsupportedCommandTypeFailsSafelyTest::RunTest(const FString& P
 
 	const float GenerationBefore = PowerComponent->GetPowerStateSnapshot().GenerationKilowatts;
 
-	TestTrue(TEXT("Mission loads"), MissionSubsystem->LoadMission(Config));
-	TestTrue(TEXT("Mission starts"), MissionSubsystem->StartMission());
-	Clock->Tick(0.15f);
-
-	TestEqual(TEXT("Unsupported generation command does not mutate power"), PowerComponent->GetPowerStateSnapshot().GenerationKilowatts, GenerationBefore);
-	TestEqual(TEXT("Mission remains Running"), MissionSubsystem->GetMissionState(), EEdenMissionState::Running);
-	TestEqual(TEXT("Event still advances to Executed once"), MissionSubsystem->GetMissionRuntimeState().EventStates[0].EventState, EEdenMissionEventState::Executed);
+	AddExpectedError(TEXT("Unsupported command SetPowerGeneration"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("Definition with SetPowerGeneration is rejected at load"), MissionSubsystem->LoadMission(Config));
+	TestEqual(TEXT("Mission remains Inactive after rejected load"), MissionSubsystem->GetMissionState(), EEdenMissionState::Inactive);
+	TestEqual(TEXT("Unsupported generation command did not mutate power"), PowerComponent->GetPowerStateSnapshot().GenerationKilowatts, GenerationBefore);
 
 	return true;
 }
@@ -842,6 +853,305 @@ bool FEdenMissionClockOrderingCommandLatencyRegressionTest::RunTest(const FStrin
 	TestTrue(
 		TEXT("Next fixed step applies the dispatched modifier"),
 		FMath::IsNearlyEqual(ThermalComponent->GetThermalStateSnapshot().TemperatureCelsius, ExpectedTemperature, 0.001f));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionDeterministicSuccessScenarioTest,
+	"Eden.Integration.Mission.DeterministicSuccessScenario",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenMissionDeterministicSuccessScenarioTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenMissionSubsystemTests::FScopedMissionWorld ScopedWorld;
+	UWorld* World = ScopedWorld.World;
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	Clock->SetFixedStepSeconds(0.1f);
+	Clock->SetMaxCatchUpSteps(8);
+	Clock->ResetSimulationClock();
+
+	AActor* TestActor = World->SpawnActor<AActor>();
+	UEdenThermalSystemComponent* Thermal = NewObject<UEdenThermalSystemComponent>(TestActor);
+	Thermal->RegisterComponent();
+	Thermal->InitializeThermalSimulation(EdenMissionSubsystemTests::MakeThermalConfig());
+	Thermal->RegisterWithSimulationClock();
+
+	UEdenPowerSystemComponent* Power = NewObject<UEdenPowerSystemComponent>(TestActor);
+	Power->RegisterComponent();
+	Power->InitializePowerSimulation(EdenMissionSubsystemTests::MakePowerConfig());
+	Power->RegisterWithSimulationClock();
+
+	UEdenFuelSystemComponent* Fuel = NewObject<UEdenFuelSystemComponent>(TestActor);
+	Fuel->RegisterComponent();
+	Fuel->InitializeFuelSimulation(EdenMissionSubsystemTests::MakeFuelConfig());
+	Fuel->RegisterWithSimulationClock();
+
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	Mission->SetMissionResourceTargets(Thermal, Power, Fuel);
+
+	UEdenMissionTestListener* Listener = NewObject<UEdenMissionTestListener>();
+	Mission->OnMissionStateChanged.AddDynamic(Listener, &UEdenMissionTestListener::HandleMissionStateChanged);
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("DeterministicSuccess");
+
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = FName("Survive");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 0.5f;
+	Survive.bRequired = true;
+	Survive.bActivateOnStart = true;
+	Config.Objectives.Add(Survive);
+
+	FEdenMissionObjectiveConfig KeepCool;
+	KeepCool.ObjectiveId = FName("KeepCool");
+	KeepCool.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+	KeepCool.TargetValue = 100.0f;
+	KeepCool.bRequired = true;
+	KeepCool.bActivateOnStart = true;
+	Config.Objectives.Add(KeepCool);
+
+	FEdenMissionObjectiveConfig KeepPower;
+	KeepPower.ObjectiveId = FName("KeepPower");
+	KeepPower.ObjectiveType = EEdenObjectiveType::RestorePowerAbove;
+	KeepPower.TargetValue = 0.1f;
+	KeepPower.bRequired = true;
+	KeepPower.bActivateOnStart = true;
+	Config.Objectives.Add(KeepPower);
+
+	FEdenMissionObjectiveConfig KeepFuel;
+	KeepFuel.ObjectiveId = FName("KeepFuel");
+	KeepFuel.ObjectiveType = EEdenObjectiveType::MaintainFuelAbove;
+	KeepFuel.TargetValue = 0.1f;
+	KeepFuel.bRequired = true;
+	KeepFuel.bActivateOnStart = true;
+	Config.Objectives.Add(KeepFuel);
+
+	TestTrue(TEXT("Mission loads"), Mission->LoadMission(Config));
+	TestTrue(TEXT("Mission starts"), Mission->StartMission());
+
+	for (int32 Step = 0; Step < 6; ++Step)
+	{
+		Clock->Tick(0.1f);
+	}
+
+	TestEqual(TEXT("Mission succeeded through production evaluation"), Mission->GetMissionState(), EEdenMissionState::Succeeded);
+	TestEqual(TEXT("Elapsed time stopped at succeed boundary"), Mission->GetMissionElapsedTimeSeconds(), 0.5f);
+
+	int32 SucceededTransitions = 0;
+	for (const EEdenMissionState NewState : Listener->NewStates)
+	{
+		if (NewState == EEdenMissionState::Succeeded)
+		{
+			++SucceededTransitions;
+		}
+	}
+	TestEqual(TEXT("Succeeded transitions exactly once"), SucceededTransitions, 1);
+
+	const float ElapsedAtSuccess = Mission->GetMissionElapsedTimeSeconds();
+	Clock->Tick(0.5f);
+	TestEqual(TEXT("Terminal success stops further mission time"), Mission->GetMissionElapsedTimeSeconds(), ElapsedAtSuccess);
+	TestEqual(TEXT("Terminal success remains Succeeded"), Mission->GetMissionState(), EEdenMissionState::Succeeded);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionDeterministicFailureScenarioTest,
+	"Eden.Integration.Mission.DeterministicFailureScenario",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenMissionDeterministicFailureScenarioTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenMissionSubsystemTests::FScopedMissionWorld ScopedWorld;
+	UWorld* World = ScopedWorld.World;
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	Clock->SetFixedStepSeconds(0.1f);
+	Clock->SetMaxCatchUpSteps(8);
+	Clock->ResetSimulationClock();
+
+	AActor* TestActor = World->SpawnActor<AActor>();
+	FEdenThermalConfig ThermalConfig = EdenMissionSubsystemTests::MakeThermalConfig();
+	ThermalConfig.HeatGenerationDegreesCelsiusPerSecond = 0.0f;
+	ThermalConfig.DissipationDegreesCelsiusPerSecond = 0.0f;
+	UEdenThermalSystemComponent* Thermal = NewObject<UEdenThermalSystemComponent>(TestActor);
+	Thermal->RegisterComponent();
+	Thermal->InitializeThermalSimulation(ThermalConfig);
+	Thermal->RegisterWithSimulationClock();
+
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	Mission->SetMissionResourceTargets(Thermal, nullptr, nullptr);
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("DeterministicFailure");
+
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = FName("Survive");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 10.0f;
+	Survive.bRequired = true;
+	Survive.bActivateOnStart = true;
+	Config.Objectives.Add(Survive);
+
+	FEdenMissionObjectiveConfig KeepCool;
+	KeepCool.ObjectiveId = FName("KeepCool");
+	KeepCool.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+	KeepCool.TargetValue = 25.0f;
+	KeepCool.bRequired = true;
+	KeepCool.bActivateOnStart = true;
+	Config.Objectives.Add(KeepCool);
+
+	FEdenMissionEventConfig HeatEvent;
+	HeatEvent.EventId = FName("Overheat");
+	HeatEvent.TriggerTimeSeconds = 0.1f;
+	HeatEvent.CommandType = EEdenMissionCommandType::SetExternalHeatingRate;
+	HeatEvent.FloatParameter = 100.0f;
+	Config.Events.Add(HeatEvent);
+
+	TestTrue(TEXT("Mission loads"), Mission->LoadMission(Config));
+	TestTrue(TEXT("Mission starts"), Mission->StartMission());
+
+	Clock->Tick(0.15f); // dispatch heating
+	Clock->Tick(0.1f);  // resource applies heating
+	Clock->Tick(0.1f);  // temperature exceeds 25
+
+	TestEqual(TEXT("Mission failed through production evaluation"), Mission->GetMissionState(), EEdenMissionState::Failed);
+	TestEqual(
+		TEXT("Thermal objective failed"),
+		Mission->GetMissionRuntimeState().ObjectiveStates[1].State,
+		EEdenObjectiveState::Failed);
+
+	const float ElapsedAtFailure = Mission->GetMissionElapsedTimeSeconds();
+	Clock->Tick(0.5f);
+	TestEqual(TEXT("Terminal failure stops further mission time"), Mission->GetMissionElapsedTimeSeconds(), ElapsedAtFailure);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionResourceStateChangeTriggersObjectiveFailureTest,
+	"Eden.Integration.Mission.ResourceStateChangeTriggersObjectiveFailure",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenMissionResourceStateChangeTriggersObjectiveFailureTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenMissionSubsystemTests::FScopedMissionWorld ScopedWorld;
+	UWorld* World = ScopedWorld.World;
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	Clock->SetFixedStepSeconds(0.1f);
+	Clock->SetMaxCatchUpSteps(4);
+	Clock->ResetSimulationClock();
+
+	AActor* TestActor = World->SpawnActor<AActor>();
+	UEdenFuelSystemComponent* Fuel = NewObject<UEdenFuelSystemComponent>(TestActor);
+	Fuel->RegisterComponent();
+	FEdenFuelConfig FuelConfig = EdenMissionSubsystemTests::MakeFuelConfig();
+	FuelConfig.InitialFuelFraction = 0.5f;
+	Fuel->InitializeFuelSimulation(FuelConfig);
+	Fuel->RegisterWithSimulationClock();
+
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	Mission->SetMissionResourceTargets(nullptr, nullptr, Fuel);
+
+	FEdenMissionDefinitionConfig Config;
+	Config.MissionId = FName("FuelFailure");
+
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = FName("Survive");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 10.0f;
+	Survive.bRequired = true;
+	Survive.bActivateOnStart = true;
+	Config.Objectives.Add(Survive);
+
+	FEdenMissionObjectiveConfig KeepFuel;
+	KeepFuel.ObjectiveId = FName("KeepFuel");
+	KeepFuel.ObjectiveType = EEdenObjectiveType::MaintainFuelAbove;
+	KeepFuel.TargetValue = 0.4f;
+	KeepFuel.bRequired = true;
+	KeepFuel.bActivateOnStart = true;
+	Config.Objectives.Add(KeepFuel);
+
+	TestTrue(TEXT("Mission loads"), Mission->LoadMission(Config));
+	TestTrue(TEXT("Mission starts"), Mission->StartMission());
+	TestEqual(TEXT("Starts Running with safe fuel"), Mission->GetMissionState(), EEdenMissionState::Running);
+
+	// Force authoritative fuel below threshold without mission setters.
+	Fuel->InitializeFuelSimulation([&]()
+	{
+		FEdenFuelConfig LowFuel = FuelConfig;
+		LowFuel.InitialFuelFraction = 0.1f;
+		return LowFuel;
+	}());
+
+	Clock->Tick(0.1f);
+	TestEqual(TEXT("Fuel fraction violation fails mission"), Mission->GetMissionState(), EEdenMissionState::Failed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionTypedPhasePayloadTest,
+	"Eden.Integration.Mission.TypedPhasePayload",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenMissionTypedPhasePayloadTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenMissionSubsystemTests::FScopedMissionWorld ScopedWorld;
+	UWorld* World = ScopedWorld.World;
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	Clock->SetFixedStepSeconds(0.1f);
+	Clock->SetMaxCatchUpSteps(4);
+	Clock->ResetSimulationClock();
+
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	FEdenMissionDefinitionConfig Config = EdenMissionSubsystemTests::MakeRequiredObjectiveDefinition(FName("TypedPhase"));
+
+	FEdenMissionEventConfig PhaseEvent;
+	PhaseEvent.EventId = FName("EnterWarning");
+	PhaseEvent.TriggerTimeSeconds = 0.1f;
+	PhaseEvent.CommandType = EEdenMissionCommandType::SetMissionPhase;
+	PhaseEvent.PhaseParameter = EEdenMissionPhase::Warning;
+	PhaseEvent.FloatParameter = 999.0f; // must be ignored
+	Config.Events.Add(PhaseEvent);
+
+	TestTrue(TEXT("Mission loads"), Mission->LoadMission(Config));
+	TestTrue(TEXT("Mission starts"), Mission->StartMission());
+	Clock->Tick(0.15f);
+
+	TestEqual(TEXT("Typed PhaseParameter is applied"), Mission->GetMissionPhase(), EEdenMissionPhase::Warning);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionLoadMissionBroadcastsActualPreviousStateTest,
+	"Eden.Integration.Mission.LoadMissionBroadcastsActualPreviousState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenMissionLoadMissionBroadcastsActualPreviousStateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UEdenMissionSubsystem* Mission = NewObject<UEdenMissionSubsystem>();
+	UEdenMissionTestListener* Listener = NewObject<UEdenMissionTestListener>();
+	Mission->OnMissionStateChanged.AddDynamic(Listener, &UEdenMissionTestListener::HandleMissionStateChanged);
+
+	FEdenMissionDefinitionConfig First = EdenMissionSubsystemTests::MakeRequiredObjectiveDefinition(FName("First"));
+	TestTrue(TEXT("First load"), Mission->LoadMission(First));
+	TestEqual(TEXT("First previous was Inactive"), Listener->PreviousStates.Last(), EEdenMissionState::Inactive);
+	TestEqual(TEXT("First new is Ready"), Listener->NewStates.Last(), EEdenMissionState::Ready);
+
+	FEdenMissionDefinitionConfig Second = EdenMissionSubsystemTests::MakeRequiredObjectiveDefinition(FName("Second"));
+	TestTrue(TEXT("Second load from Ready"), Mission->LoadMission(Second));
+	TestTrue(TEXT("Ready→Ready does not spam duplicate transition"), Listener->NewStates.Num() == 1);
 
 	return true;
 }

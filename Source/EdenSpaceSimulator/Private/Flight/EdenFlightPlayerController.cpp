@@ -11,10 +11,34 @@
 #include "InputActionValue.h"
 #include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Missions/EdenMissionSubsystem.h"
+#include "UObject/SoftObjectPath.h"
+
+namespace EdenFlightPlayerControllerMission
+{
+	static const TCHAR* DefaultSolarEventAssetPath = TEXT("/Game/Eden/Data/Missions/DA_SolarEventEmergency.DA_SolarEventEmergency");
+
+	UEdenMissionDefinitionDataAsset* ResolveDefaultMissionAsset(AEdenFlightPlayerController* Controller)
+	{
+		if (!Controller)
+		{
+			return nullptr;
+		}
+
+		if (UEdenMissionDefinitionDataAsset* Loaded = Controller->DefaultMissionDefinitionAsset.LoadSynchronous())
+		{
+			return Loaded;
+		}
+
+		const FSoftObjectPath FallbackPath(DefaultSolarEventAssetPath);
+		return Cast<UEdenMissionDefinitionDataAsset>(FallbackPath.TryLoad());
+	}
+}
 
 AEdenFlightPlayerController::AEdenFlightPlayerController()
 {
 	bShowMouseCursor = false;
+	DefaultMissionDefinitionAsset = TSoftObjectPtr<UEdenMissionDefinitionDataAsset>(
+		FSoftObjectPath(EdenFlightPlayerControllerMission::DefaultSolarEventAssetPath));
 }
 
 void AEdenFlightPlayerController::BeginPlay()
@@ -237,9 +261,21 @@ void AEdenFlightPlayerController::StartMission()
 
 	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Inactive)
 	{
-		const FEdenMissionDefinitionConfig SolarConfig = UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition();
-		MissionSubsystem->LoadMission(SolarConfig);
-		MissionSubsystem->RegisterWithSimulationClock();
+		UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+		if (!MissionAsset)
+		{
+			UE_LOG(
+				LogEdenFlight,
+				Warning,
+				TEXT("%s StartMission: default mission Data Asset is unavailable. Assign DefaultMissionDefinitionAsset or create DA_SolarEventEmergency."),
+				*GetNameSafe(this));
+			return;
+		}
+
+		if (!MissionSubsystem->LoadMissionFromDefinitionAsset(MissionAsset))
+		{
+			return;
+		}
 	}
 
 	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Ready)
@@ -263,10 +299,29 @@ void AEdenFlightPlayerController::RestartMission()
 		return;
 	}
 
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Running)
+	{
+		MissionSubsystem->AbortMission();
+	}
+
 	MissionSubsystem->ResetMission();
-	const FEdenMissionDefinitionConfig SolarConfig = UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition();
-	MissionSubsystem->LoadMission(SolarConfig);
-	MissionSubsystem->RegisterWithSimulationClock();
+
+	UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+	if (!MissionAsset)
+	{
+		UE_LOG(
+			LogEdenFlight,
+			Warning,
+			TEXT("%s RestartMission: default mission Data Asset is unavailable."),
+			*GetNameSafe(this));
+		return;
+	}
+
+	if (!MissionSubsystem->LoadMissionFromDefinitionAsset(MissionAsset))
+	{
+		return;
+	}
+
 	MissionSubsystem->StartMission();
 }
 

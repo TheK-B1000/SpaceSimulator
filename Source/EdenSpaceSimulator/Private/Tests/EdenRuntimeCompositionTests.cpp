@@ -6,6 +6,8 @@
 #include "Flight/EdenFlightTypes.h"
 #include "Flight/EdenPropulsionDemandSource.h"
 #include "Flight/EdenSpacecraftPawn.h"
+#include "Missions/EdenMissionDefinitionDataAsset.h"
+#include "Missions/EdenMissionSubsystem.h"
 #include "Systems/EdenFuelConfigDataAsset.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerConfigDataAsset.h"
@@ -19,6 +21,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Misc/AutomationTest.h"
 #include "UObject/Package.h"
+#include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -30,6 +33,7 @@ const TCHAR* PawnBlueprintClassPath = TEXT("/Game/Eden/Blueprints/BP_EdenSpacecr
 const TCHAR* FuelConfigPath = TEXT("/Game/Eden/Data/Systems/DA_EdenFuelConfig.DA_EdenFuelConfig");
 const TCHAR* PowerConfigPath = TEXT("/Game/Eden/Data/Systems/DA_EdenPowerConfig.DA_EdenPowerConfig");
 const TCHAR* ThermalConfigPath = TEXT("/Game/Eden/Data/Systems/DA_EdenThermalConfig.DA_EdenThermalConfig");
+const TCHAR* SolarEventMissionPath = TEXT("/Game/Eden/Data/Missions/DA_SolarEventEmergency.DA_SolarEventEmergency");
 
 struct FScopedRuntimeWorld
 {
@@ -402,6 +406,42 @@ bool FEdenRuntimeCompositionFlightResetClearsPossessedRuntimeStateTest::RunTest(
 	TestEqual(TEXT("Explicit pawn reset clears angular velocity"), Flight->GetAngularVelocityLocalDegreesPerSecond(), FVector::ZeroVector);
 	TestEqual(TEXT("Explicit pawn reset clears propulsion demand"), Flight->GetPropulsionDemandNormalized(), 0.0f);
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeMissionSubsystemAndSolarEventAssetAccessibleTest,
+	"Eden.Integration.Runtime.MissionSubsystemAndSolarEventAssetAccessible",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeMissionSubsystemAndSolarEventAssetAccessibleTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld ScopedWorld;
+	UWorld* World = ScopedWorld.Get();
+	TestNotNull(TEXT("World exists"), World);
+	if (!World)
+	{
+		return false;
+	}
+
+	UEdenSimulationClockSubsystem* Clock = World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+	TestNotNull(TEXT("Simulation clock subsystem exists"), Clock);
+	TestNotNull(TEXT("Mission subsystem exists"), Mission);
+
+	UEdenMissionDefinitionDataAsset* SolarEvent = Cast<UEdenMissionDefinitionDataAsset>(
+		FSoftObjectPath(EdenRuntimeCompositionTests::SolarEventMissionPath).TryLoad());
+	TestNotNull(TEXT("DA_SolarEventEmergency loads"), SolarEvent);
+	if (!SolarEvent || !Mission)
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("Single mission subsystem instance"), Mission, World->GetSubsystem<UEdenMissionSubsystem>());
+	TestTrue(TEXT("Mission loads Solar Event asset"), Mission->LoadMissionFromDefinitionAsset(SolarEvent));
+	TestEqual(TEXT("Active mission id is SolarCrisis"), Mission->GetActiveMissionId(), FName("SolarCrisis"));
 	return true;
 }
 
