@@ -9,12 +9,12 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E corrective proof ready for acceptance review |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint E accepted; Checkpoint F locked pending ProjectEden D and explicit authorization |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
 | Last successful validation | Repository validation PASS; Win64 Development Editor build PASS with explicit corrective `EdenOsTransportTests.cpp` compile and final up-to-date build; `Automation RunTests Eden.Integration.EdenOs.` PASS with 2 tests; `Automation RunTests Eden.Unit.EdenOs.Transport.` PASS with 10 tests; `Automation RunTests Eden.` PASS with 230 tests; `git diff --check` PASS; Source `LogTemp`, secret, scope, hardcoded URL, and blocking HTTP scans clean or limited to expected contract/async transport matches |
-| Next task | Review/accept ExecPlan 0007 Checkpoint E. Do not begin Checkpoint F until E is accepted and ProjectEden Checkpoint D is complete |
+| Next task | Wait for ProjectEden Checkpoint D completion and explicit Checkpoint F authorization. Do not begin F yet |
 
 ## Recovery protocol
 
@@ -56,7 +56,7 @@ Then read `AGENTS.md` and ExecPlan 0007.
 - 0007 Checkpoint A initial sink seam was rejected at `8209fbc`; remediation was accepted and pushed as `7a42fcf`.
 - 0007 Checkpoint B was accepted and pushed as `a63de4e`.
 - 0007 Checkpoint C was accepted and committed as `f66cda3`.
-- 0007 Checkpoint E was committed as `32c8f9a`, then held for one missing mission-level failure-isolation proof. The corrective proof is implemented for review directly on `main`.
+- 0007 Checkpoint E was committed as `32c8f9a`, then accepted at `75fcd90` after the mission-level failure-isolation proof.
 
 ### Latest Checkpoint E Evidence
 
@@ -101,4 +101,4 @@ Then read `AGENTS.md` and ExecPlan 0007.
 
 ### Next Clean Action
 
-Commit the Checkpoint E corrective proof directly on `main`, then wait for Checkpoint E acceptance. After approval, do not begin Checkpoint F until ProjectEden Checkpoint D is complete and both repositories are ready against the locked contract.
+Wait for ProjectEden Checkpoint D completion and explicit Checkpoint F authorization. Do not begin Checkpoint F until both repositories are ready against the locked contract.
