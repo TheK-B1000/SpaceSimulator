@@ -935,6 +935,38 @@ repeat same evaluationId
 
 If that passes end to end, H.1's skeleton is load-bearing. It is the regression test for `d6a07b6`, and it must not be satisfied by a fixture where the two timestamps are equal.
 
+### 19.4b H.1 audit — `c2ba6d6` NOT ACCEPTED
+
+Audited 2026-08-08 against §19.4a. Architecture cleared; one wire-contract defect.
+
+**Cleared:** plural route shape; route → service → reasoner → repository → DB layering; vendor-agnostic `AdvisoryReasoner` Protocol with the deterministic implementation honestly labelled a stub; `(session_id, evaluationId)` idempotency with no second reasoner invocation; 0.7/0.5 persisted distinctly; owner-scoped 404; completed-session 409; validation 422s; full API 319 passed; simulator 25 passed; Ruff/diff/credential scans; no I/J/K leakage.
+
+**Migration topology — verified by execution, not by suite label:**
+
+```text
+alembic heads          b7c8d9e0f1a2 (head)     exactly one
+fresh DB upgrade       → b7c8d9e0f1a2          OK
+downgrade -1           → a6b7c8d9e0f1          OK, advisory table dropped,
+                                               D/F session tables retained
+re-upgrade             → b7c8d9e0f1a2          OK, clean round trip
+c2ba6d6 under alembic/ one new file, +71        no historical migration modified
+```
+
+Real DDL carries the dual timestamp columns, `uq_mission_advisory_session_eval`, and the `snapshot <= evaluation` check — the invariant is enforced at storage, not only in Pydantic.
+
+**REJECTED — trigger vocabulary defect:**
+
+```text
+implemented   meaningful_operator_action
+locked        operator_action            (§19.2a)
+```
+
+Compounding it, `operator_action` and `mission_phase_transition` appear in **no test**; coverage exercises only `alert_transition`, `objective_transition`, and `heartbeat`. Unknown-value rejection is correctly proven (`warp_core_breach` → 422), so the vocabulary is closed — but closure cannot reveal a wrong spelling inside the closed set.
+
+**Root cause, recorded so the lesson survives:** the original H.1 brief listed the trigger in prose as "meaningful operator action". §19.2a, which fixed the wire spelling, was written afterwards and did not reach the implementer. The contract and the brief disagreed; the implementation followed the brief. Left unfixed, Unreal would send `operator_action` in Checkpoint I and receive a 422 — a break visible only once both repos are wired.
+
+**Remaining gate:** rename to `operator_action` with no alias, plus a test exercising all five locked values through the real request-validation path, keeping the unknown-rejection test. No architectural change.
+
 ### 19.5 REQUIRED H amendment before H.1 can be implemented faithfully
 
 H as accepted **cannot populate the two timestamps distinctly.**
