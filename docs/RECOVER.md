@@ -9,13 +9,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint K **accepted**; Checkpoint L authorized next; M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** — Checkpoint L **READY FOR ACCEPTANCE** at Unreal `87a5a97` / ProjectEden `d2822b2`; M locked |
 | Accepted Checkpoint I | `89d47da` + `89761fd` (+ docs `54b38dd`) |
 | Accepted Checkpoint J | `22f8bb9` (+ docs `964c54c`) |
 | Accepted Checkpoint K | `a50bcf1` (+ docs hash `48edc80`) |
+| Checkpoint L (ready, not accepted) | Unreal `87a5a97`; ProjectEden `d2822b2` |
 | ExecPlan 0004–0006 | Complete |
-| Last successful validation | K closeout: Win64 Dev Editor PASS; ExternalCommand unit 32/32; Integration ExternalCommand 25/25; `Eden.Unit.EdenOs.` 94/94; `Eden.Integration.EdenOs.` 31/31; full `Eden.` **322/322** exit 0; Validate-Project PASS |
-| Next task | Lock Checkpoint L contract (cross-project control transport into J/K), then implement. **Do not begin L code until the L brief is locked** |
+| Last successful validation | L: Win64 Dev Editor PASS; `Validate-Project.ps1 -Build -RunTests Eden.` PASS; live AuthorizedControl E2E PASS (`Saved/Automation/EdenOsLiveE2E/20260808-155507`); ProjectEden command-proposal + full API 361 passed; alembic head `c8d9e0f1a2b3` upgrade/downgrade/re-upgrade PASS |
+| Next task | Maintainer acceptance of L. **Do not begin M.** |
 
 ## Recovery protocol
 
@@ -26,7 +27,7 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
 ```
 
-Then read `AGENTS.md` and ExecPlan 0007 (§20–§21 J/K accepted; await L contract).
+Then read `AGENTS.md` and ExecPlan 0007 (§22 L contract; M locked).
 
 ## Safe Restart Rules
 
@@ -38,8 +39,9 @@ Then read `AGENTS.md` and ExecPlan 0007 (§20–§21 J/K accepted; await L contr
 - AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 - 0007 Unreal lane is one checkpoint at a time.
 - Checkpoints I, J, and K are accepted.
-- **Do not begin Checkpoint L implementation** until the maintainer locks the L transport contract and sends the brief.
-- Validated ≠ executed until an explicit authorized `ExecuteValidatedExternalCommand` call; external command wire remains L.
+- Checkpoint L is READY FOR ACCEPTANCE (not accepted until maintainer sign-off).
+- **M remains locked.**
+- Validated ≠ executed until an explicit authorized `ExecuteValidatedExternalCommand` call; L may dry-run validate without deferred execute.
 - 0007 proceeds directly on `main`.
 
 ## Current Known Risks
@@ -49,8 +51,10 @@ Then read `AGENTS.md` and ExecPlan 0007 (§20–§21 J/K accepted; await L contr
 - `ClearHistory()` remains explicit.
 - Advisory HTTP is gated to mission `Running`; late advisories may 409 vs SessionComplete.
 - `GetEventHistory()` returns by value — keep the `TArray` alive while holding pointers into it.
-- `bExternalCommandValidationEnabled` and `bExternalCommandExecutionEnabled` default false; neither auto-enables from AuthorizedControl alone.
-- Optional non-blocking J/K coverage follow-ups: ValidationHistory field asserts; Duplicate in multi-gate peel; K multi-gate precedence peel; dedicated flight negative test name; numeric Executed `SimulationTimeSeconds` assert.
+- `bExternalCommandValidationEnabled`, `bExternalCommandExecutionEnabled`, and `bExternalCommandAutomationEnabled` default false; none auto-enable from AuthorizedControl alone.
+- AuthorizedControl permits advisory evaluation (required for L accept→proposal chain); Observe still never evaluates.
+- Live L E2E uses deterministic ProjectEden reasoner via `EDEN_COMMAND_PROPOSAL_REASONER=test-load-shed` — not a production AI policy.
+- Optional non-blocking J/K coverage follow-ups remain soft notes only.
 
 ## Session Handoff
 
@@ -59,9 +63,9 @@ Then read `AGENTS.md` and ExecPlan 0007 (§20–§21 J/K accepted; await L contr
 - Checkpoint I accepted (advisory return path).
 - Checkpoint J accepted (`22f8bb9`): typed validation airlock with zero execution.
 - Checkpoint K accepted (`a50bcf1`): authorized execution through `UEdenExternalCommandExecutor` → `UEdenOperatorControlComponent`.
+- Checkpoint L READY FOR ACCEPTANCE: ProjectEden `/command-proposals` + Unreal automation → J → K; live round-trip Normal→Shed proved.
 
-### Next (authorized, contract-first)
+### Next (authorized)
 
-- **L** — cross-project control transport: carefully guarded path for ProjectEden to hand a typed proposal across the network into the existing J/K machinery.
-- Must lock before code: wire schema, auth, correlation to session/evaluation, rate/safety at the transport edge, and proof that L cannot bypass J validation or K execution gates.
-- M remains locked.
+- Accept L (record commit hashes after feature commits land).
+- **M remains locked.**

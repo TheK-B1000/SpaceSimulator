@@ -2,9 +2,9 @@
 
 ## Status
 
-**In Progress - Checkpoint K accepted; Checkpoint L authorized next; M remains locked.**
+**READY FOR ACCEPTANCE — Checkpoint L; M remains locked.**
 
-Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J/K are accepted. Checkpoint J (`22f8bb9`) is the validated-command airlock. Checkpoint K (`a50bcf1`) is the authorized execution bridge: validated artifact → `UEdenOperatorControlComponent` → optional `EdenExternalCommandExecuted`. Validation alone still never mutates the ship. Checkpoint L (cross-project control transport) is authorized next. M remains locked.
+Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I/J/K are accepted. Checkpoint J (`22f8bb9`) is the validated-command airlock. Checkpoint K (`a50bcf1`) is the authorized execution bridge: validated artifact → `UEdenOperatorControlComponent` → optional `EdenExternalCommandExecuted`. Validation alone still never mutates the ship. Checkpoint L connects ProjectEden typed `/command-proposals` to that J/K chain (Unreal remains the HTTP client). **M remains locked.**
 
 Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`; its corrective wire-contract alignment was accepted at `3f69f9b`. Checkpoint E implementation was committed at `32c8f9a`; the follow-up mission-level failure-isolation proof was accepted at `75fcd90`. Checkpoint F implementation commit `63768ab` plus corrective proof commit `5249a6a` are accepted.
 
@@ -664,7 +664,9 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 
 2026-08-08: Checkpoint K implemented for review (READY FOR ACCEPTANCE). Locked contract: same three allowlisted commands; `bExternalCommandExecutionEnabled` defaults false; triple gate `AuthorizedControl ∧ validation ∧ execution`; no per-command confirm dialog; execution consumes immutable `FEdenValidatedExternalCommand` only (J Valid path now binds typed parameters); evaluation-scoped cooldown (one apply per EvaluationId×CommandType); execution-time stale revalidation; at-most-one operator apply attempt per ProposalId; NoOpAlreadySatisfied without setter/Executed event; convergence only via `UEdenOperatorControlComponent`; EDEN provenance `EdenAuthorizedControl` does not emit human `OperatorCommandIssued` / `operator_action`; success emits exactly one `EdenExternalCommandExecuted`; no automatic Valid→Execute; no ProjectEden command HTTP (L locked). Owner: `UEdenExternalCommandExecutor`. Focused ExternalCommand unit 32/32; Integration ExternalCommand 25/25; Unit EdenOs 94/94; Integration EdenOs 31/31; full `Eden.` **322/322** exit 0. Win64 Development Editor build + Validate-Project passed. Source inspection: executor mutates only through operator setters; Validate path still does not execute. **L remains locked.** See §21.
 
-2026-08-08: Checkpoint K accepted at `a50bcf1 feat(eden): execute authorized validated commands` (+ docs hash `48edc80`). Final architecture audit confirmed validated-artifact-only execution, separate explicit Execute API, three-part authorization gate with execution default false, execution-time session/evaluation revalidation, evaluation-scoped anti-thrashing, mark-before-setter exactly-once apply attempt, terminal ConvergenceFailed, NoOpAlreadySatisfied without setter or Executed telemetry, sole mutation via 0005 `UEdenOperatorControlComponent` setters, `EdenAuthorizedControl` provenance (no human `operator_action`), exactly one `EdenExternalCommandExecuted` on successful convergence, and zero ProjectEden command transport. Soft non-blocking coverage notes (multi-gate precedence peel fixture; dedicated flight negative test name; numeric `SimulationTimeSeconds` assert) do not block acceptance. Checkpoint L (cross-project control transport into the J/K boundary) is authorized next. M remains locked. Do not begin L until the locked L contract brief is sent.
+2026-08-08: Checkpoint K accepted at `a50bcf1 feat(eden): execute authorized validated commands` (+ docs hash `48edc80`). Final architecture audit confirmed validated-artifact-only execution, separate explicit Execute API, three-part authorization gate with execution default false, execution-time session/evaluation revalidation, evaluation-scoped anti-thrashing, mark-before-setter exactly-once apply attempt, terminal ConvergenceFailed, NoOpAlreadySatisfied without setter or Executed telemetry, sole mutation via 0005 `UEdenOperatorControlComponent` setters, `EdenAuthorizedControl` provenance (no human `operator_action`), exactly one `EdenExternalCommandExecuted` on successful convergence, and zero ProjectEden command transport. Soft non-blocking coverage notes (multi-gate precedence peel fixture; dedicated flight negative test name; numeric `SimulationTimeSeconds` assert) do not block acceptance. Checkpoint L (cross-project control transport into the J/K boundary) is authorized next. M remains locked.
+
+2026-08-08: Checkpoint L implemented for review (**READY FOR ACCEPTANCE**). Unreal `87a5a97 feat(eden): automate typed external commands`; ProjectEden `d2822b2 feat(commands): add mission command proposal api`. Unreal remains HTTP client; ProjectEden adds `POST /api/missions/sessions/{session_id}/command-proposals` with 201/200/204, exact locked wire vocabulary, `NoCommandProposalReasoner` default + deterministic test/dev load-shed fixture, Alembic `c8d9e0f1a2b3` (`mission_command_proposals`, UNIQUE session+evaluation / proposalId). Unreal adds `bExternalCommandAutomationEnabled` (default false); after accepted advisory → proposal HTTP → parse → mandatory J → optional K; dry-run has no deferred execute queue; one request/evaluation; no NL→command; no inbound Unreal command server; no `/command-results` (feedback via existing `/events` + `EdenExternalCommandExecuted`). Live AuthorizedControl E2E PASS (`Saved/Automation/EdenOsLiveE2E/20260808-155507`): Normal→Shed, one Executed, one persisted proposal. Unreal `Validate-Project.ps1 -Build -RunTests -TestFilter Eden.` PASS; ProjectEden focused command-proposal + full API 361 passed; sqlite alembic upgrade/downgrade/re-upgrade PASS; single head `c8d9e0f1a2b3`. **M remains locked. Not accepted until maintainer acceptance.** Do not begin L until the locked L contract brief is sent.
 
 ---
 
@@ -1120,6 +1122,82 @@ ExecutionDisabled → ValidationBoundaryDisabled → WrongAuthorityMode → Inva
 
 `UEdenExternalCommandExecutor` owns apply-attempted ProposalIds, evaluation/command-type keys, and execution audit history. Clears/rebinds on session identity change. Does not duplicate mission/advisory/operator truth.
 
-### 21.10 L remains locked
+### 21.10 L was locked during K
 
-No cross-project command transport in K.
+No cross-project command transport in K. L owns that seam.
+
+---
+
+## 22. Checkpoint L — cross-project typed command automation (locked contract)
+
+### 22.1 Network direction
+
+Unreal remains the HTTP client. ProjectEden never opens an inbound Unreal command server.
+
+```text
+Unreal ──HTTP──> ProjectEden
+```
+
+### 22.2 ProjectEden route
+
+Exact route (no `/api/v1/`, no `/api/simulator/`):
+
+```text
+POST /api/missions/sessions/{session_id}/command-proposals
+```
+
+Request v1: `{ "schemaVersion": 1, "evaluationId": "..." }` only. Advisory `/advisories` response contract stays frozen.
+
+Responses: `201 Created` (new), `200 OK` (idempotent same ProposalId/payload), `204 No Content` (legitimate no proposal).
+
+### 22.3 Locked wire vocabulary
+
+Commands (exact, case-sensitive):
+
+- `set_thermal_control_mode` → `off` | `nominal` | `boost` | `emergency`
+- `set_load_shed_mode` → `normal` | `shed`
+- `set_propulsion_priority_mode` → `full` | `reduced`
+
+No aliases. No case-insensitive parsing. Unreal maps onto existing J enums.
+
+### 22.4 ProjectEden architecture
+
+```text
+route → CommandProposalService → CommandProposalReasoner → MissionCommandProposalRepository → DB
+```
+
+Reasoner is vendor-neutral and uses **structured persisted advisory context** for the evaluation. It does **not** parse recommendation/rationale prose.
+
+Production/default: `NoCommandProposalReasoner` → no proposal. Live/test fixture: deterministic load-shed reasoner via `EDEN_COMMAND_PROPOSAL_REASONER=test-load-shed` (test/dev infrastructure, not production AI policy). Canonical fixture: `set_load_shed_mode` / `shed`.
+
+Persistence: `UNIQUE(session, evaluationId)`, `UNIQUE(proposalId)`. ProjectEden does not own Executed / Applied / CurrentOperatorMode.
+
+### 22.5 Unreal automation gates
+
+- `bExternalCommandAutomationEnabled` defaults **false**
+- Proposal HTTP requires: `AuthorizedControl ∧ validation ∧ automation`
+- Auto-execution additionally requires: `execution`
+- Dry-run (automation on, execution off): request → parse → J validate → STOP (no deferred execute queue)
+- Timing: only after accepted advisory for the same EvaluationId; one automatic request attempt per evaluation in 0007
+- Stale/session/authority/automation-disabled responses must not act
+
+### 22.6 J and K remain mandatory
+
+```text
+wire → FEdenExternalCommandProposal → ValidateExternalCommandProposal
+     → (optional) ExecuteValidatedExternalCommand → UEdenOperatorControlComponent
+```
+
+L must not construct `FEdenValidatedExternalCommand` from network data, call operator setters directly, or bypass K.
+
+### 22.7 Feedback loop
+
+No bespoke `/command-results`. Successful K convergence emits `EdenExternalCommandExecuted`, delivered through the existing mission `/events` telemetry path. Provenance remains `EdenAuthorizedControl` (no human `OperatorCommandIssued`).
+
+### 22.8 Live proof evidence
+
+Live AuthorizedControl E2E (`scripts/Run-EdenOsLiveE2E.ps1 -AuthorityMode AuthorizedControl`) proved: advisory → 201 command proposal → J Valid → K Executed → LoadShed `Normal→Shed` → exactly one `EdenExternalCommandExecuted` → ProjectEden persisted one proposal → ordinary events transport closed the loop. Evidence dir example: `Saved/Automation/EdenOsLiveE2E/20260808-155507` (JWT never logged).
+
+### 22.9 M remains locked
+
+Do not begin M until L is accepted.
