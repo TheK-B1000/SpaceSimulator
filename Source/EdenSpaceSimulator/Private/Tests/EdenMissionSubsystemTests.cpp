@@ -12,6 +12,8 @@
 #include "Systems/EdenThermalSystemComponent.h"
 #include "UObject/Package.h"
 
+#include <limits>
+
 #if WITH_DEV_AUTOMATION_TESTS
 
 namespace EdenMissionSubsystemTests
@@ -719,6 +721,7 @@ bool FEdenMissionInvalidCommandPayloadFailsSafelyTest::RunTest(const FString& Pa
 	InvalidEvent.FloatParameter = std::numeric_limits<float>::quiet_NaN();
 	InvalidConfig.Events.Add(InvalidEvent);
 
+	AddExpectedError(TEXT("FloatParameter must be finite"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestFalse(TEXT("Definition with non-finite payload is rejected at load"), MissionSubsystem->LoadMission(InvalidConfig));
 
 	FEdenMissionDefinitionConfig RuntimeConfig = EdenMissionSubsystemTests::MakeRequiredObjectiveDefinition(FName("RuntimeSanitizedMission"));
@@ -731,6 +734,7 @@ bool FEdenMissionInvalidCommandPayloadFailsSafelyTest::RunTest(const FString& Pa
 
 	TestTrue(TEXT("Finite negative payload loads"), MissionSubsystem->LoadMission(RuntimeConfig));
 	TestTrue(TEXT("Mission starts"), MissionSubsystem->StartMission());
+	AddExpectedError(TEXT("sanitized requested external heating rate"), EAutomationExpectedErrorFlags::Contains, 1);
 	Clock->Tick(0.15f);
 
 	TestEqual(

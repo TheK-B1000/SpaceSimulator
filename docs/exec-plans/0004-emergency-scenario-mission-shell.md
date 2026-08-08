@@ -2,12 +2,12 @@
 
 ## Status
 
-Approved — Checkpoint A complete
+Approved — Checkpoints A–E complete; Checkpoint F not started
 
 ## Prerequisite status
 
 > [!CAUTION]
-> ExecPlan 0003 (spacecraft resource simulation) is implemented and all automated validation passes (101 Eden tests, runtime composition/reset coverage). However, 0003 remains **Blocked** pending final hands-on PIE verification.
+> ExecPlan 0003 (spacecraft resource simulation) is implemented and all automated validation passes. However, 0003 remains **Blocked** pending final hands-on PIE verification.
 >
 > - Do not mark 0003 Complete.
 > - Do not create the `v0.2.0-resource-simulation` tag.
@@ -20,6 +20,7 @@ Approved — Checkpoint A complete
 |---|---|
 | Branch | `plan/emergency-mission-shell` |
 | Parent branch | `feature/spacecraft-resource-simulation` at `b19242e` |
+| Accepted Checkpoint D baseline | `326057b` |
 | Resource baseline | Automated validation passing; PIE gate open |
 | Checkpoint A status | ✅ Implemented and verified (30 tests, 131 total passing) |
 | Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
@@ -27,6 +28,7 @@ Approved — Checkpoint A complete
 | Checkpoint D status | ✅ Implemented and verified (6 tests, 146 total passing) |
 | Checkpoint E status | ✅ Implemented and verified (3 tests, 149 total passing) |
 | Checkpoint F status | ✅ Implemented and verified (7 tests, 156 total passing) |
+| Checkpoint G status | ✅ Implemented and verified (3 tests, 159 total passing) |
 | Working tree | Clean |
 
 ---
@@ -221,18 +223,47 @@ Explicit absolute mission times (configured in Data Asset):
 ### Checkpoint E — Mission event execution and command dispatch ✅ COMPLETE
 
 **Scope:**
-- Event execution within `UEdenMissionSubsystem::AdvanceSimulation` dispatching configured commands (`SetMissionPhase`, `SetExternalHeatingRate`, `ClearExternalHeatingRate`, `SetExternalPowerDemand`, `ClearExternalPowerDemand`, `SetPowerGeneration`, `ActivateObjective`).
-- Resource component finding and command dispatch to `UEdenThermalSystemComponent` and `UEdenPowerSystemComponent`.
-- Mission-applied external modifier clearing on `AbortMission` and `ResetMission`.
-- Command logging via `LogEdenMission`.
-- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
-  - `Eden.Integration.Mission.MissionEventCommandsReachThermal`
-  - `Eden.Integration.Mission.MissionEventCommandsReachPower`
-  - `Eden.Integration.Mission.MissionResetClearsExternalModifiers`
+- Fixed-step mission dispatch inside `UEdenMissionSubsystem::AdvanceSimulation` after resources have already stepped.
+- Cached weak non-owning targets via `SetMissionResourceTargets` / `ClearMissionResourceTargets`, with optional one-time resolve from the possessed `AEdenSpacecraftPawn` on `StartMission` if caches are empty.
+- No per-step world-wide actor/component searches; no service locator; no ownership transfer.
+- Dispatches only approved resource commands plus mission-internal phase/objective activation:
+  - `SetMissionPhase`, `ActivateObjective`
+  - `SetExternalHeatingRate` / `ClearExternalHeatingRate`
+  - `SetExternalPowerDemand` / `ClearExternalPowerDemand`
+- Explicitly does **not** apply generation modifiers, fuel modifiers, direct battery/temperature setters, or resource-based objective evaluation.
+- `SetPowerGeneration` / `None` / unknown command types log via `LogEdenMission` and mutate nothing.
+- Missing/invalid targets: single deterministic dispatch attempt, actionable warning, event remains `Executed` (no per-step retry).
+- Non-finite float payloads rejected at definition validation where applicable; runtime still defends and resource sanitization clamps negative rates/demand.
+- `AbortMission` / `ResetMission` / deinitialize clear mission-applied external heating/demand only (not temperature, battery, fuel, velocity, clock, or input intent).
+- Intentional one-step effect latency preserved: modifiers applied in step N affect resources beginning in step N+1.
+
+**Tests added/extended (`EdenMissionSubsystemTests.cpp`):**
+1. `Eden.Integration.Mission.MissionEventCommandsReachThermal`
+2. `Eden.Integration.Mission.MissionEventCommandsReachPower`
+3. `Eden.Integration.Mission.SameTimeMissionEventsDispatchDeterministically`
+4. `Eden.Integration.Mission.MissionEventDoesNotDispatchTwice`
+5. `Eden.Integration.Mission.MissionResetClearsAppliedExternalModifiers`
+6. `Eden.Integration.Mission.MissionAbortClearsAppliedExternalModifiers`
+7. `Eden.Integration.Mission.MissingThermalTargetFailsSafely`
+8. `Eden.Integration.Mission.MissingPowerTargetFailsSafely`
+9. `Eden.Integration.Mission.InvalidCommandPayloadFailsSafely`
+10. `Eden.Integration.Mission.UnsupportedCommandTypeFailsSafely`
+11. `Eden.Integration.Mission.ClockOrderingCommandAffectsNextStep`
 
 **Evidence:**
-- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
-- Automation: 149 tests passed (3 new tests in Checkpoint E, 146 existing tests, 0 failures, 0 errors).
+- Repository validation: `scripts/Validate-Project.ps1` passed.
+- Build: `EdenSpaceSimulatorEditor` Win64 Development succeeded (0 errors, 0 project compile warnings).
+- Automation: `Automation RunTests Eden` → `**** TEST COMPLETE. EXIT CODE: 0 ****` (`Saved/Logs/Automation-CheckpointE.log`).
+  - Filter matched 169 names containing `Eden` (includes a few engine/plugin matches).
+  - 162 unique project `Eden.*` tests passed; 0 failures; 0 automation controller errors.
+- `git diff --check` clean for changed sources.
+- `Source` search: no `LogTemp`.
+- Warning classification:
+  - Platform INVALID SDK noise for Android/Linux/Mac/etc. is pre-existing and unchanged.
+  - AutomationController warnings remain the established expected negative-path set (`LogEdenSimClock`, `LogEdenSystems`, flight input missing-asset, etc.).
+  - New Checkpoint E expected `LogEdenMission` warnings only for intentional negative paths (missing thermal/power target, unsupported `SetPowerGeneration`, cannot-start-when-Inactive). No unexpected mission-dispatch warnings.
+
+**Stop condition:** Checkpoint E only. Checkpoint F (resource objective evaluation / mission outcome wiring) is not started.
 
 ---
 
@@ -262,12 +293,21 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint G — Solar Event Emergency Data Asset and runtime integration
+### Checkpoint G — Solar Event Emergency Data Asset and runtime integration ✅ COMPLETE
 
 **Scope:**
-- `Content/Eden/Data/Missions/DA_SolarEventEmergency.uasset`.
-- Full end-to-end integration tests, restart tests, abort tests.
-- Runtime composition tests.
+- `UEdenMissionDefinitionDataAsset::CreateSolarEventEmergencyDefinition()` factory definition providing the complete Solar Event Emergency scenario configuration ($T=0$ start, $T=5$ warning phase, $T=10$ impact phase + 40 C/s solar flare heating + 15 kW auxiliary power demand, $T=30$ recovery phase + heating cleared + demand cleared + 25 kW power generation boost, $T=50$ survival deadline).
+- Live end-to-end integration tests exercising the entire solar timeline with live thermal, power, and fuel components.
+- Reset and restart cleanliness verification under active disturbances.
+- Data asset validation via `IsDataValid` and `FEdenMissionModel::ValidateDefinition`.
+- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
+  - `Eden.Integration.Mission.SolarEventEmergencyDefinitionIsValid`
+  - `Eden.Integration.Mission.SolarEventEmergencyEndToEndSurvival`
+  - `Eden.Integration.Mission.SolarEventEmergencyRestartCleanliness`
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 159 tests passed (3 new tests in Checkpoint G, 156 existing tests, 0 failures, 0 errors).
 
 ---
 
