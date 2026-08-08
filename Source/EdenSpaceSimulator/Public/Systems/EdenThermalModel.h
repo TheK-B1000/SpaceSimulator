@@ -52,6 +52,9 @@ struct EDENSPACESIMULATOR_API FEdenThermalStateSnapshot
 	float DissipationDegreesCelsiusPerSecond = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
 	EEdenThermalState ThermalState = EEdenThermalState::Overheated;
 };
 
@@ -63,6 +66,7 @@ struct EDENSPACESIMULATOR_API FEdenThermalStepResult
 	bool bDeltaTimeWasValid = true;
 	bool bHeatGenerationWasSanitized = false;
 	bool bDissipationWasSanitized = false;
+	bool bExternalHeatingRateWasSanitized = false;
 	bool bTemperatureWasSanitized = false;
 };
 
@@ -80,7 +84,8 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 		const FEdenThermalConfig& Config,
 		float TemperatureCelsius,
 		float HeatGenerationDegreesCelsiusPerSecond,
-		float DissipationDegreesCelsiusPerSecond);
+		float DissipationDegreesCelsiusPerSecond,
+		float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f);
 	static FEdenThermalStateSnapshot MakeInitialSnapshot(const FEdenThermalConfig& Config);
 	static FEdenThermalStepResult Step(
 		const FEdenThermalConfig& Config,

@@ -11,6 +11,7 @@
 struct FInputActionValue;
 class UInputAction;
 class UInputMappingContext;
+class UEdenMissionDefinitionDataAsset;
 
 UCLASS(BlueprintType, Blueprintable)
 class EDENSPACESIMULATOR_API AEdenFlightPlayerController : public APlayerController
@@ -32,6 +33,19 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	FEdenFlightInputCommand GetCurrentFlightInputCommand() const;
+
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void StartMission();
+
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void RestartMission();
+
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void AbortMission();
+
+	/** Default mission definition loaded by StartMission/RestartMission. Soft reference; no hard package dependency. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Mission")
+	TSoftObjectPtr<UEdenMissionDefinitionDataAsset> DefaultMissionDefinitionAsset;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Flight|Input")
@@ -63,13 +77,7 @@ private:
 	void HandleRotateReleased(const FInputActionValue& Value);
 	void HandleStabilizeStarted(const FInputActionValue& Value);
 	void LogMissingInputAssetState();
-#if !UE_BUILD_SHIPPING
-	void TryEnableEdenSystemsDebugDisplay();
-#endif
 
 	bool bLoggedMissingInputAssetState = false;
 	bool bLoggedUnexpectedPawnState = false;
-#if !UE_BUILD_SHIPPING
-	bool bEdenSystemsDebugDisplayEnabled = false;
-#endif
 };

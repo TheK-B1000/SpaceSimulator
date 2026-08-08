@@ -65,7 +65,9 @@ Rules:
 - External adapters may fail without corrupting authoritative simulation state.
 - No circular dependencies.
 
-## 4. Proposed runtime responsibilities
+## 4. Runtime responsibilities
+
+This section is the architecture contract for runtime roles. Several listed owners are already implemented (`AEdenSpacecraftPawn`, flight movement, fuel/power/thermal, simulation clock, mission subsystem). Telemetry subsystem/sink ownership and later production UI remain approved future boundaries until verified elsewhere.
 
 ### `AEdenSpacecraftPawn`
 
@@ -142,11 +144,13 @@ Initial fixed step: 0.1 seconds, subject to validation and profiling.
 
 Responsibilities:
 
-- Owns mission phase, objectives, success, and failure state.
-- Loads or receives a mission definition.
-- Triggers failure commands through public system APIs.
-- Records mission events.
-- Supports restart/reset.
+- World-scoped subsystem registered with `UEdenSimulationClockSubsystem` at Priority 100 (`EdenSimulationClockPriority::Mission`), stepping deterministically after Priority 0 resource systems.
+- Owns mission lifecycle (`Inactive`, `Ready`, `Running`, `Succeeded`, `Failed`), mission phase (`Nominal`, `Warning`, `Impact`, `Recovery`, `Resolved`), elapsed time, and runtime event/objective state.
+- Loads or receives data-driven mission definitions (`UEdenMissionDefinitionDataAsset` / `FEdenMissionDefinitionConfig`).
+- Delegates pure deterministic state stepping, validation, and objective/outcome evaluation to `FEdenMissionModel`.
+- Dispatches disturbances and commands to authoritative resource components via narrow public APIs (`SetExternalHeatingRateDegreesCelsiusPerSecond`, `ClearExternalHeatingRate`, `SetExternalDemandKilowatts`, `ClearExternalDemand`).
+- Treats `SetPowerGeneration` as unsupported for the emergency-mission milestone; unsupported commands must not mutate resource state.
+- Guarantees clean restart/reset by clearing mission-applied external modifiers on abort, reset, or deinitialization.
 
 ### `UEdenTelemetrySubsystem`
 
@@ -174,7 +178,7 @@ Responsibilities:
 - Send commands through controller, pawn, or explicit application APIs.
 - Never become the source of truth.
 
-Development-only `ShowDebug EdenSystems` is a read-only debug surface. It reads immutable debug snapshots through narrow query methods and must not mutate clock, flight, fuel, power, or thermal state. Active debug drawing is compiled out of shipping builds.
+Development-only `ShowDebug EdenSystems` and `ShowDebug EdenMission` are read-only debug surfaces rendered via `AEdenFlightHUD`. They read immutable debug snapshots through narrow query methods and must not mutate clock, flight, fuel, power, thermal, or mission state. Active debug drawing is compiled out of shipping builds.
 
 ## 5. State ownership matrix
 

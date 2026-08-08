@@ -7,13 +7,38 @@
 #include "EnhancedInputSubsystems.h"
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenSpacecraftPawn.h"
-#include "GameFramework/HUD.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
+#include "Missions/EdenMissionDefinitionDataAsset.h"
+#include "Missions/EdenMissionSubsystem.h"
+#include "UObject/SoftObjectPath.h"
+
+namespace EdenFlightPlayerControllerMission
+{
+	static const TCHAR* DefaultSolarEventAssetPath = TEXT("/Game/Eden/Data/Missions/DA_SolarEventEmergency.DA_SolarEventEmergency");
+
+	UEdenMissionDefinitionDataAsset* ResolveDefaultMissionAsset(AEdenFlightPlayerController* Controller)
+	{
+		if (!Controller)
+		{
+			return nullptr;
+		}
+
+		if (UEdenMissionDefinitionDataAsset* Loaded = Controller->DefaultMissionDefinitionAsset.LoadSynchronous())
+		{
+			return Loaded;
+		}
+
+		const FSoftObjectPath FallbackPath(DefaultSolarEventAssetPath);
+		return Cast<UEdenMissionDefinitionDataAsset>(FallbackPath.TryLoad());
+	}
+}
 
 AEdenFlightPlayerController::AEdenFlightPlayerController()
 {
 	bShowMouseCursor = false;
+	DefaultMissionDefinitionAsset = TSoftObjectPtr<UEdenMissionDefinitionDataAsset>(
+		FSoftObjectPath(EdenFlightPlayerControllerMission::DefaultSolarEventAssetPath));
 }
 
 void AEdenFlightPlayerController::BeginPlay()
@@ -28,10 +53,6 @@ void AEdenFlightPlayerController::BeginPlay()
 void AEdenFlightPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
-
-#if !UE_BUILD_SHIPPING
-	TryEnableEdenSystemsDebugDisplay();
-#endif
 
 	AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
 	if (!SpacecraftPawn)
@@ -68,10 +89,6 @@ void AEdenFlightPlayerController::OnPossess(APawn* InPawn)
 	{
 		SpacecraftPawn->ResetFlightState();
 	}
-
-#if !UE_BUILD_SHIPPING
-	TryEnableEdenSystemsDebugDisplay();
-#endif
 }
 
 void AEdenFlightPlayerController::OnUnPossess()
@@ -227,28 +244,98 @@ void AEdenFlightPlayerController::LogMissingInputAssetState()
 	}
 }
 
-#if !UE_BUILD_SHIPPING
-void AEdenFlightPlayerController::TryEnableEdenSystemsDebugDisplay()
+void AEdenFlightPlayerController::StartMission()
 {
-	if (bEdenSystemsDebugDisplayEnabled)
+	UWorld* World = GetWorld();
+	if (!World)
 	{
 		return;
 	}
 
-	AHUD* HUD = GetHUD();
-	if (!HUD)
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (!MissionSubsystem)
 	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s StartMission: UEdenMissionSubsystem not found in world."), *GetNameSafe(this));
 		return;
 	}
 
-	static const FName EdenSystemsDebugName(TEXT("EdenSystems"));
-	HUD->ShowDebug(EdenSystemsDebugName);
-	bEdenSystemsDebugDisplayEnabled = true;
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Inactive)
+	{
+		UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+		if (!MissionAsset)
+		{
+			UE_LOG(
+				LogEdenFlight,
+				Warning,
+				TEXT("%s StartMission: default mission Data Asset is unavailable. Assign DefaultMissionDefinitionAsset or create DA_SolarEventEmergency."),
+				*GetNameSafe(this));
+			return;
+		}
 
-	UE_LOG(
-		LogEdenSystems,
-		Log,
-		TEXT("%s enabled ShowDebug EdenSystems. Resource values appear on the viewport overlay, not as per-frame Output Log spam. Toggle with `ShowDebug EdenSystems`."),
-		*GetNameSafe(this));
+		if (!MissionSubsystem->LoadMissionFromDefinitionAsset(MissionAsset))
+		{
+			return;
+		}
+	}
+
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Ready)
+	{
+		MissionSubsystem->StartMission();
+	}
 }
-#endif
+
+void AEdenFlightPlayerController::RestartMission()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (!MissionSubsystem)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s RestartMission: UEdenMissionSubsystem not found in world."), *GetNameSafe(this));
+		return;
+	}
+
+	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Running)
+	{
+		MissionSubsystem->AbortMission();
+	}
+
+	MissionSubsystem->ResetMission();
+
+	UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+	if (!MissionAsset)
+	{
+		UE_LOG(
+			LogEdenFlight,
+			Warning,
+			TEXT("%s RestartMission: default mission Data Asset is unavailable."),
+			*GetNameSafe(this));
+		return;
+	}
+
+	if (!MissionSubsystem->LoadMissionFromDefinitionAsset(MissionAsset))
+	{
+		return;
+	}
+
+	MissionSubsystem->StartMission();
+}
+
+void AEdenFlightPlayerController::AbortMission()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (MissionSubsystem)
+	{
+		MissionSubsystem->AbortMission();
+	}
+}

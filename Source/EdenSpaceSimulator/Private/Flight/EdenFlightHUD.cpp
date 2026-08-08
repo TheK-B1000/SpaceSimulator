@@ -1,11 +1,9 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #include "Flight/EdenFlightHUD.h"
 
-#include "Core/EdenLogCategories.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Flight/EdenSpacecraftPawn.h"
+#include "Missions/EdenMissionSubsystem.h"
 #include "Systems/EdenResourceDebugTypes.h"
 #include "UObject/UnrealType.h"
 
@@ -13,6 +11,7 @@
 namespace EdenFlightHUDDebug
 {
 const FName EdenSystemsDebugName(TEXT("EdenSystems"));
+const FName EdenMissionDebugName(TEXT("EdenMission"));
 
 FString BoolText(bool bValue)
 {
@@ -32,50 +31,23 @@ AEdenFlightHUD::AEdenFlightHUD()
 	bShowHUD = true;
 }
 
-void AEdenFlightHUD::BeginPlay()
-{
-	Super::BeginPlay();
-
-#if !UE_BUILD_SHIPPING
-	EnableEdenSystemsDebugDisplay();
-#endif
-}
-
-void AEdenFlightHUD::ShowDebug(FName DebugType)
-{
-	Super::ShowDebug(DebugType);
-}
-
 void AEdenFlightHUD::DrawHUD()
 {
 	Super::DrawHUD();
 
 #if !UE_BUILD_SHIPPING
-	if (!bRequestedDefaultEdenSystemsDebug)
-	{
-		EnableEdenSystemsDebugDisplay();
-	}
-
 	if (ShouldDisplayDebug(EdenFlightHUDDebug::EdenSystemsDebugName))
 	{
 		DrawEdenSystemsOverlay();
+	}
+	if (ShouldDisplayDebug(EdenFlightHUDDebug::EdenMissionDebugName))
+	{
+		DrawEdenMissionOverlay();
 	}
 #endif
 }
 
 #if !UE_BUILD_SHIPPING
-void AEdenFlightHUD::EnableEdenSystemsDebugDisplay()
-{
-	bRequestedDefaultEdenSystemsDebug = true;
-	ShowDebug(EdenFlightHUDDebug::EdenSystemsDebugName);
-
-	UE_LOG(
-		LogEdenSystems,
-		Log,
-		TEXT("%s requested ShowDebug EdenSystems. Resource overlay draws on the flight HUD viewport."),
-		*GetNameSafe(this));
-}
-
 void AEdenFlightHUD::DrawEdenSystemsOverlay()
 {
 	if (!Canvas || !PlayerOwner)
@@ -149,5 +121,154 @@ void AEdenFlightHUD::DrawEdenSystemsOverlay()
 			Snapshot.Thermal.DissipationDegreesCelsiusPerSecond,
 			*EdenFlightHUDDebug::EnumText(Snapshot.Thermal.ThermalState)),
 		FColor::Orange);
+
+	const UEdenMissionSubsystem* MissionSubsystem = GetWorld() ? GetWorld()->GetSubsystem<UEdenMissionSubsystem>() : nullptr;
+	if (MissionSubsystem && MissionSubsystem->GetMissionState() != EEdenMissionState::Inactive)
+	{
+		DrawLine(
+			FString::Printf(
+				TEXT("Mission: ID='%s' State=%s Phase=%s Elapsed=%.2fs Running=%s"),
+				*MissionSubsystem->GetActiveMissionId().ToString(),
+				*EdenFlightHUDDebug::EnumText(MissionSubsystem->GetMissionState()),
+				*EdenFlightHUDDebug::EnumText(MissionSubsystem->GetMissionPhase()),
+				MissionSubsystem->GetMissionElapsedTimeSeconds(),
+				*EdenFlightHUDDebug::BoolText(MissionSubsystem->IsMissionRunning())),
+			FColor::Magenta);
+	}
+}
+
+void AEdenFlightHUD::DrawEdenMissionOverlay()
+{
+	if (!Canvas || !PlayerOwner)
+	{
+		return;
+	}
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const UEdenMissionSubsystem* MissionSubsystem = World->GetSubsystem<UEdenMissionSubsystem>();
+	if (!MissionSubsystem)
+	{
+		Canvas->SetDrawColor(FColor::Red);
+		Canvas->DrawText(
+			GEngine ? GEngine->GetSmallFont() : nullptr,
+			TEXT("Eden Mission: UEdenMissionSubsystem not available in world"),
+			32.0f,
+			140.0f);
+		return;
+	}
+
+	const FEdenMissionStateSnapshot Snapshot = MissionSubsystem->GetMissionStateSnapshot();
+	const FEdenMissionRuntimeState RuntimeState = MissionSubsystem->GetMissionRuntimeState();
+	const FEdenMissionDefinitionConfig DefConfig = MissionSubsystem->GetActiveMissionDefinition();
+
+	const UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+	float Y = 140.0f;
+	const float X = 32.0f;
+	const float LineHeight = 16.0f;
+
+	auto DrawLine = [this, Font, X, &Y, LineHeight](const FString& Text, const FColor& Color)
+	{
+		Canvas->SetDrawColor(Color);
+		Canvas->DrawText(Font, Text, X, Y);
+		Y += LineHeight;
+	};
+
+	DrawLine(TEXT("Eden Mission (ShowDebug EdenMission)"), FColor::Magenta);
+	DrawLine(
+		FString::Printf(
+			TEXT("Mission: ID='%s' State=%s Phase=%s Elapsed=%.2fs Running=%s"),
+			*Snapshot.ActiveMissionId.ToString(),
+			*EdenFlightHUDDebug::EnumText(Snapshot.MissionState),
+			*EdenFlightHUDDebug::EnumText(Snapshot.MissionPhase),
+			Snapshot.MissionElapsedTimeSeconds,
+			*EdenFlightHUDDebug::BoolText(MissionSubsystem->IsMissionRunning())),
+		FColor::White);
+
+	if (DefConfig.Objectives.Num() > 0)
+	{
+		DrawLine(TEXT("Objectives:"), FColor::Cyan);
+		for (const FEdenMissionObjectiveConfig& ObjConfig : DefConfig.Objectives)
+		{
+			EEdenObjectiveState ObjState = EEdenObjectiveState::Pending;
+			for (const FEdenMissionObjectiveRuntime& RuntimeObj : RuntimeState.ObjectiveStates)
+			{
+				if (RuntimeObj.ObjectiveId == ObjConfig.ObjectiveId)
+				{
+					ObjState = RuntimeObj.State;
+					break;
+				}
+			}
+
+			FColor ObjColor = FColor::White;
+			if (ObjState == EEdenObjectiveState::Completed)
+			{
+				ObjColor = FColor::Green;
+			}
+			else if (ObjState == EEdenObjectiveState::Failed)
+			{
+				ObjColor = FColor::Red;
+			}
+			else if (ObjState == EEdenObjectiveState::Active)
+			{
+				ObjColor = FColor::Yellow;
+			}
+
+			DrawLine(
+				FString::Printf(
+					TEXT("  [%s] '%s' (%s Target=%.1f State=%s)"),
+					ObjConfig.bRequired ? TEXT("REQ") : TEXT("OPT"),
+					*ObjConfig.ObjectiveId.ToString(),
+					*EdenFlightHUDDebug::EnumText(ObjConfig.ObjectiveType),
+					ObjConfig.TargetValue,
+					*EdenFlightHUDDebug::EnumText(ObjState)),
+				ObjColor);
+		}
+	}
+
+	if (DefConfig.Events.Num() > 0)
+	{
+		DrawLine(TEXT("Timeline Events:"), FColor::Orange);
+		for (const FEdenMissionEventConfig& EvtConfig : DefConfig.Events)
+		{
+			EEdenMissionEventState EvtState = EEdenMissionEventState::Pending;
+			for (const FEdenMissionEventRuntime& RuntimeEvt : RuntimeState.EventStates)
+			{
+				if (RuntimeEvt.EventId == EvtConfig.EventId)
+				{
+					EvtState = RuntimeEvt.EventState;
+					break;
+				}
+			}
+
+			FString ParamText;
+			if (EvtConfig.CommandType == EEdenMissionCommandType::SetMissionPhase)
+			{
+				ParamText = FString::Printf(TEXT("Phase=%s"), *EdenFlightHUDDebug::EnumText(EvtConfig.PhaseParameter));
+			}
+			else if (EvtConfig.CommandType == EEdenMissionCommandType::ActivateObjective)
+			{
+				ParamText = FString::Printf(TEXT("Obj='%s'"), *EvtConfig.NameParameter.ToString());
+			}
+			else
+			{
+				ParamText = FString::Printf(TEXT("Param=%.1f"), EvtConfig.FloatParameter);
+			}
+
+			DrawLine(
+				FString::Printf(
+					TEXT("  T=%.1fs [%s] '%s' (Cmd=%s %s)"),
+					EvtConfig.TriggerTimeSeconds,
+					*EdenFlightHUDDebug::EnumText(EvtState),
+					*EvtConfig.EventId.ToString(),
+					*EdenFlightHUDDebug::EnumText(EvtConfig.CommandType),
+					*ParamText),
+				EvtState == EEdenMissionEventState::Executed ? FColor::Green : FColor::Silver);
+		}
+	}
 }
 #endif

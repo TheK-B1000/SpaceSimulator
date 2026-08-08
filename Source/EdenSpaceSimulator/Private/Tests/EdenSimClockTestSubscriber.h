@@ -28,6 +28,8 @@ public:
 	float TotalAdvancedSeconds = 0.0f;
 	bool bRegisterTargetOnFirstAdvance = false;
 	bool bUnregisterTargetOnFirstAdvance = false;
+	FName SubscriberName;
+	TArray<FName>* ExecutionOrderLog = nullptr;
 	TWeakObjectPtr<UEdenSimulationClockSubsystem> ClockToMutate;
 	TWeakObjectPtr<UObject> SubscriberToRegister;
 	TWeakObjectPtr<UObject> SubscriberToUnregister;

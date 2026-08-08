@@ -32,7 +32,13 @@ This file stores durable, verified project facts that future Codex sessions must
 - Resource configuration Data Assets exist under `/Game/Eden/Data/Systems`: `DA_EdenFuelConfig`, `DA_EdenPowerConfig`, and `DA_EdenThermalConfig`.
 - `BP_EdenSpacecraftPawn` assigns those resource Data Assets to the inherited C++ resource components.
 - Development builds expose read-only resource visibility through `ShowDebug EdenSystems`.
-- The first vertical slice is a docking and emergency-response trainer.
+- Mission debug visibility through `ShowDebug EdenMission` is part of ExecPlan 0004 and should be promoted to a durable fact only after implementation and verification.
+- Mission simulation uses `UEdenMissionSubsystem` as a world-scoped subsystem registered with `UEdenSimulationClockSubsystem` at Priority 100 (`EdenSimulationClockPriority::Mission`), stepping deterministically after Priority 0 resource components (`EdenSimulationClockPriority::Systems`).
+- Emergency missions are data-driven via `UEdenMissionDefinitionDataAsset` and pure deterministic state machine `FEdenMissionModel`.
+- Approved mission resource disturbance commands are external heating and external power demand only. `SetPowerGeneration` remains unsupported for the emergency-mission milestone.
+- The reference emergency scenario is `SolarCrisis` (`Solar Event Emergency`), authored as `/Game/Eden/Data/Missions/DA_SolarEventEmergency`, configuring a 50s multi-phase timeline with external heating, external power demand, and four required objectives (`SurviveSolarEvent`, `PreventOverheating`, `RestoreBatteryCharge`, `ConservePropellant`).
+- Developer console commands such as `StartMission`, `RestartMission`, and `AbortMission` are implemented against the Solar Event Data Asset soft path, but interactive PIE verification remains outstanding before treating operator workflow as fully closed out.
+- Product goal for the first vertical slice: a docking and emergency-response trainer. Emergency mission infrastructure is being implemented first; docking gameplay is a later milestone unless separately verified complete.
 - The core architecture uses C++ for reusable behavior and Blueprints for composition and presentation.
 - UI does not own authoritative simulation state.
 - Telemetry observes state and does not mutate it.
@@ -63,6 +69,24 @@ The following must be inspected in the actual repository before being promoted t
 - Whether Git LFS has already been applied to existing binary history
 
 ## Update policy
+
+Treat `docs/REMEMBER.md` as verified implementation only.
+
+Do not add a feature merely because:
+
+- it exists in an ExecPlan
+- `ARCHITECTURE.md` describes it
+- another branch contains a sketch
+- or a test plan mentions it
+
+Before adding or updating a durable fact, verify it in the integrated branch through source, config, and assets, plus successful validation.
+
+Document ownership:
+
+- `ARCHITECTURE.md` — approved system shape and future boundaries
+- ExecPlans — current work and evidence
+- `docs/RECOVER.md` — transient checkpoint and branch state
+- `docs/REMEMBER.md` — durable verified truth every future agent may safely assume
 
 Add information only when it is:
 

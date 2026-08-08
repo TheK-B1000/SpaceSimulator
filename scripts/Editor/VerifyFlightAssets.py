@@ -112,6 +112,9 @@ def verify_blueprints(pawn_bp, controller_bp, game_mode_bp, ia_translate, ia_rot
     game_mode_cdo = get_cdo(game_mode_bp)
     require(game_mode_cdo.get_editor_property("DefaultPawnClass") == generated_class(pawn_bp), "GameMode BP default pawn mismatch")
     require(game_mode_cdo.get_editor_property("PlayerControllerClass") == generated_class(controller_bp), "GameMode BP player controller mismatch")
+    hud_class = unreal.load_class(None, "/Script/EdenSpaceSimulator.EdenFlightHUD")
+    require(hud_class is not None, "Missing EdenFlightHUD C++ class")
+    require(game_mode_cdo.get_editor_property("hud_class") == hud_class, "GameMode BP HUD class mismatch")
 
 
 def verify_map():

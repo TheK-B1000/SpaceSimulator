@@ -47,6 +47,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
 	bool SetBatteryChargeKilowattHours(float BatteryChargeKilowattHours);
 
+	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
+	bool SetExternalDemandKilowatts(float ExternalDemandKilowatts);
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
+	bool ClearExternalDemand();
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Power")
 	bool IsPowerSimulationEnabled() const;
 

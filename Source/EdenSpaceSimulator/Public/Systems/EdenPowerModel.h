@@ -49,6 +49,9 @@ struct EDENSPACESIMULATOR_API FEdenPowerStateSnapshot
 	float BaselineDemandKilowatts = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
+	float ExternalDemandKilowatts = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
 	float NetPowerKilowatts = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Power")
@@ -63,6 +66,7 @@ struct EDENSPACESIMULATOR_API FEdenPowerStepResult
 	bool bDeltaTimeWasValid = true;
 	bool bGenerationWasSanitized = false;
 	bool bBaselineDemandWasSanitized = false;
+	bool bExternalDemandWasSanitized = false;
 };
 
 struct EDENSPACESIMULATOR_API FEdenPowerModel
@@ -79,7 +83,8 @@ struct EDENSPACESIMULATOR_API FEdenPowerModel
 		const FEdenPowerConfig& Config,
 		float BatteryChargeKilowattHours,
 		float GenerationKilowatts,
-		float BaselineDemandKilowatts);
+		float BaselineDemandKilowatts,
+		float ExternalDemandKilowatts = 0.0f);
 	static FEdenPowerStateSnapshot MakeInitialSnapshot(const FEdenPowerConfig& Config);
 	static FEdenPowerStepResult Step(
 		const FEdenPowerConfig& Config,

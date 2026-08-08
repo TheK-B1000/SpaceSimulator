@@ -459,4 +459,69 @@ bool FEdenThermalMissingAndInvalidConfigDisableSimulationSafelyTest::RunTest(con
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenThermalExternalHeatingRateIncreasesTotalHeatingTest,
+	"Eden.Unit.Systems.Thermal.ExternalHeatingRateIncreasesTotalHeating",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenThermalExternalHeatingRateIncreasesTotalHeatingTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenThermalConfig Config = EdenThermalSystemTests::MakeValidConfig();
+	Config.HeatGenerationDegreesCelsiusPerSecond = 10.0f;
+	Config.DissipationDegreesCelsiusPerSecond = 0.0f;
+	Config.InitialTemperatureCelsius = 20.0f;
+
+	UEdenThermalSystemComponent* ThermalComponent = EdenThermalSystemTests::MakeInitializedComponent(Config);
+	TestTrue(TEXT("Set external heating rate succeeds"), ThermalComponent->SetExternalHeatingRateDegreesCelsiusPerSecond(5.0f));
+
+	FEdenThermalStateSnapshot Snapshot = ThermalComponent->GetThermalStateSnapshot();
+	TestEqual(TEXT("External heating rate recorded in snapshot"), Snapshot.ExternalHeatingRateDegreesCelsiusPerSecond, 5.0f);
+
+	ThermalComponent->AdvanceSimulation(1.0f);
+	Snapshot = ThermalComponent->GetThermalStateSnapshot();
+	// Total heat = 10 (internal) + 5 (external) = 15 C/s -> 20 + 15 = 35 C
+	EdenThermalSystemTests::TestFloatNearlyEqual(*this, TEXT("Temperature advances by internal plus external heating"), Snapshot.TemperatureCelsius, 35.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenThermalClearExternalHeatingRateResetsToZeroTest,
+	"Eden.Unit.Systems.Thermal.ClearExternalHeatingRateResetsToZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenThermalClearExternalHeatingRateResetsToZeroTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenThermalConfig Config = EdenThermalSystemTests::MakeValidConfig();
+	UEdenThermalSystemComponent* ThermalComponent = EdenThermalSystemTests::MakeInitializedComponent(Config);
+
+	ThermalComponent->SetExternalHeatingRateDegreesCelsiusPerSecond(15.0f);
+	TestEqual(TEXT("External heating rate active"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 15.0f);
+
+	TestTrue(TEXT("Clear external heating rate succeeds"), ThermalComponent->ClearExternalHeatingRate());
+	TestEqual(TEXT("External heating rate cleared to zero"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 0.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenThermalExternalHeatingRateSanitizesNegativeAndNaNTest,
+	"Eden.Unit.Systems.Thermal.ExternalHeatingRateSanitizesNegativeAndNaN",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenThermalExternalHeatingRateSanitizesNegativeAndNaNTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	FEdenThermalConfig Config = EdenThermalSystemTests::MakeValidConfig();
+	UEdenThermalSystemComponent* ThermalComponent = EdenThermalSystemTests::MakeInitializedComponent(Config);
+
+	AddExpectedError(TEXT("sanitized requested external heating rate"), EAutomationExpectedErrorFlags::Contains, 2);
+	TestFalse(TEXT("Negative external rate is sanitized"), ThermalComponent->SetExternalHeatingRateDegreesCelsiusPerSecond(-10.0f));
+	TestEqual(TEXT("Negative rate clamped to zero"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 0.0f);
+
+	TestFalse(TEXT("NaN external rate is sanitized"), ThermalComponent->SetExternalHeatingRateDegreesCelsiusPerSecond(std::numeric_limits<float>::quiet_NaN()));
+	TestEqual(TEXT("NaN rate clamped to zero"), ThermalComponent->GetThermalStateSnapshot().ExternalHeatingRateDegreesCelsiusPerSecond, 0.0f);
+
+	return true;
+}
+
 #endif

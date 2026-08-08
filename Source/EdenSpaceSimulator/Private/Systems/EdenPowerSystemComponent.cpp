@@ -138,7 +138,8 @@ bool UEdenPowerSystemComponent::SetGenerationKilowatts(float GenerationKilowatts
 			ActivePowerConfig,
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			SanitizedGenerationKilowatts,
-			CurrentSnapshot.BaselineDemandKilowatts),
+			CurrentSnapshot.BaselineDemandKilowatts,
+			CurrentSnapshot.ExternalDemandKilowatts),
 		true);
 
 	return !bGenerationWasSanitized;
@@ -171,7 +172,8 @@ bool UEdenPowerSystemComponent::SetBaselineDemandKilowatts(float BaselineDemandK
 			ActivePowerConfig,
 			CurrentSnapshot.BatteryChargeKilowattHours,
 			CurrentSnapshot.GenerationKilowatts,
-			SanitizedDemandKilowatts),
+			SanitizedDemandKilowatts,
+			CurrentSnapshot.ExternalDemandKilowatts),
 		true);
 
 	return !bDemandWasSanitized;
@@ -207,10 +209,52 @@ bool UEdenPowerSystemComponent::SetBatteryChargeKilowattHours(float BatteryCharg
 			ActivePowerConfig,
 			ClampedChargeKilowattHours,
 			CurrentSnapshot.GenerationKilowatts,
-			CurrentSnapshot.BaselineDemandKilowatts),
+			CurrentSnapshot.BaselineDemandKilowatts,
+			CurrentSnapshot.ExternalDemandKilowatts),
 		true);
 
 	return !bChargeWasSanitized;
+}
+
+bool UEdenPowerSystemComponent::SetExternalDemandKilowatts(float ExternalDemandKilowatts)
+{
+	if (!bPowerSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set external demand; power simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+
+	bool bWasSanitized = false;
+	const float SanitizedExternalDemand = FEdenPowerModel::SanitizeNonnegativeKilowatts(
+		ExternalDemandKilowatts,
+		&bWasSanitized);
+
+	if (bWasSanitized)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Warning,
+			TEXT("%s sanitized requested external demand from %f kW to %f kW."),
+			*MakeLogContext(),
+			ExternalDemandKilowatts,
+			SanitizedExternalDemand);
+	}
+
+	ApplySnapshot(
+		FEdenPowerModel::MakeSnapshot(
+			ActivePowerConfig,
+			CurrentSnapshot.BatteryChargeKilowattHours,
+			CurrentSnapshot.GenerationKilowatts,
+			CurrentSnapshot.BaselineDemandKilowatts,
+			SanitizedExternalDemand),
+		true);
+
+	return !bWasSanitized;
+}
+
+bool UEdenPowerSystemComponent::ClearExternalDemand()
+{
+	return SetExternalDemandKilowatts(0.0f);
 }
 
 bool UEdenPowerSystemComponent::IsPowerSimulationEnabled() const
