@@ -245,14 +245,28 @@ void AEdenFlightHUD::DrawEdenMissionOverlay()
 				}
 			}
 
+			FString ParamText;
+			if (EvtConfig.CommandType == EEdenMissionCommandType::SetMissionPhase)
+			{
+				ParamText = FString::Printf(TEXT("Phase=%s"), *EdenFlightHUDDebug::EnumText(EvtConfig.PhaseParameter));
+			}
+			else if (EvtConfig.CommandType == EEdenMissionCommandType::ActivateObjective)
+			{
+				ParamText = FString::Printf(TEXT("Obj='%s'"), *EvtConfig.NameParameter.ToString());
+			}
+			else
+			{
+				ParamText = FString::Printf(TEXT("Param=%.1f"), EvtConfig.FloatParameter);
+			}
+
 			DrawLine(
 				FString::Printf(
-					TEXT("  T=%.1fs [%s] '%s' (Cmd=%s Param=%.1f)"),
+					TEXT("  T=%.1fs [%s] '%s' (Cmd=%s %s)"),
 					EvtConfig.TriggerTimeSeconds,
 					*EdenFlightHUDDebug::EnumText(EvtState),
 					*EvtConfig.EventId.ToString(),
 					*EdenFlightHUDDebug::EnumText(EvtConfig.CommandType),
-					EvtConfig.FloatParameter),
+					*ParamText),
 				EvtState == EEdenMissionEventState::Executed ? FColor::Green : FColor::Silver);
 		}
 	}
