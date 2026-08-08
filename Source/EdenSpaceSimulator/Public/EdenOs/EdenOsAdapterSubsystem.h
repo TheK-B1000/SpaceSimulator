@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
+#include "EdenOs/EdenExternalCommandTypes.h"
 #include "EdenOs/EdenOsAdvisoryTypes.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
 #include "EdenOs/EdenOsTypes.h"
@@ -14,6 +15,7 @@
 
 #include "EdenOsAdapterSubsystem.generated.h"
 
+class UEdenExternalCommandRouter;
 class UEdenSimulationClockSubsystem;
 
 UCLASS()
@@ -54,6 +56,18 @@ public:
 	/** Most recent ProjectEden advisory accepted for HUD presentation. Invalid until one is accepted. */
 	FEdenOsAcceptedAdvisory GetLatestAcceptedAdvisory() const;
 
+	/**
+	 * Checkpoint J: validate a typed external command proposal. Never executes.
+	 * Uses active telemetry session + latest accepted advisory evaluation for correlation.
+	 */
+	FEdenExternalCommandValidationOutcome ValidateExternalCommandProposal(
+		const FEdenExternalCommandProposal& Proposal);
+
+	TArray<FEdenExternalCommandValidationRecord> GetExternalCommandValidationHistory() const;
+
+	/** Test seam: install an accepted advisory without HTTP (validation-only proofs). */
+	void SetLatestAcceptedAdvisoryForTesting(const FEdenOsAcceptedAdvisory& Advisory);
+
 	/** Number of advisory evaluations performed since the adapter last reset its advisory cursors. */
 	int32 GetAdvisoryEvaluationCount() const;
 
@@ -80,6 +94,8 @@ private:
 	void CancelPendingAdvisoryDispatches(const TCHAR* Reason);
 	bool HasSessionCompletedOrCompletionQueued() const;
 	void ResetAdvisoryRuntimeState();
+	void EnsureExternalCommandRouter();
+	FEdenExternalCommandValidationContext BuildExternalCommandValidationContext() const;
 
 	void RefreshSnapshotFromRuntimeConfig();
 	void RegisterTelemetrySinkIfNeeded();
@@ -130,6 +146,9 @@ private:
 	int32 AdvisoryEvaluationCount = 0;
 	int64 NextAdvisoryEvaluationOrdinal = 1;
 	int64 LatestAcceptedAdvisoryOrdinal = 0;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEdenExternalCommandRouter> ExternalCommandRouter;
 
 public:
 	/** Settled steps observed. Distinguishes "not ticking" from "ticking but gated" in diagnostics. */

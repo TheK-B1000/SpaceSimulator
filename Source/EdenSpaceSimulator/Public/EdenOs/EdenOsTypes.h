@@ -53,6 +53,13 @@ struct EDENSPACESIMULATOR_API FEdenOsConnectionConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
 	EEdenOsAuthorityMode AuthorityMode = EEdenOsAuthorityMode::Advisory;
 
+	/**
+	 * Checkpoint J: when true with AuthorizedControl, typed proposals may Validate.
+	 * Default false. Validation never executes commands (Checkpoint K).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
+	bool bExternalCommandValidationEnabled = false;
+
 	FString RuntimeBearerJwt;
 };
 
@@ -101,6 +108,9 @@ struct EDENSPACESIMULATOR_API FEdenOsConnectionSnapshot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
 	EEdenOsAuthorityMode AuthorityMode = EEdenOsAuthorityMode::Advisory;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
+	bool bExternalCommandValidationEnabled = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
 	EEdenOsConnectionState ConnectionState = EEdenOsConnectionState::Disabled;

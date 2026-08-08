@@ -4,6 +4,7 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "EdenOs/EdenExternalCommandRouter.h"
 #include "EdenOs/EdenOsAdvisoryModel.h"
 #include "EdenOs/EdenOsConnectionSettings.h"
 #include "EdenOs/EdenOsTelemetrySink.h"
@@ -33,6 +34,7 @@ void UEdenOsAdapterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	OwnedHttpTransport = MakeUnique<FEdenOsUnrealHttpTransport>();
 	ActiveHttpTransport = OwnedHttpTransport.Get();
 	bAcceptTransportCallbacks = true;
+	EnsureExternalCommandRouter();
 
 	const UEdenOsConnectionSettings* Settings = GetDefault<UEdenOsConnectionSettings>();
 	ApplyRuntimeConfig(Settings ? Settings->MakeConnectionConfig() : FEdenOsConnectionConfig());
@@ -50,6 +52,7 @@ void UEdenOsAdapterSubsystem::Deinitialize()
 	RuntimeConfig = FEdenOsConnectionConfig();
 	LastValidationResult = FEdenOsValidationResult();
 	ConnectionSnapshot = FEdenOsConnectionSnapshot();
+	ExternalCommandRouter = nullptr;
 	OwnedHttpTransport.Reset();
 	ActiveHttpTransport = nullptr;
 
@@ -134,6 +137,7 @@ FEdenTelemetrySinkResult UEdenOsAdapterSubsystem::EnqueueOutboundRequest(FEdenOs
 	LastValidationResult = FEdenOsConnectionConfigModel::Validate(RuntimeConfig);
 	ConnectionSnapshot.bEnabled = RuntimeConfig.bEnabled;
 	ConnectionSnapshot.AuthorityMode = RuntimeConfig.AuthorityMode;
+	ConnectionSnapshot.bExternalCommandValidationEnabled = RuntimeConfig.bExternalCommandValidationEnabled;
 	ConnectionSnapshot.bHasBearerJwt = !RuntimeConfig.RuntimeBearerJwt.IsEmpty();
 	if (!RuntimeConfig.bEnabled)
 	{
@@ -821,6 +825,73 @@ void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
 	AdvisoryEvaluationCount = 0;
 	NextAdvisoryEvaluationOrdinal = 1;
 	LatestAcceptedAdvisoryOrdinal = 0;
+	if (ExternalCommandRouter)
+	{
+		ExternalCommandRouter->ResetValidationState();
+	}
+}
+
+void UEdenOsAdapterSubsystem::EnsureExternalCommandRouter()
+{
+	if (!ExternalCommandRouter)
+	{
+		ExternalCommandRouter = NewObject<UEdenExternalCommandRouter>(this);
+	}
+}
+
+FEdenExternalCommandValidationContext UEdenOsAdapterSubsystem::BuildExternalCommandValidationContext() const
+{
+	FEdenExternalCommandValidationContext Context;
+	Context.bExternalCommandValidationEnabled = RuntimeConfig.bExternalCommandValidationEnabled;
+	Context.AuthorityMode = RuntimeConfig.AuthorityMode;
+
+	if (RuntimeConfig.bEnabled)
+	{
+		if (const UWorld* World = GetWorld())
+		{
+			if (const UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
+			{
+				Context.ActiveSessionId = Telemetry->GetSessionId();
+			}
+		}
+	}
+
+	if (LatestAcceptedAdvisory.bIsValid)
+	{
+		Context.bHasAcceptedEvaluation = true;
+		Context.LatestAcceptedEvaluationId = LatestAcceptedAdvisory.EvaluationId;
+	}
+
+	return Context;
+}
+
+FEdenExternalCommandValidationOutcome UEdenOsAdapterSubsystem::ValidateExternalCommandProposal(
+	const FEdenExternalCommandProposal& Proposal)
+{
+	EnsureExternalCommandRouter();
+	return ExternalCommandRouter->ValidateProposal(Proposal, BuildExternalCommandValidationContext());
+}
+
+TArray<FEdenExternalCommandValidationRecord> UEdenOsAdapterSubsystem::GetExternalCommandValidationHistory() const
+{
+	if (!ExternalCommandRouter)
+	{
+		return TArray<FEdenExternalCommandValidationRecord>();
+	}
+	return ExternalCommandRouter->GetValidationHistory();
+}
+
+void UEdenOsAdapterSubsystem::SetLatestAcceptedAdvisoryForTesting(const FEdenOsAcceptedAdvisory& Advisory)
+{
+	LatestAcceptedAdvisory = Advisory;
+	if (Advisory.bIsValid)
+	{
+		LatestAcceptedAdvisoryOrdinal = FMath::Max(LatestAcceptedAdvisoryOrdinal, int64(1));
+	}
+	else
+	{
+		LatestAcceptedAdvisoryOrdinal = 0;
+	}
 }
 
 FEdenOsAdvisoryContext UEdenOsAdapterSubsystem::GetLastAdvisoryContext() const

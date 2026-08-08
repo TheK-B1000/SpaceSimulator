@@ -2,9 +2,9 @@
 
 ## Status
 
-**In Progress - Checkpoint I accepted; Checkpoint J authorized next; Checkpoints K-M remain locked.**
+**In Progress - Checkpoint J READY FOR ACCEPTANCE; Checkpoint K remains locked.**
 
-Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I are accepted (H timing amendment included). ProjectEden H.1 advisory API exists at `da38ecb`. Checkpoint I (`89d47da` + return-path proof `89761fd`) surfaces ProjectEden advisories as exactly one `EdenAdvisoryIssued` telemetry fact plus read-only HUD presentation. Do not begin Checkpoint K (or L/M) until J is explicitly accepted. Do not begin J implementation until the maintainer sends the Checkpoint J brief.
+Unreal lane execution remains locked to one checkpoint at a time. Unreal A/B/C/E/F/G/H/I are accepted. Checkpoint J adds the validated external-command boundary (`UEdenExternalCommandRouter`) — proposals may become `Valid` under AuthorizedControl with an explicit enable flag, but **never execute**. Do not begin Checkpoint K until J is explicitly accepted.
 
 Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B was accepted and committed at `a63de4e`. Checkpoint C was accepted and committed at `f66cda3`; its corrective wire-contract alignment was accepted at `3f69f9b`. Checkpoint E implementation was committed at `32c8f9a`; the follow-up mission-level failure-isolation proof was accepted at `75fcd90`. Checkpoint F implementation commit `63768ab` plus corrective proof commit `5249a6a` are accepted.
 
@@ -400,7 +400,8 @@ This supersedes "HTTP returned 200" as the meaningful test.
 | Delivery failure metrics | `UEdenOsAdapterSubsystem` | HUD, debug | Adapter only |
 | Latest advisory | `UEdenOsAdapterSubsystem` | HUD | Adapter only (from validated DTO) |
 | Authority mode | `UEdenOsConnectionSettings` | Adapter, router | Configuration only |
-| Command allowlist / rate state | `UEdenExternalCommandRouter` | Debug | Router only |
+| Command allowlist / consumed ProposalIds / validation history | `UEdenExternalCommandRouter` | Debug | Router only (validation bookkeeping; **not** execution) |
+| External command validation enable flag | `UEdenOsConnectionSettings` / `FEdenOsConnectionConfig` | Adapter, router | Configuration only; default **false** |
 
 **No existing ownership row changes.** Advisories are display data, never simulation truth.
 
@@ -440,7 +441,7 @@ Proof 1 covers the availability boundary, proof 2 the ownership boundary, proof 
 
 ## 10. Test matrix
 
-**Mission environment** — serialization round-trip; schema version negotiation; unsupported-version rejection; queue ordering under load; overflow drops and counts; request timeout; retry with backoff; server offline at start; server disappearing mid-mission; reconnect; malformed response; advisory with missing/extra fields; advisory with out-of-range confidence; command rejected in Observe/Advisory; command rejected when not allowlisted; command rejected when rate-limited; **the §6 invariant across all three modes**.
+**Mission environment** — serialization round-trip; schema version negotiation; unsupported-version rejection; queue ordering under load; overflow drops and counts; request timeout; retry with backoff; server offline at start; server disappearing mid-mission; reconnect; malformed response; advisory with missing/extra fields; command rejected in Observe/Advisory; command rejected when validation boundary disabled; command rejected when not allowlisted; **command validation never mutates simulation (§6)**; **the §6 invariant across all three modes**. Execution rate/cooldown belongs to Checkpoint K, not J.
 
 **ProjectEden** — valid telemetry accepted; unknown `schemaVersion` rejected; malformed payload rejected; duplicate sequence idempotent; out-of-order sequence handled; session creation; session completion; unauthorized session access returns **404 not 403** (matching the existing enumeration-prevention convention); advisory response conforms to schema. Standard `pytest` / `httpx` / `TestClient`.
 
@@ -656,6 +657,8 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 2026-08-08: Checkpoint G regression and hygiene validation passed. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. Full `Automation RunTests Eden.` found 239 tests and passed with `**** TEST COMPLETE. EXIT CODE: 0 ****`; the external live test skipped in the full suite because live env vars were unset. Editor verifiers passed: `VerifyFlightAssets.py`, `VerifyMissionAssets.py`, `VerifyOperatorAssets.py`, `VerifyResourceAssets.py`, and `VerifyFlightRuntimeSmoke.py`. Final Win64 Development Editor build passed and reported target up to date. `git diff --check` passed with the existing LF/CRLF warning on `scripts/Run-EdenOsLiveE2E.ps1`. Source `LogTemp` search returned no matches. Token scan found only existing runtime-header/test-script references and synthetic `test-token` usage. Added-diff scope scan found only authority-mode setup and negative assertions that Observe does not call advisory or command routes. Checkpoint G is ready for acceptance; Checkpoints H-M remain locked.
 
 2026-08-08: Checkpoint I accepted. Implementation commit `89d47da feat(eden): surface ProjectEden advisories` plus corrective evidence commit `89761fd test(eden): prove live advisory return path`. Live Advisory E2E evidence `Saved/Automation/EdenOsLiveE2E/20260808-140801/` proves the full return path in one run: ProjectEden `/advisories` 201 → `evaluationId` correlation → exactly one local `EdenAdvisoryIssued` → recommendation/rationale/triggerReasons preserved → three clocks (`issued 0.7`, `evaluation 0.4`, `context snapshot 0.4`) with `issued >= evaluation >= snapshot` → read-only presentation matches response → ProjectEden `MissionAdvisory` persistence (`advisoryCount = 1`). Integration `Eden.Integration.EdenOs.` 6/6; full `Automation RunTests Eden.` 265/265; Win64 Development Editor build and repository validation passed. No fabricated confidence/severity/recommendationCode. Checkpoint J (authorized-command boundary, built and tested, disabled by default) is authorized next; Checkpoints K-M remain locked. Do not begin K.
+
+2026-08-08: Checkpoint J implemented for review (READY FOR ACCEPTANCE). Internal-only `FEdenExternalCommandProposal` + `UEdenExternalCommandRouter` + pure `FEdenExternalCommandModel`. Closed allowlist: `SetThermalControlMode` / `SetLoadShedMode` / `SetPropulsionPriorityMode` reusing exact 0005 enums (`EEdenThermalControlMode` Off/Nominal/Boost/Emergency; `EEdenLoadShedMode` Normal/Shed; `EEdenPropulsionPriorityMode` Full/Reduced). `bExternalCommandValidationEnabled` defaults false; Valid requires AuthorizedControl AND enable flag. Session/evaluation correlation required; ProposalId consumed only after Valid; rejected IDs reusable. Deterministic rejection taxonomy/precedence locked. Rate limiting explicitly deferred to K (no cooldown invented). Validation records are audit facts only — not execution/operator-action events. Advisory recommendation/rationale never enter the command boundary. Source inspection: J model/router contain no calls into operator/flight/resource/mission mutators; adapter Validate path does not reference `UEdenOperatorControlComponent`. Focused ExternalCommand unit 24/24; Integration EdenOs 11/11; Unit EdenOs 86/86; full `Eden.` **294/294** exit 0. Win64 Development Editor build + Validate-Project passed. **K remains locked.** See §20.
 
 ---
 
@@ -1013,3 +1016,34 @@ Required amendment (small — the accessor already exists):
 - Keep `SimulationTimeSeconds` as the true evaluation-due time.
 - Drive the heartbeat from true step time so the interval is exact.
 - Add tests proving the two timestamps differ when a trigger fires between snapshots.
+
+---
+
+## 20. Checkpoint J — validated command boundary (locked contract)
+
+### 20.1 Architectural cliff
+
+```text
+recommendation/rationale  →  HUD only (never commands)
+
+typed proposal
+  → schema / authority / session / evaluation / replay / allowlist / parameters
+  → VALIDATED COMMAND
+  → STOP   ← Checkpoint J ends here
+
+Checkpoint K owns: authorized execution → UEdenOperatorControlComponent
+```
+
+Invariant: `recommendation ≠ command`, `proposal ≠ validated command`, `validated command ≠ execution`.
+
+### 20.2 Internal proposal envelope (not HTTP/JSON)
+
+`FEdenExternalCommandProposal`: SchemaVersion=1, ProposalId, SessionId, EvaluationId (always required), CommandType, typed Parameters. No ProjectEden command endpoint in J.
+
+### 20.3 Rejection taxonomy (precedence order)
+
+BoundaryDisabled → WrongAuthorityMode → UnsupportedSchemaVersion → InvalidProposalId → NoActiveSession → SessionMismatch → NoAcceptedEvaluation → EvaluationMismatch → DuplicateProposal → UnsupportedCommand → InvalidParameters → Valid.
+
+### 20.4 Rate limiting
+
+**Deferred to K.** J does not invent cooldowns. ExecPlan wording that previously implied router-owned rate state is superseded: J owns allowlist/identity/correlation/replay/typed validation only.

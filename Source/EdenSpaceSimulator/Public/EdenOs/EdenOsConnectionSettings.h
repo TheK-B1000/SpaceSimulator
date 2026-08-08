@@ -40,6 +40,10 @@ public:
 
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
 	EEdenOsAuthorityMode AuthorityMode = EEdenOsAuthorityMode::Advisory;
+
+	/** Checkpoint J validation airlock. Default false — never enables execution. */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "Eden|OS")
+	bool bExternalCommandValidationEnabled = false;
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsConnectionConfigModel
