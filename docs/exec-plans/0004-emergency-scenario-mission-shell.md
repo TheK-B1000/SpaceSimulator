@@ -23,6 +23,7 @@ Approved — Checkpoint A complete
 | Resource baseline | Automated validation passing; PIE gate open |
 | Checkpoint A status | ✅ Implemented and verified (30 tests, 131 total passing) |
 | Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
+| Checkpoint C status | ✅ Implemented and verified (3 tests, 140 total passing) |
 | Working tree | Clean |
 
 ---
@@ -180,11 +181,16 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint C — Mission definition Data Asset and validation
+### Checkpoint C — Mission definition Data Asset and validation ✅ COMPLETE
 
 **Scope:**
-- `Public/Missions/EdenMissionDefinitionDataAsset.h` and `Private/Missions/EdenMissionDefinitionDataAsset.cpp` — `UDataAsset` subclass with editor-time `IsDataValid`.
-- Editor validation tests.
+- `Public/Missions/EdenMissionDefinitionDataAsset.h` and `Private/Missions/EdenMissionDefinitionDataAsset.cpp` — `UDataAsset` subclass holding `FEdenMissionDefinitionConfig MissionDefinition;`, with helper accessors (`GetMissionId`, `GetDisplayName`, `GetMissionDefinition`).
+- Editor-time `IsDataValid(FDataValidationContext& Context)` override wrapping `FEdenMissionModel::ValidateDefinition`.
+- Unit tests: `Eden.Unit.Mission.DataAsset.DataAssetValidatesValidConfig`, `Eden.Unit.Mission.DataAsset.DataAssetRejectsInvalidConfig`, `Eden.Unit.Mission.DataAsset.DataAssetAccessorsReturnValues`.
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 140 tests passed (3 new tests in Checkpoint C, 137 existing tests, 0 failures, 0 errors).
 
 ---
 

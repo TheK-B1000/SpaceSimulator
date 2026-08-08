@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Missions/EdenMissionModel.h"
+#include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/DataValidation.h"
 #include <limits>
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -681,6 +683,63 @@ bool FEdenMissionResetRuntimeStateClearsAllTest::RunTest(const FString& Paramete
 	TestEqual(TEXT("Elapsed time is zero"), State.MissionElapsedTimeSeconds, 0.0f);
 	TestEqual(TEXT("Events cleared"), State.EventStates.Num(), 0);
 	TestEqual(TEXT("Objectives cleared"), State.ObjectiveStates.Num(), 0);
+	return true;
+}
+
+// ===========================================================================
+// DataAsset tests
+// ===========================================================================
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionDataAssetValidatesValidConfigTest,
+	"Eden.Unit.Mission.DataAsset.DataAssetValidatesValidConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionDataAssetValidatesValidConfigTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UEdenMissionDefinitionDataAsset* Asset = NewObject<UEdenMissionDefinitionDataAsset>();
+	Asset->MissionDefinition = EdenMissionModelTests::MakeValidConfig();
+
+	FDataValidationContext Context;
+	EDataValidationResult Result = Asset->IsDataValid(Context);
+	TestEqual(TEXT("Valid config produces valid data validation result"), Result, EDataValidationResult::Valid);
+	TestEqual(TEXT("No issues in context"), Context.GetNumErrors(), 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionDataAssetRejectsInvalidConfigTest,
+	"Eden.Unit.Mission.DataAsset.DataAssetRejectsInvalidConfig",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionDataAssetRejectsInvalidConfigTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UEdenMissionDefinitionDataAsset* Asset = NewObject<UEdenMissionDefinitionDataAsset>();
+	Asset->MissionDefinition = EdenMissionModelTests::MakeValidConfig();
+	Asset->MissionDefinition.MissionId = NAME_None; // Invalid
+
+	FDataValidationContext Context;
+	EDataValidationResult Result = Asset->IsDataValid(Context);
+	TestEqual(TEXT("Invalid config produces invalid data validation result"), Result, EDataValidationResult::Invalid);
+	TestTrue(TEXT("Errors recorded in context"), Context.GetNumErrors() > 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenMissionDataAssetAccessorsReturnValuesTest,
+	"Eden.Unit.Mission.DataAsset.DataAssetAccessorsReturnValues",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FEdenMissionDataAssetAccessorsReturnValuesTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	UEdenMissionDefinitionDataAsset* Asset = NewObject<UEdenMissionDefinitionDataAsset>();
+	Asset->MissionDefinition = EdenMissionModelTests::MakeValidConfig();
+	Asset->MissionDefinition.MissionId = FName("SolarCrisis");
+	Asset->MissionDefinition.DisplayName = FText::FromString(TEXT("Solar Crisis"));
+
+	TestEqual(TEXT("GetMissionId returns correct ID"), Asset->GetMissionId(), FName("SolarCrisis"));
+	TestTrue(TEXT("GetDisplayName returns correct text"), Asset->GetDisplayName().EqualTo(FText::FromString(TEXT("Solar Crisis"))));
+	TestEqual(TEXT("GetMissionDefinition returns same ID"), Asset->GetMissionDefinition().MissionId, FName("SolarCrisis"));
 	return true;
 }
 
