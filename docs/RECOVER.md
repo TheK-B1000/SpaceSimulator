@@ -7,13 +7,14 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Field | Value |
 |---|---|
 | Date | 2026-08-08 |
-| Branch | `feature/operator-hud-and-input` (merging to `main`) |
+| Branch | `feature/telemetry-aar-export` (merge to `main`) |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | `docs/exec-plans/0006-telemetry-and-after-action-review.md` |
-| ExecPlan 0005 | **Complete** — Checkpoint I PIE passed 2026-08-08 |
-| ExecPlan 0006 | Core on `main`; next: minimal JSON export + ShowAfterAction (2B) |
-| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` → **186** / **0**; `VerifyOperatorAssets.py` passed; human 0005 PIE passed |
-| Next task | Minimal 0006: real `ExportSessionJsonV1`, `Saved/Telemetry/*.json`, `ExportTelemetry` / `ShowAfterAction`, thin AAR WBP (no auto-popup) |
+| Active ExecPlan | **0007 EDEN OS adapter** (only remaining vertical-slice milestone) |
+| ExecPlan 0004 | Complete |
+| ExecPlan 0005 | Complete |
+| ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |
+| Last successful validation | Win64 Development Editor build; `Automation RunTests Eden.` all pass; export/AAR unit + file smoke green |
+| Next task | Begin ExecPlan 0007 FastAPI EDEN OS adapter against Telemetry Export Schema v1 |
 
 ## Recovery protocol
 
@@ -24,29 +25,31 @@ git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator log -8
 git -c safe.directory=K:/UnrealProjects/SpaceSimulator/EdenSpaceSimulator diff --stat
 ```
 
-Then read `AGENTS.md`, ADR-0002, ExecPlan 0006.
+Then read `AGENTS.md` and ExecPlan 0007 when authored.
 
 ## Safe Restart Rules
 
 - Do not discard local changes without inspecting them.
 - Do not delete `Content`, `Config`, or `Source`.
-- Preserve operator Input Actions, `IMC_Flight`, `WBP_EdenOperatorHud`, and `DA_EdenOperatorControlConfig` (Git LFS).
-- Do not reopen ExecPlan 0004 Checkpoint F.
+- Preserve operator/AAR widgets and Input Actions (Git LFS).
+- Do not reopen 0004 Checkpoint F.
 - Do not rewrite `v0.3.0-emergency-mission` history.
-- Do not add automatic AAR popups for 0006 (locked 2B: console/exec only).
+- Do not polish 0005/0006 unless 0007 exposes a genuine contract defect.
+- AAR remains console-driven (`ShowAfterAction`); no auto-popup.
 
 ## Current Known Risks
 
-- Operator keys: `T` thermal cycle, `L` load-shed toggle, `P` propulsion priority toggle.
-- `ExportSessionJsonV1` is still a metadata stub until 0006 closeout; 0007 must consume the finished wire schema.
-- Telemetry `ClearHistory()` remains explicit (not auto-clear on every mission reset).
+- Operator keys: `T` / `L` / `P`.
+- Telemetry export path: `Saved/Telemetry/` (runtime output; not tracked).
+- `ClearHistory()` remains explicit.
 
 ## Session Handoff
 
 ### Completed
 
-- 0005 content wiring + PIE closeout.
+- 0005 PIE + merge to `main`.
+- 0006 minimal export/AAR surface.
 
 ### Next Clean Action
 
-Implement minimal 0006 export/AAR (2B) on `main` after merge.
+Author/implement ExecPlan 0007 (FastAPI EDEN OS) consuming Telemetry Export Schema v1.

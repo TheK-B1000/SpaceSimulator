@@ -14,6 +14,7 @@ class UInputAction;
 class UInputMappingContext;
 class UEdenMissionDefinitionDataAsset;
 class UEdenOperatorHudWidget;
+class UEdenAfterActionReviewWidget;
 
 UCLASS(BlueprintType, Blueprintable)
 class EDENSPACESIMULATOR_API AEdenFlightPlayerController : public APlayerController
@@ -48,12 +49,21 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Mission")
 	void AbortMission();
 
+	UFUNCTION(Exec, Category = "Eden|Telemetry")
+	void ExportTelemetry();
+
+	UFUNCTION(Exec, Category = "Eden|Telemetry")
+	void ShowAfterAction();
+
 	/** Default mission definition loaded by StartMission/RestartMission. Soft reference; no hard package dependency. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Mission")
 	TSoftObjectPtr<UEdenMissionDefinitionDataAsset> DefaultMissionDefinitionAsset;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|HUD")
 	TSubclassOf<UEdenOperatorHudWidget> OperatorHudWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|AAR")
+	TSubclassOf<UEdenAfterActionReviewWidget> AfterActionReviewWidgetClass;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|HUD", meta = (ClampMin = "1.0", ClampMax = "30.0"))
 	float OperatorHudRefreshHz = 10.0f;
@@ -103,12 +113,16 @@ private:
 	void EnsureOperatorHudCreated();
 	void RefreshOperatorHudSnapshot();
 	FEdenOperatorHudSnapshot AssembleOperatorHudSnapshot() const;
+	void EnsureAfterActionReviewCreated();
 
 	bool bLoggedMissingInputAssetState = false;
 	bool bLoggedUnexpectedPawnState = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UEdenOperatorHudWidget> OperatorHudWidget;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEdenAfterActionReviewWidget> AfterActionReviewWidget;
 
 	UPROPERTY(Transient)
 	FEdenOperatorHudSnapshot CachedOperatorHudSnapshot;

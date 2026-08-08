@@ -23,6 +23,15 @@ FEdenAfterActionResult FEdenAfterActionModel::Build(
 		Result.DurationSeconds =
 			Snapshots.Last().MissionElapsedTimeSeconds - Snapshots[0].MissionElapsedTimeSeconds;
 		Result.FinalMissionState = Snapshots.Last().Mission.MissionState;
+		Result.MissionId = Snapshots.Last().Mission.ActiveMissionId;
+		Result.FinalFuelFraction = Snapshots.Last().Fuel.FuelFraction;
+		for (const FEdenMissionObjectiveRuntime& Objective : Snapshots.Last().Mission.ObjectiveSnapshots)
+		{
+			FEdenAfterActionObjectiveLine Line;
+			Line.ObjectiveId = Objective.ObjectiveId;
+			Line.State = Objective.State;
+			Result.Objectives.Add(Line);
+		}
 	}
 	else if (Events.Num() > 0)
 	{
@@ -34,6 +43,14 @@ FEdenAfterActionResult FEdenAfterActionModel::Build(
 		if (Event.EventType == EEdenTelemetryEventType::OperatorCommandIssued)
 		{
 			++Result.OperatorCommandCount;
+		}
+		if (Event.EventType == EEdenTelemetryEventType::AlertRaised)
+		{
+			const FString DetailUpper = Event.Detail.ToUpper();
+			if (DetailUpper.Contains(TEXT("CRITICAL")) || DetailUpper.Contains(TEXT("EMERGENCY")))
+			{
+				++Result.CriticalAlertCount;
+			}
 		}
 		if (Event.EventType == EEdenTelemetryEventType::MissionSucceeded)
 		{

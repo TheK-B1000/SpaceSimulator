@@ -7,12 +7,17 @@
 #include "Engine/World.h"
 #include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenSpacecraftPawn.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Misc/Guid.h"
+#include "HAL/FileManager.h"
 #include "Missions/EdenMissionSubsystem.h"
 #include "Operations/EdenAlertSubsystem.h"
 #include "Operations/EdenOperatorControlComponent.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
+#include "Telemetry/EdenTelemetryExportModel.h"
 
 bool UEdenTelemetrySubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
@@ -73,6 +78,7 @@ void UEdenTelemetrySubsystem::ClearHistory()
 	NextSequenceNumber = 1;
 	StepsSinceSnapshot = 0;
 	bHasAggregateSeed = false;
+	ActiveSessionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphensLower);
 }
 
 TArray<FEdenTelemetryEvent> UEdenTelemetrySubsystem::GetEventHistory() const
@@ -90,29 +96,54 @@ FEdenTelemetrySessionMetadata UEdenTelemetrySubsystem::GetSessionMetadata() cons
 	return SessionMetadata;
 }
 
+FString UEdenTelemetrySubsystem::GetSessionId() const
+{
+	return ActiveSessionId;
+}
+
 FString UEdenTelemetrySubsystem::ExportSessionJsonV1() const
 {
-	FString Json;
-	Json += TEXT("{\n");
-	Json += TEXT("  \"schema\": \"TelemetryExportSchemaV1\",\n");
-	Json += FString::Printf(TEXT("  \"droppedSnapshotCount\": %d,\n"), SessionMetadata.DroppedSnapshotCount);
-	Json += FString::Printf(TEXT("  \"droppedEventCount\": %d,\n"), SessionMetadata.DroppedEventCount);
-	Json += FString::Printf(TEXT("  \"historyTruncated\": %s,\n"), SessionMetadata.bHistoryTruncated ? TEXT("true") : TEXT("false"));
-	Json += FString::Printf(
-		TEXT("  \"eventIntegrityCompromised\": %s,\n"),
-		SessionMetadata.bEventIntegrityCompromised ? TEXT("true") : TEXT("false"));
-	Json += FString::Printf(TEXT("  \"firstAvailableSequence\": %lld,\n"), SessionMetadata.FirstAvailableSequence);
-	Json += FString::Printf(TEXT("  \"lastAvailableSequence\": %lld,\n"), SessionMetadata.LastAvailableSequence);
-	Json += FString::Printf(TEXT("  \"snapshotIntervalSeconds\": %.3f,\n"), SessionMetadata.SnapshotIntervalSeconds);
-	Json += FString::Printf(TEXT("  \"peakTemperatureCelsius\": %.3f,\n"), SessionMetadata.PeakTemperatureCelsius);
-	Json += FString::Printf(
-		TEXT("  \"minimumBatteryChargeFraction\": %.3f,\n"),
-		SessionMetadata.MinimumBatteryChargeFraction);
-	Json += FString::Printf(TEXT("  \"minimumFuelFraction\": %.3f,\n"), SessionMetadata.MinimumFuelFraction);
-	Json += FString::Printf(TEXT("  \"eventCount\": %d,\n"), EventHistory.Num());
-	Json += FString::Printf(TEXT("  \"snapshotCount\": %d\n"), SnapshotHistory.Num());
-	Json += TEXT("}\n");
-	return Json;
+	FName MissionId = NAME_None;
+	if (const UEdenMissionSubsystem* Mission = BoundMission.Get())
+	{
+		MissionId = Mission->GetMissionStateSnapshot().ActiveMissionId;
+	}
+	else if (SnapshotHistory.Num() > 0)
+	{
+		MissionId = SnapshotHistory.Last().Mission.ActiveMissionId;
+	}
+
+	return FEdenTelemetryExportModel::BuildSessionJsonV1(
+		EventHistory,
+		SnapshotHistory,
+		SessionMetadata,
+		ActiveSessionId.IsEmpty() ? TEXT("unknown-session") : ActiveSessionId,
+		MissionId);
+}
+
+FString UEdenTelemetrySubsystem::WriteSessionJsonV1ToDisk() const
+{
+	const FString Json = ExportSessionJsonV1();
+	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Telemetry"));
+	IFileManager::Get().MakeDirectory(*Directory, true);
+
+	const FString SafeSessionId = ActiveSessionId.IsEmpty() ? TEXT("unknown-session") : ActiveSessionId;
+	const FString Filename = FString::Printf(TEXT("telemetry_%s.json"), *SafeSessionId);
+	const FString AbsolutePath = FPaths::ConvertRelativePathToFull(FPaths::Combine(Directory, Filename));
+
+	if (!FFileHelper::SaveStringToFile(Json, *AbsolutePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+	{
+		UE_LOG(LogEdenTelemetry, Error, TEXT("Failed to write telemetry export to '%s'."), *AbsolutePath);
+		return FString();
+	}
+
+	UE_LOG(LogEdenTelemetry, Log, TEXT("Wrote telemetry export '%s'."), *AbsolutePath);
+	return AbsolutePath;
+}
+
+FEdenAfterActionResult UEdenTelemetrySubsystem::BuildAfterActionResult() const
+{
+	return FEdenAfterActionModel::Build(EventHistory, SnapshotHistory, SessionMetadata);
 }
 
 void UEdenTelemetrySubsystem::BindSources()
@@ -421,7 +452,14 @@ void UEdenTelemetrySubsystem::HandleOperatorIntentChanged(FEdenOperatorIntent Pr
 
 void UEdenTelemetrySubsystem::HandleAlertRaised(FEdenAlert Alert)
 {
-	RecordEvent(EEdenTelemetryEventType::AlertRaised, Alert.SourceSystem, Alert.AlertId, Alert.DisplayText.ToString());
+	RecordEvent(
+		EEdenTelemetryEventType::AlertRaised,
+		Alert.SourceSystem,
+		Alert.AlertId,
+		FString::Printf(
+			TEXT("[%s] %s"),
+			*UEnum::GetValueAsString(Alert.Severity),
+			*Alert.DisplayText.ToString()));
 }
 
 void UEdenTelemetrySubsystem::HandleAlertCleared(FName AlertId)
