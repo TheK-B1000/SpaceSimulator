@@ -357,6 +357,9 @@ bool FEdenOsAdvisoryObserveModeDoesNotEvaluateTest::RunTest(const FString& Param
 	TestTrue(
 		TEXT("Advisory is permitted"),
 		FEdenOsAdvisoryModel::IsAdvisoryEvaluationPermitted(EEdenOsAuthorityMode::Advisory));
+	TestTrue(
+		TEXT("AuthorizedControl is permitted for L advisory+automation chain"),
+		FEdenOsAdvisoryModel::IsAdvisoryEvaluationPermitted(EEdenOsAuthorityMode::AuthorizedControl));
 
 	// Observe must not evaluate even when every trigger would otherwise fire.
 	EdenOsAdvisoryTests::FInputFixture Fixture;

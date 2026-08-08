@@ -132,6 +132,14 @@ bool FEdenOsWireRoutesAndSchemaVersionContractTest::RunTest(const FString& Param
 		TEXT("Complete route"),
 		FString(EdenOsWireContract::CompleteRouteTemplate),
 		TEXT("/api/missions/sessions/{id}/complete"));
+	TestEqual(
+		TEXT("Advisories route"),
+		FString(EdenOsWireContract::AdvisoriesRouteTemplate),
+		TEXT("/api/missions/sessions/{id}/advisories"));
+	TestEqual(
+		TEXT("Command proposals route"),
+		FString(EdenOsWireContract::CommandProposalsRouteTemplate),
+		TEXT("/api/missions/sessions/{id}/command-proposals"));
 	TestFalse(TEXT("No route-level /api/v1"), FString(EdenOsWireContract::CreateSessionRoute).Contains(TEXT("/api/v1/")));
 	return true;
 }
@@ -643,6 +651,149 @@ bool FEdenOsWireAdvisoryResponseParsesAndCorrelatesEvaluationIdTest::RunTest(con
 		FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(EscapedRationaleJson, TEXT("eval-42"));
 	TestTrue(TEXT("Escaped quotes in rationale parse"), Escaped.IsSuccess());
 	TestTrue(TEXT("Escaped quote preserved"), Escaped.Response.Rationale.Contains(TEXT("\"wait\"")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireCommandProposalRequestSerializesEvaluationOnlyTest,
+	"Eden.Unit.EdenOs.Wire.CommandProposalRequestSerializesEvaluationOnly",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireCommandProposalRequestSerializesEvaluationOnlyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenOsCommandProposalRequestV1 Request;
+	Request.EvaluationId = TEXT("eval-42");
+	const FEdenOsWireSerializationResult Result =
+		FEdenOsWireSerializationModel::BuildCommandProposalJsonV1(Request);
+	TestTrue(TEXT("Build succeeds"), Result.IsSuccess());
+	TestEqual(TEXT("Top-level field count"), EdenOsWireTests::CountTopLevelFieldLines(Result.Json), 2);
+	TestTrue(TEXT("schemaVersion"), Result.Json.Contains(TEXT("\"schemaVersion\": 1")));
+	TestTrue(TEXT("evaluationId"), Result.Json.Contains(TEXT("\"evaluationId\": \"eval-42\"")));
+	TestFalse(TEXT("No recommendation prose"), Result.Json.Contains(TEXT("recommendation")));
+	TestFalse(TEXT("No rationale prose"), Result.Json.Contains(TEXT("rationale")));
+
+	FEdenOsCommandProposalRequestV1 Empty;
+	TestFalse(
+		TEXT("Empty evaluationId rejected"),
+		FEdenOsWireSerializationModel::BuildCommandProposalJsonV1(Empty).IsSuccess());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsWireCommandProposalResponseExactVocabularyAndAliasesRejectedTest,
+	"Eden.Unit.EdenOs.Wire.CommandProposalResponseExactVocabularyAndAliasesRejected",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsWireCommandProposalResponseExactVocabularyAndAliasesRejectedTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const auto Parse = [](int32 Status, const FString& Body)
+	{
+		return FEdenOsWireSerializationModel::ParseCommandProposalResponseV1(
+			Status,
+			Body,
+			TEXT("session-1"),
+			TEXT("eval-1"));
+	};
+
+	const FEdenOsCommandProposalResponseParseResult NoProposal = Parse(204, FString());
+	TestTrue(TEXT("204 is success"), NoProposal.IsSuccess());
+	TestTrue(TEXT("204 is no proposal"), NoProposal.bNoProposal);
+	TestFalse(TEXT("204 has no proposal payload"), NoProposal.HasProposal());
+
+	const FString LoadShedBody = TEXT(
+		"{"
+		"\"schemaVersion\":1,"
+		"\"proposalId\":\"prop-1\","
+		"\"sessionId\":\"session-1\","
+		"\"evaluationId\":\"eval-1\","
+		"\"commandType\":\"set_load_shed_mode\","
+		"\"parameters\":{\"mode\":\"shed\"}"
+		"}");
+	const FEdenOsCommandProposalResponseParseResult LoadShed = Parse(201, LoadShedBody);
+	TestTrue(TEXT("201 load shed parses"), LoadShed.HasProposal());
+	TestEqual(TEXT("Load shed command"), LoadShed.Proposal.CommandType, EEdenExternalCommandType::SetLoadShedMode);
+	TestEqual(TEXT("Load shed mode"), LoadShed.Proposal.Parameters.LoadShedMode, EEdenLoadShedMode::Shed);
+
+	const FString ThermalBody = TEXT(
+		"{"
+		"\"schemaVersion\":1,"
+		"\"proposalId\":\"prop-2\","
+		"\"sessionId\":\"session-1\","
+		"\"evaluationId\":\"eval-1\","
+		"\"commandType\":\"set_thermal_control_mode\","
+		"\"parameters\":{\"mode\":\"boost\"}"
+		"}");
+	TestEqual(
+		TEXT("Thermal boost"),
+		Parse(200, ThermalBody).Proposal.Parameters.ThermalMode,
+		EEdenThermalControlMode::Boost);
+
+	const FString PropulsionBody = TEXT(
+		"{"
+		"\"schemaVersion\":1,"
+		"\"proposalId\":\"prop-3\","
+		"\"sessionId\":\"session-1\","
+		"\"evaluationId\":\"eval-1\","
+		"\"commandType\":\"set_propulsion_priority_mode\","
+		"\"parameters\":{\"mode\":\"reduced\"}"
+		"}");
+	TestEqual(
+		TEXT("Propulsion reduced"),
+		Parse(200, PropulsionBody).Proposal.Parameters.PropulsionPriorityMode,
+		EEdenPropulsionPriorityMode::Reduced);
+
+	const FString PascalCommandBody =
+		TEXT("{\"schemaVersion\":1,\"proposalId\":\"p\",\"sessionId\":\"session-1\",\"evaluationId\":\"eval-1\",")
+		TEXT("\"commandType\":\"SetLoadShedMode\",\"parameters\":{\"mode\":\"shed\"}}");
+	TestFalse(TEXT("PascalCase command alias rejected"), Parse(201, PascalCommandBody).IsSuccess());
+
+	const FString UpperModeBody =
+		TEXT("{\"schemaVersion\":1,\"proposalId\":\"p\",\"sessionId\":\"session-1\",\"evaluationId\":\"eval-1\",")
+		TEXT("\"commandType\":\"set_load_shed_mode\",\"parameters\":{\"mode\":\"Shed\"}}");
+	TestFalse(TEXT("Uppercase mode alias rejected"), Parse(201, UpperModeBody).IsSuccess());
+	TestTrue(
+		TEXT("Uppercase mode body retains capital S"),
+		UpperModeBody.Contains(TEXT("\"mode\":\"Shed\"")));
+
+	const FString UnknownCommandBody =
+		TEXT("{\"schemaVersion\":1,\"proposalId\":\"p\",\"sessionId\":\"session-1\",\"evaluationId\":\"eval-1\",")
+		TEXT("\"commandType\":\"set_power_generation\",\"parameters\":{\"mode\":\"shed\"}}");
+	TestFalse(TEXT("Unknown command rejected"), Parse(201, UnknownCommandBody).IsSuccess());
+
+	const FString UnknownModeBody =
+		TEXT("{\"schemaVersion\":1,\"proposalId\":\"p\",\"sessionId\":\"session-1\",\"evaluationId\":\"eval-1\",")
+		TEXT("\"commandType\":\"set_load_shed_mode\",\"parameters\":{\"mode\":\"aggressive\"}}");
+	TestFalse(TEXT("Unknown mode rejected"), Parse(201, UnknownModeBody).IsSuccess());
+	TestFalse(
+		TEXT("Session mismatch rejected"),
+		FEdenOsWireSerializationModel::ParseCommandProposalResponseV1(
+			201,
+			LoadShedBody,
+			TEXT("session-other"),
+			TEXT("eval-1"))
+			.IsSuccess());
+	TestFalse(
+		TEXT("Evaluation mismatch rejected"),
+		FEdenOsWireSerializationModel::ParseCommandProposalResponseV1(
+			201,
+			LoadShedBody,
+			TEXT("session-1"),
+			TEXT("eval-other"))
+			.IsSuccess());
+	TestFalse(
+		TEXT("204 with body rejected"),
+		Parse(204, TEXT("{}")).IsSuccess());
+	TestFalse(
+		TEXT("Unsupported status rejected"),
+		Parse(202, LoadShedBody).IsSuccess());
+
+	// Parse returns FEdenExternalCommandProposal — never a validated artifact type from the network.
+	TestTrue(TEXT("Proposal id present"), LoadShed.Proposal.ProposalId == TEXT("prop-1"));
+	TestEqual(TEXT("Proposal schema"), LoadShed.Proposal.SchemaVersion, 1);
 	return true;
 }
 

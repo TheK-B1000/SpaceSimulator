@@ -144,6 +144,7 @@ FEdenTelemetrySinkResult UEdenOsAdapterSubsystem::EnqueueOutboundRequest(FEdenOs
 	ConnectionSnapshot.AuthorityMode = RuntimeConfig.AuthorityMode;
 	ConnectionSnapshot.bExternalCommandValidationEnabled = RuntimeConfig.bExternalCommandValidationEnabled;
 	ConnectionSnapshot.bExternalCommandExecutionEnabled = RuntimeConfig.bExternalCommandExecutionEnabled;
+	ConnectionSnapshot.bExternalCommandAutomationEnabled = RuntimeConfig.bExternalCommandAutomationEnabled;
 	ConnectionSnapshot.bHasBearerJwt = !RuntimeConfig.RuntimeBearerJwt.IsEmpty();
 	if (!RuntimeConfig.bEnabled)
 	{
@@ -377,10 +378,15 @@ void UEdenOsAdapterSubsystem::HandleTransportCompleted(
 	{
 		HandleAdvisoryTransportCompleted(Result, SequenceNumber);
 	}
+	else if (MessageType == EEdenOsOutboundMessageType::CommandProposal)
+	{
+		HandleCommandProposalTransportCompleted(Result, SequenceNumber);
+	}
 	else if (MessageType == EEdenOsOutboundMessageType::SessionComplete && Result.IsSuccess())
 	{
-		// Terminal session: drop any advisory work that would 409 against ProjectEden.
+		// Terminal session: drop any advisory/command-proposal work that would 409 against ProjectEden.
 		CancelPendingAdvisoryDispatches(TEXT("session completed"));
+		CancelPendingCommandProposalDispatches(TEXT("session completed"));
 	}
 
 	PumpOutboundQueue();
@@ -771,6 +777,9 @@ void UEdenOsAdapterSubsystem::AcceptAdvisoryResponse(
 		*Response.AdvisoryId,
 		*Response.EvaluationId,
 		IssuedSimulationTimeSeconds);
+
+	// Checkpoint L: only after LatestAcceptedAdvisory is updated for this non-stale evaluation.
+	MaybeDispatchCommandProposalAutomation(Pending);
 }
 
 void UEdenOsAdapterSubsystem::CancelPendingAdvisoryDispatches(const TCHAR* Reason)
@@ -795,6 +804,34 @@ void UEdenOsAdapterSubsystem::CancelPendingAdvisoryDispatches(const TCHAR* Reaso
 			LogEdenOs,
 			Log,
 			TEXT("Cancelled advisory dispatches (%d queued, %d pending maps) because %s."),
+			RemovedQueued,
+			RemovedPending,
+			Reason ? Reason : TEXT("unspecified"));
+	}
+}
+
+void UEdenOsAdapterSubsystem::CancelPendingCommandProposalDispatches(const TCHAR* Reason)
+{
+	int32 RemovedQueued = 0;
+	for (int32 Index = OutboundQueue.Num() - 1; Index >= 0; --Index)
+	{
+		if (OutboundQueue[Index].MessageType == EEdenOsOutboundMessageType::CommandProposal)
+		{
+			PendingCommandProposalByOutboundSequence.Remove(OutboundQueue[Index].SequenceNumber);
+			OutboundQueue.RemoveAt(Index, 1, EAllowShrinking::No);
+			++RemovedQueued;
+		}
+	}
+
+	const int32 RemovedPending = PendingCommandProposalByOutboundSequence.Num();
+	PendingCommandProposalByOutboundSequence.Reset();
+
+	if (RemovedQueued > 0 || RemovedPending > 0)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Cancelled command-proposal dispatches (%d queued, %d pending maps) because %s."),
 			RemovedQueued,
 			RemovedPending,
 			Reason ? Reason : TEXT("unspecified"));
@@ -831,6 +868,9 @@ void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
 	AdvisoryEvaluationCount = 0;
 	NextAdvisoryEvaluationOrdinal = 1;
 	LatestAcceptedAdvisoryOrdinal = 0;
+	BoundCommandProposalSessionId.Reset();
+	RequestedProposalEvaluationIds.Reset();
+	PendingCommandProposalByOutboundSequence.Reset();
 	if (ExternalCommandRouter)
 	{
 		ExternalCommandRouter->ResetValidationState();
@@ -839,6 +879,253 @@ void UEdenOsAdapterSubsystem::ResetAdvisoryRuntimeState()
 	{
 		ExternalCommandExecutor->ResetExecutionState();
 	}
+}
+
+bool UEdenOsAdapterSubsystem::AreCommandProposalAutomationHttpGatesOpen() const
+{
+	return RuntimeConfig.AuthorityMode == EEdenOsAuthorityMode::AuthorizedControl
+		&& RuntimeConfig.bExternalCommandValidationEnabled
+		&& RuntimeConfig.bExternalCommandAutomationEnabled;
+}
+
+void UEdenOsAdapterSubsystem::RebindCommandProposalSessionIfNeeded(const FString& SessionId)
+{
+	if (BoundCommandProposalSessionId == SessionId)
+	{
+		return;
+	}
+
+	if (!BoundCommandProposalSessionId.IsEmpty())
+	{
+		CancelPendingCommandProposalDispatches(TEXT("session rebound"));
+	}
+
+	BoundCommandProposalSessionId = SessionId;
+	RequestedProposalEvaluationIds.Reset();
+}
+
+void UEdenOsAdapterSubsystem::MaybeDispatchCommandProposalAutomation(const FPendingAdvisoryDispatch& Pending)
+{
+	if (!AreCommandProposalAutomationHttpGatesOpen())
+	{
+		return;
+	}
+
+	if (Pending.EvaluationId.IsEmpty() || Pending.Context.SessionId.IsEmpty())
+	{
+		return;
+	}
+
+	if (RequestedProposalEvaluationIds.Contains(Pending.EvaluationId))
+	{
+		return;
+	}
+
+	DispatchCommandProposalForEvaluation(Pending.EvaluationId, Pending.Context.SessionId);
+}
+
+void UEdenOsAdapterSubsystem::DispatchCommandProposalForEvaluation(
+	const FString& EvaluationId,
+	const FString& SessionId)
+{
+	if (!AreCommandProposalAutomationHttpGatesOpen())
+	{
+		return;
+	}
+
+	if (EvaluationId.IsEmpty() || SessionId.IsEmpty())
+	{
+		UE_LOG(LogEdenOs, Warning, TEXT("Command proposal dispatch skipped: missing evaluation or session id."));
+		return;
+	}
+
+	RebindCommandProposalSessionIfNeeded(SessionId);
+
+	if (RequestedProposalEvaluationIds.Contains(EvaluationId))
+	{
+		return;
+	}
+
+	if (HasSessionCompletedOrCompletionQueued())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Command proposal dispatch skipped for %s: completion already queued or delivered."),
+			*EvaluationId);
+		return;
+	}
+
+	FEdenOsCommandProposalRequestV1 Request;
+	Request.EvaluationId = EvaluationId;
+	const FEdenOsWireSerializationResult Serialization =
+		FEdenOsWireSerializationModel::BuildCommandProposalJsonV1(Request);
+	if (!Serialization.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Command proposal request serialization failed for %s: %s"),
+			*EvaluationId,
+			*Serialization.ErrorMessage);
+		return;
+	}
+
+	const int64 SequenceNumber = NextOutboundSequenceNumber;
+	FPendingCommandProposalDispatch Pending;
+	Pending.EvaluationId = EvaluationId;
+	Pending.SessionId = SessionId;
+	PendingCommandProposalByOutboundSequence.Add(SequenceNumber, Pending);
+	RequestedProposalEvaluationIds.Add(EvaluationId);
+
+	FEdenOsQueuedRequest Queued;
+	Queued.MessageType = EEdenOsOutboundMessageType::CommandProposal;
+	Queued.RoutePath = FEdenOsUrlModel::BuildSessionRoute(
+		EdenOsWireContract::CommandProposalsRouteTemplate,
+		SessionId);
+	Queued.BodyJson = Serialization.Json;
+
+	const FEdenTelemetrySinkResult EnqueueResult = EnqueueOutboundRequest(MoveTemp(Queued));
+	if (!EnqueueResult.IsSuccess())
+	{
+		PendingCommandProposalByOutboundSequence.Remove(SequenceNumber);
+		RequestedProposalEvaluationIds.Remove(EvaluationId);
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Command proposal enqueue failed for %s: %s"),
+			*EvaluationId,
+			*EnqueueResult.ErrorMessage);
+	}
+}
+
+void UEdenOsAdapterSubsystem::HandleCommandProposalTransportCompleted(
+	const FEdenOsHttpResult& Result,
+	int64 SequenceNumber)
+{
+	FPendingCommandProposalDispatch Pending;
+	const bool bHadPending = PendingCommandProposalByOutboundSequence.RemoveAndCopyValue(SequenceNumber, Pending);
+	if (!bHadPending)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Command proposal transport completed for unknown outbound sequence %lld; ignoring."),
+			SequenceNumber);
+		return;
+	}
+
+	if (!AreCommandProposalAutomationHttpGatesOpen())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Discarding command proposal response for %s: automation HTTP gates closed."),
+			*Pending.EvaluationId);
+		return;
+	}
+
+	FString ActiveSessionId;
+	if (const UWorld* World = GetWorld())
+	{
+		if (const UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
+		{
+			ActiveSessionId = Telemetry->GetSessionId();
+		}
+	}
+
+	const bool bSessionStale =
+		Pending.SessionId.IsEmpty()
+		|| (!ActiveSessionId.IsEmpty() && ActiveSessionId != Pending.SessionId)
+		|| (!BoundCommandProposalSessionId.IsEmpty() && BoundCommandProposalSessionId != Pending.SessionId);
+	const bool bEvaluationStale =
+		!LatestAcceptedAdvisory.bIsValid
+		|| LatestAcceptedAdvisory.EvaluationId != Pending.EvaluationId;
+
+	if (bSessionStale || bEvaluationStale)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Discarding command proposal response for %s: stale session/evaluation correlation."),
+			*Pending.EvaluationId);
+		return;
+	}
+
+	if (!Result.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Command proposal transport failed for %s: %s"),
+			*Pending.EvaluationId,
+			*Result.ErrorSummary);
+		return;
+	}
+
+	const FEdenOsCommandProposalResponseParseResult Parsed =
+		FEdenOsWireSerializationModel::ParseCommandProposalResponseV1(
+			Result.HttpStatusCode,
+			Result.ResponseBodyJson,
+			Pending.SessionId,
+			Pending.EvaluationId);
+
+	if (!Parsed.IsSuccess())
+	{
+		UE_LOG(
+			LogEdenOs,
+			Warning,
+			TEXT("Command proposal response rejected for %s: %s"),
+			*Pending.EvaluationId,
+			*Parsed.ErrorMessage);
+		return;
+	}
+
+	if (Parsed.bNoProposal)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Command proposal returned no proposal for evaluation %s."),
+			*Pending.EvaluationId);
+		return;
+	}
+
+	// Mandatory J boundary: network data becomes a typed proposal, never a validated artifact.
+	const FEdenExternalCommandValidationOutcome Validation =
+		ValidateExternalCommandProposal(Parsed.Proposal);
+	if (!Validation.IsValid() || !Validation.bHasValidatedCommand)
+	{
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Command proposal for %s failed J validation (reason=%d)."),
+			*Pending.EvaluationId,
+			static_cast<int32>(Validation.RejectionReason));
+		return;
+	}
+
+	if (!RuntimeConfig.bExternalCommandExecutionEnabled)
+	{
+		// Dry-run: validated artifact is not retained for deferred execute.
+		UE_LOG(
+			LogEdenOs,
+			Log,
+			TEXT("Command proposal for %s validated in dry-run; execution disabled, not deferred."),
+			*Pending.EvaluationId);
+		return;
+	}
+
+	// Mandatory K boundary: only ExecuteValidatedExternalCommand may converge controls.
+	const FEdenExternalCommandExecutionResult Execution =
+		ExecuteValidatedExternalCommand(Validation.ValidatedCommand);
+	UE_LOG(
+		LogEdenOs,
+		Log,
+		TEXT("Command proposal for %s execution outcome=%d rejection=%d."),
+		*Pending.EvaluationId,
+		static_cast<int32>(Execution.Outcome),
+		static_cast<int32>(Execution.RejectionReason));
 }
 
 void UEdenOsAdapterSubsystem::EnsureExternalCommandRouter()

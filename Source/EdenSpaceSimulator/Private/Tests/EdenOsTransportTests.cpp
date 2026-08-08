@@ -6,8 +6,11 @@
 #include "EdenOs/EdenOsTransport.h"
 #include "EdenOs/EdenOsWireTypes.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "Flight/EdenFlightMovementComponent.h"
 #include "Missions/EdenMissionSubsystem.h"
+#include "Operations/EdenOperatorControlComponent.h"
 #include "Operations/EdenOperatorHudTypes.h"
+#include "Operations/EdenOperatorTypes.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
@@ -18,6 +21,7 @@
 #include "Dom/JsonObject.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
 #include "GameFramework/Actor.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/AutomationTest.h"
@@ -575,6 +579,8 @@ namespace EdenOsTransportTests
 			return TEXT("SessionComplete");
 		case EEdenOsOutboundMessageType::Advisory:
 			return TEXT("Advisory");
+		case EEdenOsOutboundMessageType::CommandProposal:
+			return TEXT("CommandProposal");
 		default:
 			return TEXT("Unknown");
 		}
@@ -612,6 +618,58 @@ namespace EdenOsTransportTests
 		default:
 			return TEXT("Unknown");
 		}
+	}
+
+	const TCHAR* LoadShedModeToString(EEdenLoadShedMode Mode)
+	{
+		switch (Mode)
+		{
+		case EEdenLoadShedMode::Normal:
+			return TEXT("Normal");
+		case EEdenLoadShedMode::Shed:
+			return TEXT("Shed");
+		default:
+			return TEXT("Unknown");
+		}
+	}
+
+	EEdenOsAuthorityMode ParseLiveAuthorityMode(const FString& RequestedAuthorityMode)
+	{
+		if (RequestedAuthorityMode.Equals(TEXT("Observe"), ESearchCase::IgnoreCase))
+		{
+			return EEdenOsAuthorityMode::Observe;
+		}
+		if (RequestedAuthorityMode.Equals(TEXT("AuthorizedControl"), ESearchCase::IgnoreCase))
+		{
+			return EEdenOsAuthorityMode::AuthorizedControl;
+		}
+		return EEdenOsAuthorityMode::Advisory;
+	}
+
+	int32 CountTelemetryEventsOfType(const TArray<FEdenTelemetryEvent>& History, EEdenTelemetryEventType Type)
+	{
+		int32 Count = 0;
+		for (const FEdenTelemetryEvent& Event : History)
+		{
+			if (Event.EventType == Type)
+			{
+				++Count;
+			}
+		}
+		return Count;
+	}
+
+	int32 CountSuccessfulDeliveriesOfType(const TArray<FEdenOsDeliveryRecord>& Records, EEdenOsOutboundMessageType MessageType)
+	{
+		int32 Count = 0;
+		for (const FEdenOsDeliveryRecord& Record : Records)
+		{
+			if (Record.MessageType == MessageType && Record.bSucceeded)
+			{
+				++Count;
+			}
+		}
+		return Count;
 	}
 
 	int32 CountDeliveryRecordsOfType(const TArray<FEdenOsDeliveryRecord>& Records, EEdenOsOutboundMessageType MessageType)
@@ -658,6 +716,9 @@ namespace EdenOsTransportTests
 		FString PresentationRationale;
 		FString PresentationAdvisoryId;
 		float PresentationIssuedSimulationTimeSeconds = 0.0f;
+		int32 CommandProposalCount = 0;
+		FString LoadShedMode;
+		int32 ExecutedEventCount = 0;
 	};
 
 	bool TryParseIssuedAdvisoryDetail(
@@ -741,6 +802,18 @@ namespace EdenOsTransportTests
 		Json += FString::Printf(TEXT("  \"droppedMessageCount\": %d,\n"), Snapshot.DroppedMessageCount);
 		Json += FString::Printf(TEXT("  \"expectedRequestCount\": %d,\n"), ExpectedRequestCount);
 		Json += FString::Printf(TEXT("  \"advisoryIssuedCount\": %d,\n"), ReturnPath.AdvisoryIssuedCount);
+		Json += FString::Printf(TEXT("  \"commandProposalCount\": %d,\n"), ReturnPath.CommandProposalCount);
+		Json += FString::Printf(TEXT("  \"executedEventCount\": %d,\n"), ReturnPath.ExecutedEventCount);
+		if (ReturnPath.LoadShedMode.IsEmpty())
+		{
+			Json += TEXT("  \"loadShedMode\": null,\n");
+		}
+		else
+		{
+			Json += FString::Printf(
+				TEXT("  \"loadShedMode\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.LoadShedMode));
+		}
 
 		if (ReturnPath.bHasLatestEvent)
 		{
@@ -866,6 +939,233 @@ namespace EdenOsTransportTests
 		double StartTimeSeconds = 0.0;
 	};
 
+	/**
+	 * Live AuthorizedControl requires advisory→command-proposal→execute to finish before
+	 * SessionComplete is queued (HasSessionCompletedOrCompletionQueued would otherwise block L).
+	 * The simulation clock is paused after seeding so wall-clock HTTP cannot race SurviveUntilTime
+	 * or thermal objectives while waiting on ProjectEden.
+	 */
+	class FWaitForLiveAuthorizedControlChainCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FWaitForLiveAuthorizedControlChainCommand(
+			TWeakObjectPtr<UEdenOsAdapterSubsystem> InAdapter,
+			TWeakObjectPtr<UEdenOperatorControlComponent> InOperator,
+			TWeakObjectPtr<UEdenTelemetrySubsystem> InTelemetry,
+			double InTimeoutSeconds)
+			: Adapter(InAdapter)
+			, Operator(InOperator)
+			, Telemetry(InTelemetry)
+			, TimeoutSeconds(InTimeoutSeconds)
+		{
+		}
+
+		virtual bool Update() override
+		{
+			if (StartTimeSeconds <= 0.0)
+			{
+				StartTimeSeconds = FPlatformTime::Seconds();
+			}
+
+			const UEdenOsAdapterSubsystem* AdapterPtr = Adapter.Get();
+			const UEdenOperatorControlComponent* OperatorPtr = Operator.Get();
+			const UEdenTelemetrySubsystem* TelemetryPtr = Telemetry.Get();
+			if (!AdapterPtr || !OperatorPtr || !TelemetryPtr)
+			{
+				return FPlatformTime::Seconds() - StartTimeSeconds >= TimeoutSeconds;
+			}
+
+			const TArray<FEdenOsDeliveryRecord> Records = AdapterPtr->GetDeliveryHistoryForTesting();
+			const int32 SuccessfulAdvisories =
+				CountSuccessfulDeliveriesOfType(Records, EEdenOsOutboundMessageType::Advisory);
+			const int32 SuccessfulProposals =
+				CountSuccessfulDeliveriesOfType(Records, EEdenOsOutboundMessageType::CommandProposal);
+			const int32 ExecutedCount = CountTelemetryEventsOfType(
+				TelemetryPtr->GetEventHistory(),
+				EEdenTelemetryEventType::EdenExternalCommandExecuted);
+			const bool bLoadShed = OperatorPtr->GetOperatorIntent().LoadShedMode == EEdenLoadShedMode::Shed;
+			const FEdenOsConnectionSnapshot Snapshot = AdapterPtr->GetConnectionSnapshot();
+
+			if (SuccessfulAdvisories >= 1
+				&& SuccessfulProposals >= 1
+				&& ExecutedCount >= 1
+				&& bLoadShed
+				&& Snapshot.PendingMessageCount == 0)
+			{
+				return true;
+			}
+
+			return FPlatformTime::Seconds() - StartTimeSeconds >= TimeoutSeconds;
+		}
+
+	private:
+		TWeakObjectPtr<UEdenOsAdapterSubsystem> Adapter;
+		TWeakObjectPtr<UEdenOperatorControlComponent> Operator;
+		TWeakObjectPtr<UEdenTelemetrySubsystem> Telemetry;
+		double TimeoutSeconds = 0.0;
+		double StartTimeSeconds = 0.0;
+	};
+
+	class FFinishLiveAuthorizedControlMissionCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FFinishLiveAuthorizedControlMissionCommand(
+			FAutomationTestBase* InTest,
+			TWeakObjectPtr<UEdenSimulationClockSubsystem> InClock,
+			TWeakObjectPtr<UEdenMissionSubsystem> InMission,
+			int32 InMaxAdditionalTicks)
+			: Test(InTest)
+			, Clock(InClock)
+			, Mission(InMission)
+			, MaxAdditionalTicks(InMaxAdditionalTicks)
+		{
+		}
+
+		virtual bool Update() override
+		{
+			UEdenSimulationClockSubsystem* ClockPtr = Clock.Get();
+			UEdenMissionSubsystem* MissionPtr = Mission.Get();
+			if (!Test->TestNotNull(TEXT("Live AC clock exists"), ClockPtr)
+				|| !Test->TestNotNull(TEXT("Live AC mission exists"), MissionPtr))
+			{
+				return true;
+			}
+
+			if (ClockPtr->IsSimulationPaused())
+			{
+				ClockPtr->ResumeSimulation();
+			}
+
+			while (TicksApplied < MaxAdditionalTicks
+				&& MissionPtr->GetMissionState() == EEdenMissionState::Running)
+			{
+				ClockPtr->Tick(0.1f);
+				++TicksApplied;
+			}
+
+			Test->TestEqual(
+				TEXT("Live AuthorizedControl mission reached succeeded state"),
+				MissionPtr->GetMissionState(),
+				EEdenMissionState::Succeeded);
+			return true;
+		}
+
+	private:
+		FAutomationTestBase* Test = nullptr;
+		TWeakObjectPtr<UEdenSimulationClockSubsystem> Clock;
+		TWeakObjectPtr<UEdenMissionSubsystem> Mission;
+		int32 MaxAdditionalTicks = 0;
+		int32 TicksApplied = 0;
+	};
+
+	struct FLiveProjectEdenDeliverSharedState
+	{
+		int32 ExpectedRequestCount = 0;
+		int32 ExpectedEventCount = 0;
+		FString SessionId;
+		bool bReady = false;
+	};
+
+	class FDeliverLiveProjectEdenSessionCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FDeliverLiveProjectEdenSessionCommand(
+			FAutomationTestBase* InTest,
+			TWeakObjectPtr<UEdenTelemetrySubsystem> InTelemetry,
+			TSharedRef<FLiveProjectEdenDeliverSharedState> InShared,
+			bool bInAuthorizedControl)
+			: Test(InTest)
+			, Telemetry(InTelemetry)
+			, Shared(InShared)
+			, bAuthorizedControl(bInAuthorizedControl)
+		{
+		}
+
+		virtual bool Update() override
+		{
+			UEdenTelemetrySubsystem* TelemetryPtr = Telemetry.Get();
+			if (!Test->TestNotNull(TEXT("Live telemetry exists for DeliverSession"), TelemetryPtr))
+			{
+				return true;
+			}
+
+			const FEdenTelemetrySessionPayload PayloadBeforeDelivery = TelemetryPtr->BuildSessionPayload();
+			EEdenOsMissionFinalStatus FinalStatus = EEdenOsMissionFinalStatus::Failed;
+			Test->TestTrue(
+				TEXT("Terminal telemetry fact is present"),
+				FEdenOsMissionLifecycleModel::ResolveFinalStatus(PayloadBeforeDelivery, FinalStatus));
+			Test->TestEqual(TEXT("Terminal status maps to succeeded"), FinalStatus, EEdenOsMissionFinalStatus::Succeeded);
+
+			Shared->ExpectedEventCount = PayloadBeforeDelivery.Events.Num();
+			// Lifecycle floor: create + telemetry + events + complete. Advisory/CommandProposal
+			// are additive and already may be present from in-mission flushes.
+			Shared->ExpectedRequestCount = 1 + 1 + Shared->ExpectedEventCount + 1;
+			if (bAuthorizedControl)
+			{
+				Shared->ExpectedRequestCount += 1; // Advisory floor
+				Shared->ExpectedRequestCount += 1; // CommandProposal floor
+			}
+			Shared->SessionId = TelemetryPtr->GetSessionId();
+
+			const FEdenTelemetrySinkDeliverySummary DeliverySummary =
+				TelemetryPtr->DeliverSessionToRegisteredSinks();
+			Test->TestEqual(TEXT("One EDEN sink delivery attempted"), DeliverySummary.AttemptedCount, 1);
+			Test->TestEqual(TEXT("EDEN sink queued lifecycle requests"), DeliverySummary.SucceededCount, 1);
+			Shared->bReady = true;
+			return true;
+		}
+
+	private:
+		FAutomationTestBase* Test = nullptr;
+		TWeakObjectPtr<UEdenTelemetrySubsystem> Telemetry;
+		TSharedRef<FLiveProjectEdenDeliverSharedState> Shared;
+		bool bAuthorizedControl = false;
+	};
+
+	class FWaitForLiveDeliverSharedHistoryCommand final : public IAutomationLatentCommand
+	{
+	public:
+		FWaitForLiveDeliverSharedHistoryCommand(
+			TWeakObjectPtr<UEdenOsAdapterSubsystem> InAdapter,
+			TSharedRef<FLiveProjectEdenDeliverSharedState> InShared,
+			double InTimeoutSeconds)
+			: Adapter(InAdapter)
+			, Shared(InShared)
+			, TimeoutSeconds(InTimeoutSeconds)
+		{
+		}
+
+		virtual bool Update() override
+		{
+			if (!Shared->bReady)
+			{
+				return false;
+			}
+			if (StartTimeSeconds <= 0.0)
+			{
+				StartTimeSeconds = FPlatformTime::Seconds();
+			}
+
+			if (const UEdenOsAdapterSubsystem* AdapterPtr = Adapter.Get())
+			{
+				const FEdenOsConnectionSnapshot Snapshot = AdapterPtr->GetConnectionSnapshot();
+				if (AdapterPtr->GetDeliveryHistoryForTesting().Num() >= Shared->ExpectedRequestCount
+					&& Snapshot.PendingMessageCount == 0)
+				{
+					return true;
+				}
+			}
+
+			return FPlatformTime::Seconds() - StartTimeSeconds >= TimeoutSeconds;
+		}
+
+	private:
+		TWeakObjectPtr<UEdenOsAdapterSubsystem> Adapter;
+		TSharedRef<FLiveProjectEdenDeliverSharedState> Shared;
+		double TimeoutSeconds = 0.0;
+		double StartTimeSeconds = 0.0;
+	};
+
 	class FVerifyLiveProjectEdenLifecycleCommand final : public IAutomationLatentCommand
 	{
 	public:
@@ -876,7 +1176,9 @@ namespace EdenOsTransportTests
 			FString InSessionId,
 			int32 InExpectedRequestCount,
 			int32 InExpectedEventCount,
-			FString InEvidenceDirectory)
+			FString InEvidenceDirectory,
+			TWeakObjectPtr<UEdenOperatorControlComponent> InOperator = nullptr,
+			TSharedPtr<FLiveProjectEdenDeliverSharedState> InShared = nullptr)
 			: Test(InTest)
 			, ScopedWorld(InScopedWorld)
 			, Adapter(InAdapter)
@@ -884,11 +1186,24 @@ namespace EdenOsTransportTests
 			, ExpectedRequestCount(InExpectedRequestCount)
 			, ExpectedEventCount(InExpectedEventCount)
 			, EvidenceDirectory(MoveTemp(InEvidenceDirectory))
+			, Operator(InOperator)
+			, Shared(InShared)
 		{
 		}
 
 		virtual bool Update() override
 		{
+			if (Shared.IsValid())
+			{
+				if (!Shared->bReady)
+				{
+					return false;
+				}
+				SessionId = Shared->SessionId;
+				ExpectedRequestCount = Shared->ExpectedRequestCount;
+				ExpectedEventCount = Shared->ExpectedEventCount;
+			}
+
 			UEdenOsAdapterSubsystem* AdapterPtr = Adapter.Get();
 			if (!Test->TestNotNull(TEXT("Live adapter still exists"), AdapterPtr))
 			{
@@ -899,13 +1214,18 @@ namespace EdenOsTransportTests
 			const TArray<FEdenOsDeliveryRecord> Records = AdapterPtr->GetDeliveryHistoryForTesting();
 			const FEdenOsConnectionSnapshot Snapshot = AdapterPtr->GetConnectionSnapshot();
 			const int32 AdvisoryCount = CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Advisory);
+			const int32 CommandProposalCount =
+				CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::CommandProposal);
+			const int32 SuccessfulCommandProposals =
+				CountSuccessfulDeliveriesOfType(Records, EEdenOsOutboundMessageType::CommandProposal);
 			const int32 TelemetryCount = CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Telemetry);
 			const int32 EventCount = CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Event);
 			const int32 LifecycleMinimum = ExpectedRequestCount;
 			FLiveAdvisoryReturnPathEvidence ReturnPath;
+			ReturnPath.CommandProposalCount = CommandProposalCount;
 
-			// Advisory mode flushes lifecycle during the mission, so total deliveries can exceed the
-			// classic create+telemetry+events+complete count. Require the lifecycle floor, not equality.
+			// Advisory/AuthorizedControl may flush lifecycle during the mission, so total deliveries
+			// can exceed the classic create+telemetry+events+complete count. Require the floor.
 			Test->TestTrue(
 				TEXT("Live delivery history covers lifecycle floor"),
 				Records.Num() >= LifecycleMinimum);
@@ -1043,9 +1363,78 @@ namespace EdenOsTransportTests
 				ReturnPath.PresentationAdvisoryId = Accepted.AdvisoryId;
 				ReturnPath.PresentationIssuedSimulationTimeSeconds = Accepted.IssuedSimulationTimeSeconds;
 			}
+			else if (Snapshot.AuthorityMode == EEdenOsAuthorityMode::AuthorizedControl)
+			{
+				Test->TestTrue(TEXT("AuthorizedControl issued at least one advisory request"), AdvisoryCount >= 1);
+				Test->TestTrue(
+					TEXT("AuthorizedControl has at least one successful CommandProposal delivery"),
+					SuccessfulCommandProposals >= 1);
+
+				UWorld* World = AdapterPtr->GetWorld();
+				UEdenTelemetrySubsystem* Telemetry =
+					World ? World->GetSubsystem<UEdenTelemetrySubsystem>() : nullptr;
+				UEdenOperatorControlComponent* OperatorPtr = Operator.Get();
+				if (!OperatorPtr && World)
+				{
+					for (TActorIterator<AActor> It(World); It; ++It)
+					{
+						if (UEdenOperatorControlComponent* Found =
+								It->FindComponentByClass<UEdenOperatorControlComponent>())
+						{
+							OperatorPtr = Found;
+							break;
+						}
+					}
+				}
+
+				if (!Test->TestNotNull(TEXT("Live telemetry exists for AuthorizedControl verify"), Telemetry)
+					|| !Test->TestNotNull(TEXT("Operator control exists for AuthorizedControl verify"), OperatorPtr))
+				{
+					ScopedWorld.Reset();
+					return true;
+				}
+
+				const TArray<FEdenTelemetryEvent> EventHistory = Telemetry->GetEventHistory();
+				const int32 ExecutedCount = CountTelemetryEventsOfType(
+					EventHistory,
+					EEdenTelemetryEventType::EdenExternalCommandExecuted);
+				const int32 OperatorIssuedCount = CountTelemetryEventsOfType(
+					EventHistory,
+					EEdenTelemetryEventType::OperatorCommandIssued);
+
+				Test->TestEqual(
+					TEXT("AuthorizedControl emits exactly one EdenExternalCommandExecuted"),
+					ExecutedCount,
+					1);
+				Test->TestEqual(
+					TEXT("AuthorizedControl emits no OperatorCommandIssued from Eden path"),
+					OperatorIssuedCount,
+					0);
+				Test->TestEqual(
+					TEXT("Operator LoadShedMode converged to Shed"),
+					OperatorPtr->GetOperatorIntent().LoadShedMode,
+					EEdenLoadShedMode::Shed);
+				Test->TestEqual(
+					TEXT("LastCommandSource is EdenAuthorizedControl"),
+					OperatorPtr->GetLastCommandSource(),
+					EEdenOperatorCommandSource::EdenAuthorizedControl);
+
+				// Delivery records retain response bodies only (not request bodies), so scanning
+				// Event deliveries for EdenExternalCommandExecuted is not practical here.
+				// Executed presence is proven via telemetry history above; final DeliverSession
+				// includes that event in the Event delivery floor.
+
+				ReturnPath.AdvisoryIssuedCount = CountTelemetryEventsOfType(
+					EventHistory,
+					EEdenTelemetryEventType::EdenAdvisoryIssued);
+				ReturnPath.ExecutedEventCount = ExecutedCount;
+				ReturnPath.LoadShedMode = LoadShedModeToString(OperatorPtr->GetOperatorIntent().LoadShedMode);
+				ReturnPath.CommandProposalCount = CommandProposalCount;
+			}
 			else
 			{
 				Test->TestEqual(TEXT("Observe mode issues no advisory requests"), AdvisoryCount, 0);
+				Test->TestEqual(TEXT("Observe mode issues no command proposals"), CommandProposalCount, 0);
 				if (UWorld* World = AdapterPtr->GetWorld())
 				{
 					if (UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
@@ -1114,6 +1503,8 @@ namespace EdenOsTransportTests
 		int32 ExpectedRequestCount = 0;
 		int32 ExpectedEventCount = 0;
 		FString EvidenceDirectory;
+		TWeakObjectPtr<UEdenOperatorControlComponent> Operator;
+		TSharedPtr<FLiveProjectEdenDeliverSharedState> Shared;
 	};
 }
 
@@ -1667,6 +2058,9 @@ bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Paramete
 		return true;
 	}
 
+	const EEdenOsAuthorityMode AuthorityMode = ParseLiveAuthorityMode(RequestedAuthorityMode);
+	const bool bAuthorizedControl = AuthorityMode == EEdenOsAuthorityMode::AuthorizedControl;
+
 	TSharedRef<FScopedEdenOsMissionWorld> ScopedWorld = MakeShared<FScopedEdenOsMissionWorld>();
 	UWorld* World = ScopedWorld->World;
 
@@ -1696,10 +2090,63 @@ bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Paramete
 	Thermal->InitializeThermalSimulation(MakeThermalConfig());
 	Thermal->RegisterWithSimulationClock();
 
+	TWeakObjectPtr<UEdenOperatorControlComponent> OperatorWeak;
+	if (bAuthorizedControl)
+	{
+		UEdenFlightMovementComponent* Flight = NewObject<UEdenFlightMovementComponent>(Owner);
+		Flight->RegisterComponent();
+
+		UEdenOperatorControlComponent* Operator = NewObject<UEdenOperatorControlComponent>(Owner);
+		Operator->RegisterComponent();
+
+		FEdenOperatorControlConfig OpConfig;
+		OpConfig.BoostDissipationDegreesCelsiusPerSecond = 1.0f;
+		OpConfig.EmergencyDissipationDegreesCelsiusPerSecond = 2.0f;
+		OpConfig.BoostCoolingDemandKilowatts = 1.5f;
+		OpConfig.EmergencyCoolingDemandKilowatts = 4.5f;
+		OpConfig.LoadShedDemandReductionKilowatts = 2.0f;
+		// Live L fixture proves Normal→Shed without thermally failing SurviveUntilTime.
+		OpConfig.LoadShedDissipationReductionDegreesCelsiusPerSecond = 0.0f;
+		OpConfig.ReducedThrustAuthority = 0.5f;
+		TestTrue(TEXT("Operator initializes for AuthorizedControl live E2E"), Operator->InitializeOperatorControl(OpConfig));
+		TestEqual(
+			TEXT("LoadShed starts Normal"),
+			Operator->GetOperatorIntent().LoadShedMode,
+			EEdenLoadShedMode::Normal);
+		Telemetry->BindOperatorControlForTesting(Operator);
+		OperatorWeak = Operator;
+	}
+
 	UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
 	TestNotNull(TEXT("Mission subsystem exists"), Mission);
 	Mission->SetMissionResourceTargets(Thermal, Power, Fuel);
-	Mission->LoadMission(MakeIsolationMissionDefinition());
+
+	FEdenMissionDefinitionConfig MissionDefinition = MakeIsolationMissionDefinition();
+	if (bAuthorizedControl)
+	{
+		// L live proof needs wall-clock HTTP for advisory→proposal→execute while the mission
+		// stays Running, then still completes Succeeded. Soften KeepCool and heating so Shed
+		// (which reduces dissipation) cannot fail the mission before SurviveUntilTime.
+		for (FEdenMissionObjectiveConfig& Objective : MissionDefinition.Objectives)
+		{
+			if (Objective.ObjectiveType == EEdenObjectiveType::SurviveUntilTime)
+			{
+				Objective.TargetValue = 8.0f;
+			}
+			else if (Objective.ObjectiveType == EEdenObjectiveType::KeepTemperatureBelow)
+			{
+				Objective.TargetValue = 1000.0f;
+			}
+		}
+		for (FEdenMissionEventConfig& Event : MissionDefinition.Events)
+		{
+			if (Event.EventId == FName("SolarHeating"))
+			{
+				Event.FloatParameter = 0.0f;
+			}
+		}
+	}
+	Mission->LoadMission(MissionDefinition);
 	Mission->StartMission();
 
 	UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>();
@@ -1711,12 +2158,49 @@ bool FEdenOsLiveProjectEdenMissionLifecycleTest::RunTest(const FString& Paramete
 	Config.RuntimeBearerJwt = RuntimeBearerJwt;
 	Config.RequestTimeoutSeconds = 10.0f;
 	Config.DefaultScenarioId = TEXT("SolarEventEmergency");
-	Config.AuthorityMode = RequestedAuthorityMode.Equals(TEXT("Observe"), ESearchCase::IgnoreCase)
-		? EEdenOsAuthorityMode::Observe
-		: EEdenOsAuthorityMode::Advisory;
+	Config.AuthorityMode = AuthorityMode;
+	if (bAuthorizedControl)
+	{
+		Config.bExternalCommandValidationEnabled = true;
+		Config.bExternalCommandAutomationEnabled = true;
+		Config.bExternalCommandExecutionEnabled = true;
+		// One evaluation opportunity per ~2s sim — avoids flooding proposals before Shed lands.
+		Config.AdvisoryHeartbeatSimulationSeconds = 2.0f;
+	}
 	TestTrue(TEXT("Live runtime config accepted"), Adapter->ApplyRuntimeConfig(Config));
 	TestEqual(TEXT("Live authority mode applied"), Adapter->GetConnectionSnapshot().AuthorityMode, Config.AuthorityMode);
 	TestEqual(TEXT("EDEN sink registered"), Telemetry->GetRegisteredTelemetrySinkCount(), 1);
+
+	if (bAuthorizedControl)
+	{
+		// Seed past the first heartbeat (2.0s @ 0.1s step) without completing SurviveUntilTime=8s.
+		for (int32 Index = 0; Index < 25 && Mission->GetMissionState() == EEdenMissionState::Running; ++Index)
+		{
+			Clock->Tick(0.1f);
+		}
+		Clock->PauseSimulation();
+
+		TSharedRef<FLiveProjectEdenDeliverSharedState> Shared = MakeShared<FLiveProjectEdenDeliverSharedState>();
+		ADD_LATENT_AUTOMATION_COMMAND(FWaitForLiveAuthorizedControlChainCommand(
+			Adapter,
+			OperatorWeak,
+			Telemetry,
+			60.0));
+		ADD_LATENT_AUTOMATION_COMMAND(FFinishLiveAuthorizedControlMissionCommand(this, Clock, Mission, 400));
+		ADD_LATENT_AUTOMATION_COMMAND(FDeliverLiveProjectEdenSessionCommand(this, Telemetry, Shared, true));
+		ADD_LATENT_AUTOMATION_COMMAND(FWaitForLiveDeliverSharedHistoryCommand(Adapter, Shared, 45.0));
+		ADD_LATENT_AUTOMATION_COMMAND(FVerifyLiveProjectEdenLifecycleCommand(
+			this,
+			ScopedWorld,
+			Adapter,
+			FString(),
+			0,
+			0,
+			EvidenceDirectory,
+			OperatorWeak,
+			Shared));
+		return true;
+	}
 
 	for (int32 Index = 0; Index < 20 && Mission->GetMissionState() == EEdenMissionState::Running; ++Index)
 	{

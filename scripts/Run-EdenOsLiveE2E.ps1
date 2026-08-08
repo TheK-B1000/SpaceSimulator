@@ -4,7 +4,7 @@ param(
     [string]$PythonExe = "",
     [int]$Port = 8791,
     [string]$RunId = "",
-    [ValidateSet("Advisory", "Observe")]
+    [ValidateSet("Advisory", "Observe", "AuthorizedControl")]
     [string]$AuthorityMode = "Advisory"
 )
 
@@ -68,6 +68,7 @@ $PreviousEnv = @{
     EDEN_JWT_SECRET = $env:EDEN_JWT_SECRET
     EDEN_ENVIRONMENT = $env:EDEN_ENVIRONMENT
     EDEN_ALLOWED_HOSTS = $env:EDEN_ALLOWED_HOSTS
+    EDEN_COMMAND_PROPOSAL_REASONER = $env:EDEN_COMMAND_PROPOSAL_REASONER
     EDEN_OS_LIVE_E2E_BASE_URL = $env:EDEN_OS_LIVE_E2E_BASE_URL
     EDEN_OS_LIVE_E2E_BEARER_JWT = $env:EDEN_OS_LIVE_E2E_BEARER_JWT
     EDEN_OS_LIVE_E2E_EVIDENCE_DIR = $env:EDEN_OS_LIVE_E2E_EVIDENCE_DIR
@@ -82,6 +83,11 @@ try {
     $env:EDEN_JWT_SECRET = [System.Guid]::NewGuid().ToString("N")
     $env:EDEN_ENVIRONMENT = "development"
     $env:EDEN_ALLOWED_HOSTS = "127.0.0.1,localhost"
+    if ($AuthorityMode -eq "AuthorizedControl") {
+        $env:EDEN_COMMAND_PROPOSAL_REASONER = "test-load-shed"
+    } else {
+        Remove-Item -Path Env:EDEN_COMMAND_PROPOSAL_REASONER -ErrorAction SilentlyContinue
+    }
 
     Push-Location $ProjectEdenApiRoot
     try {
@@ -165,6 +171,7 @@ from sqlalchemy.orm import sessionmaker
 
 from eden_api.database.models import (
     MissionAdvisory,
+    MissionCommandProposal,
     MissionEnvironmentEvent,
     MissionTelemetryPayload,
     SimulationRun,
@@ -193,6 +200,11 @@ def main() -> None:
         1
         for item in deliveries
         if item["messageType"] == "Advisory" and item.get("succeeded") is True
+    )
+    successful_command_proposal_deliveries = sum(
+        1
+        for item in deliveries
+        if item["messageType"] == "CommandProposal" and item.get("succeeded") is True
     )
 
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
@@ -229,6 +241,7 @@ def main() -> None:
         )
         events = db.query(MissionEnvironmentEvent).filter_by(session_id=session_id).all()
         advisories = db.query(MissionAdvisory).filter_by(session_id=session_id).all()
+        command_proposals = db.query(MissionCommandProposal).filter_by(session_id=session_id).all()
         # Advisory mode flushes telemetry incrementally during the mission, so payload count may be > 1.
         if len(telemetry_payloads) < 1:
             fail(f"expected at least one mission telemetry payload, got {len(telemetry_payloads)}")
@@ -247,6 +260,30 @@ def main() -> None:
                 fail(f"expected at least one persisted MissionAdvisory, got {len(advisories)}")
             if any(advisory.simulation_run_id != run.id for advisory in advisories):
                 fail("at least one advisory does not belong to the persisted run")
+        elif authority_mode == "AuthorizedControl":
+            if successful_advisory_deliveries < 1:
+                fail("AuthorizedControl evidence contains no successful advisory deliveries")
+            if len(advisories) < 1:
+                fail(f"expected at least one persisted MissionAdvisory, got {len(advisories)}")
+            if any(advisory.simulation_run_id != run.id for advisory in advisories):
+                fail("at least one advisory does not belong to the persisted run")
+            if successful_command_proposal_deliveries < 1:
+                fail("AuthorizedControl evidence contains no successful CommandProposal deliveries")
+            if len(command_proposals) < 1:
+                fail(
+                    f"expected at least one persisted MissionCommandProposal, got {len(command_proposals)}"
+                )
+            if any(proposal.simulation_run_id != run.id for proposal in command_proposals):
+                fail("at least one command proposal does not belong to the persisted run")
+            has_load_shed = any(
+                proposal.command_type == "set_load_shed_mode"
+                and str((proposal.parameters or {}).get("mode", "")).lower() == "shed"
+                for proposal in command_proposals
+            )
+            if not has_load_shed:
+                fail(
+                    "AuthorizedControl expected a set_load_shed_mode/shed MissionCommandProposal"
+                )
         elif authority_mode == "Observe" and len(advisories) != 0:
             fail(f"Observe mode must not persist advisories, got {len(advisories)}")
 
@@ -265,7 +302,9 @@ def main() -> None:
             "telemetryStateCount": len(telemetry_states),
             "eventCount": len(events),
             "advisoryCount": len(advisories),
+            "commandProposalCount": len(command_proposals),
             "successfulAdvisoryDeliveries": successful_advisory_deliveries,
+            "successfulCommandProposalDeliveries": successful_command_proposal_deliveries,
             "alertsCount": run.alerts_count,
             "ticks": run.ticks,
             "highestRiskSystem": run.highest_risk_system,

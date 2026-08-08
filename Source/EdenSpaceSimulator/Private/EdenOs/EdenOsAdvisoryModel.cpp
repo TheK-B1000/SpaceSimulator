@@ -48,9 +48,10 @@ namespace EdenOsAdvisoryModelPrivate
 
 bool FEdenOsAdvisoryModel::IsAdvisoryEvaluationPermitted(EEdenOsAuthorityMode AuthorityMode)
 {
-	// Observe is telemetry/lifecycle only. AuthorizedControl remains contract-only in 0007 and does
-	// not itself widen advisory evaluation beyond Advisory.
-	return AuthorityMode == EEdenOsAuthorityMode::Advisory;
+	// Observe is telemetry/lifecycle only. Advisory and AuthorizedControl both evaluate so that
+	// Checkpoint L can accept an advisory before requesting a typed command proposal.
+	return AuthorityMode == EEdenOsAuthorityMode::Advisory
+		|| AuthorityMode == EEdenOsAuthorityMode::AuthorizedControl;
 }
 
 bool FEdenOsAdvisoryModel::IsMissionRunningForAdvisory(EEdenMissionState MissionState)

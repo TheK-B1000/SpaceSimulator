@@ -68,6 +68,14 @@ struct EDENSPACESIMULATOR_API FEdenOsConnectionConfig
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
 	bool bExternalCommandExecutionEnabled = false;
 
+	/**
+	 * Checkpoint L: when true with AuthorizedControl and validation enabled, Unreal may
+	 * request typed command proposals after an accepted advisory. Default false.
+	 * Does not imply execution; K still requires bExternalCommandExecutionEnabled.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|OS")
+	bool bExternalCommandAutomationEnabled = false;
+
 	FString RuntimeBearerJwt;
 };
 
@@ -122,6 +130,9 @@ struct EDENSPACESIMULATOR_API FEdenOsConnectionSnapshot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
 	bool bExternalCommandExecutionEnabled = false;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
+	bool bExternalCommandAutomationEnabled = false;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Eden|OS")
 	EEdenOsConnectionState ConnectionState = EEdenOsConnectionState::Disabled;

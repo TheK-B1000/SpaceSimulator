@@ -535,6 +535,316 @@ FEdenOsAdvisoryResponseParseResult FEdenOsWireSerializationModel::ParseAdvisoryR
 	return FEdenOsAdvisoryResponseParseResult::Succeeded(MoveTemp(Response));
 }
 
+FEdenOsCommandProposalResponseParseResult FEdenOsCommandProposalResponseParseResult::NoProposal()
+{
+	FEdenOsCommandProposalResponseParseResult Result;
+	Result.bSuccess = true;
+	Result.bNoProposal = true;
+	return Result;
+}
+
+FEdenOsCommandProposalResponseParseResult FEdenOsCommandProposalResponseParseResult::Succeeded(
+	FEdenExternalCommandProposal InProposal)
+{
+	FEdenOsCommandProposalResponseParseResult Result;
+	Result.bSuccess = true;
+	Result.bNoProposal = false;
+	Result.Proposal = MoveTemp(InProposal);
+	return Result;
+}
+
+FEdenOsCommandProposalResponseParseResult FEdenOsCommandProposalResponseParseResult::Failed(FString InErrorMessage)
+{
+	FEdenOsCommandProposalResponseParseResult Result;
+	Result.bSuccess = false;
+	Result.bNoProposal = false;
+	Result.ErrorMessage = MoveTemp(InErrorMessage);
+	return Result;
+}
+
+bool FEdenOsCommandProposalResponseParseResult::IsSuccess() const
+{
+	return bSuccess;
+}
+
+bool FEdenOsCommandProposalResponseParseResult::HasProposal() const
+{
+	return bSuccess && !bNoProposal;
+}
+
+namespace EdenOsCommandProposalWirePrivate
+{
+	bool WireEqualsExact(const FString& WireValue, const TCHAR* Expected)
+	{
+		// Locked L vocabulary: exact match only — never case-fold or alias.
+		return WireValue.Equals(Expected, ESearchCase::CaseSensitive);
+	}
+
+	bool TryMapCommandType(const FString& WireValue, EEdenExternalCommandType& OutCommandType)
+	{
+		if (WireEqualsExact(WireValue, TEXT("set_thermal_control_mode")))
+		{
+			OutCommandType = EEdenExternalCommandType::SetThermalControlMode;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("set_load_shed_mode")))
+		{
+			OutCommandType = EEdenExternalCommandType::SetLoadShedMode;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("set_propulsion_priority_mode")))
+		{
+			OutCommandType = EEdenExternalCommandType::SetPropulsionPriorityMode;
+			return true;
+		}
+		return false;
+	}
+
+	bool TryMapThermalMode(const FString& WireValue, EEdenThermalControlMode& OutMode)
+	{
+		if (WireEqualsExact(WireValue, TEXT("off")))
+		{
+			OutMode = EEdenThermalControlMode::Off;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("nominal")))
+		{
+			OutMode = EEdenThermalControlMode::Nominal;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("boost")))
+		{
+			OutMode = EEdenThermalControlMode::Boost;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("emergency")))
+		{
+			OutMode = EEdenThermalControlMode::Emergency;
+			return true;
+		}
+		return false;
+	}
+
+	bool TryMapLoadShedMode(const FString& WireValue, EEdenLoadShedMode& OutMode)
+	{
+		if (WireEqualsExact(WireValue, TEXT("normal")))
+		{
+			OutMode = EEdenLoadShedMode::Normal;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("shed")))
+		{
+			OutMode = EEdenLoadShedMode::Shed;
+			return true;
+		}
+		return false;
+	}
+
+	bool TryMapPropulsionPriorityMode(const FString& WireValue, EEdenPropulsionPriorityMode& OutMode)
+	{
+		if (WireEqualsExact(WireValue, TEXT("full")))
+		{
+			OutMode = EEdenPropulsionPriorityMode::Full;
+			return true;
+		}
+		if (WireEqualsExact(WireValue, TEXT("reduced")))
+		{
+			OutMode = EEdenPropulsionPriorityMode::Reduced;
+			return true;
+		}
+		return false;
+	}
+}
+
+FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildCommandProposalJsonV1(
+	const FEdenOsCommandProposalRequestV1& Request)
+{
+	using namespace EdenOsWireSerializationPrivate;
+
+	if (!HasIdentifier(Request.EvaluationId))
+	{
+		return FEdenOsWireSerializationResult::Failed(
+			TEXT("EDEN OS command proposal requires a non-empty evaluationId."));
+	}
+
+	FString Json;
+	Json += TEXT("{\n");
+	Json += FString::Printf(TEXT("  \"schemaVersion\": %d,\n"), EdenOsWireContract::CurrentSchemaVersion);
+	Json += FString::Printf(
+		TEXT("  \"evaluationId\": \"%s\"\n"),
+		*FEdenTelemetryExportModel::EscapeJsonString(Request.EvaluationId));
+	Json += TEXT("}\n");
+	return FEdenOsWireSerializationResult::Succeeded(Json);
+}
+
+FEdenOsCommandProposalResponseParseResult FEdenOsWireSerializationModel::ParseCommandProposalResponseV1(
+	int32 HttpStatusCode,
+	const FString& ResponseBodyJson,
+	const FString& ExpectedSessionId,
+	const FString& ExpectedEvaluationId)
+{
+	using namespace EdenOsCommandProposalWirePrivate;
+
+	if (HttpStatusCode == 204)
+	{
+		const FString Trimmed = ResponseBodyJson.TrimStartAndEnd();
+		if (!Trimmed.IsEmpty())
+		{
+			return FEdenOsCommandProposalResponseParseResult::Failed(
+				TEXT("Command proposal 204 response must have an empty body."));
+		}
+		return FEdenOsCommandProposalResponseParseResult::NoProposal();
+	}
+
+	if (HttpStatusCode != 200 && HttpStatusCode != 201)
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+			TEXT("Unsupported command proposal HTTP status %d."),
+			HttpStatusCode));
+	}
+
+	TSharedPtr<FJsonObject> Root;
+	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBodyJson);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response is not valid JSON."));
+	}
+
+	double SchemaVersion = 0.0;
+	if (!Root->TryGetNumberField(TEXT("schemaVersion"), SchemaVersion))
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response is missing schemaVersion."));
+	}
+	const int32 SchemaVersionInt = static_cast<int32>(SchemaVersion);
+	if (SchemaVersionInt != EdenOsWireContract::CurrentSchemaVersion)
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+			TEXT("Unsupported command proposal schemaVersion %d."),
+			SchemaVersionInt));
+	}
+
+	FString ProposalId;
+	if (!Root->TryGetStringField(TEXT("proposalId"), ProposalId) || ProposalId.TrimStartAndEnd().IsEmpty())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response requires a non-empty proposalId."));
+	}
+
+	FString SessionId;
+	if (!Root->TryGetStringField(TEXT("sessionId"), SessionId) || SessionId.IsEmpty())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response requires a non-empty sessionId."));
+	}
+	if (!ExpectedSessionId.IsEmpty() && SessionId != ExpectedSessionId)
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+			TEXT("Command proposal sessionId '%s' does not match expected session '%s'."),
+			*SessionId,
+			*ExpectedSessionId));
+	}
+
+	FString EvaluationId;
+	if (!Root->TryGetStringField(TEXT("evaluationId"), EvaluationId) || EvaluationId.IsEmpty())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response requires a non-empty evaluationId."));
+	}
+	if (!ExpectedEvaluationId.IsEmpty() && EvaluationId != ExpectedEvaluationId)
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+			TEXT("Command proposal evaluationId '%s' does not match expected evaluation '%s'."),
+			*EvaluationId,
+			*ExpectedEvaluationId));
+	}
+
+	FString CommandTypeWire;
+	if (!Root->TryGetStringField(TEXT("commandType"), CommandTypeWire) || CommandTypeWire.IsEmpty())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response requires a non-empty commandType."));
+	}
+
+	EEdenExternalCommandType CommandType = EEdenExternalCommandType::SetThermalControlMode;
+	if (!TryMapCommandType(CommandTypeWire, CommandType))
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+			TEXT("Unsupported command proposal commandType '%s'."),
+			*CommandTypeWire));
+	}
+
+	const TSharedPtr<FJsonObject>* ParametersObject = nullptr;
+	if (!Root->TryGetObjectField(TEXT("parameters"), ParametersObject) || !ParametersObject || !ParametersObject->IsValid())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal response requires a parameters object."));
+	}
+
+	FString ModeWire;
+	if (!(*ParametersObject)->TryGetStringField(TEXT("mode"), ModeWire) || ModeWire.IsEmpty())
+	{
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal parameters require a non-empty mode."));
+	}
+
+	FEdenExternalCommandProposal Proposal;
+	Proposal.SchemaVersion = SchemaVersionInt;
+	Proposal.ProposalId = ProposalId;
+	Proposal.SessionId = SessionId;
+	Proposal.EvaluationId = EvaluationId;
+	Proposal.CommandType = CommandType;
+
+	switch (CommandType)
+	{
+	case EEdenExternalCommandType::SetThermalControlMode:
+	{
+		EEdenThermalControlMode Mode = EEdenThermalControlMode::Nominal;
+		if (!TryMapThermalMode(ModeWire, Mode))
+		{
+			return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+				TEXT("Unsupported mode '%s' for set_thermal_control_mode."),
+				*ModeWire));
+		}
+		Proposal.Parameters.Kind = EEdenExternalCommandParameterKind::ThermalControlMode;
+		Proposal.Parameters.ThermalMode = Mode;
+		break;
+	}
+	case EEdenExternalCommandType::SetLoadShedMode:
+	{
+		EEdenLoadShedMode Mode = EEdenLoadShedMode::Normal;
+		if (!TryMapLoadShedMode(ModeWire, Mode))
+		{
+			return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+				TEXT("Unsupported mode '%s' for set_load_shed_mode."),
+				*ModeWire));
+		}
+		Proposal.Parameters.Kind = EEdenExternalCommandParameterKind::LoadShedMode;
+		Proposal.Parameters.LoadShedMode = Mode;
+		break;
+	}
+	case EEdenExternalCommandType::SetPropulsionPriorityMode:
+	{
+		EEdenPropulsionPriorityMode Mode = EEdenPropulsionPriorityMode::Full;
+		if (!TryMapPropulsionPriorityMode(ModeWire, Mode))
+		{
+			return FEdenOsCommandProposalResponseParseResult::Failed(FString::Printf(
+				TEXT("Unsupported mode '%s' for set_propulsion_priority_mode."),
+				*ModeWire));
+		}
+		Proposal.Parameters.Kind = EEdenExternalCommandParameterKind::PropulsionPriorityMode;
+		Proposal.Parameters.PropulsionPriorityMode = Mode;
+		break;
+	}
+	default:
+		return FEdenOsCommandProposalResponseParseResult::Failed(
+			TEXT("Command proposal mapped to an unsupported internal command type."));
+	}
+
+	return FEdenOsCommandProposalResponseParseResult::Succeeded(MoveTemp(Proposal));
+}
+
 FEdenOsWireSerializationResult FEdenOsWireSerializationModel::ValidateSchemaVersionFromJson(const FString& Json)
 {
 	const FString Key = TEXT("\"schemaVersion\"");

@@ -16,7 +16,8 @@ enum class EEdenOsOutboundMessageType : uint8
 	Telemetry,
 	Event,
 	SessionComplete,
-	Advisory
+	Advisory,
+	CommandProposal
 };
 
 struct EDENSPACESIMULATOR_API FEdenOsQueuedRequest

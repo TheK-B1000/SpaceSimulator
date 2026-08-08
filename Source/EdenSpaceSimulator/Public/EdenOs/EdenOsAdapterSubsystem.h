@@ -96,13 +96,25 @@ private:
 		int64 EvaluationOrdinal = 0;
 	};
 
+	struct FPendingCommandProposalDispatch
+	{
+		FString EvaluationId;
+		FString SessionId;
+	};
+
 	void EvaluateAdvisoryForSettledStep();
 	void DispatchAdvisoryEvaluation(const FEdenOsAdvisoryContext& Context);
 	void HandleAdvisoryTransportCompleted(const FEdenOsHttpResult& Result, int64 SequenceNumber);
 	void AcceptAdvisoryResponse(
 		const FEdenOsAdvisoryResponseV1& Response,
 		const FPendingAdvisoryDispatch& Pending);
+	void MaybeDispatchCommandProposalAutomation(const FPendingAdvisoryDispatch& Pending);
+	void DispatchCommandProposalForEvaluation(const FString& EvaluationId, const FString& SessionId);
+	void HandleCommandProposalTransportCompleted(const FEdenOsHttpResult& Result, int64 SequenceNumber);
+	bool AreCommandProposalAutomationHttpGatesOpen() const;
+	void RebindCommandProposalSessionIfNeeded(const FString& SessionId);
 	void CancelPendingAdvisoryDispatches(const TCHAR* Reason);
+	void CancelPendingCommandProposalDispatches(const TCHAR* Reason);
 	bool HasSessionCompletedOrCompletionQueued() const;
 	void ResetAdvisoryRuntimeState();
 	void EnsureExternalCommandRouter();
@@ -164,6 +176,11 @@ private:
 	int64 NextAdvisoryEvaluationOrdinal = 1;
 	int64 LatestAcceptedAdvisoryOrdinal = 0;
 
+	// Checkpoint L automation bookkeeping only — not mission/advisory/operator truth.
+	FString BoundCommandProposalSessionId;
+	TSet<FString> RequestedProposalEvaluationIds;
+	TMap<int64, FPendingCommandProposalDispatch> PendingCommandProposalByOutboundSequence;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UEdenExternalCommandRouter> ExternalCommandRouter;
 
@@ -173,6 +190,17 @@ private:
 public:
 	/** Settled steps observed. Distinguishes "not ticking" from "ticking but gated" in diagnostics. */
 	int32 GetAdvisoryTickCountForTesting() const { return AdvisoryTickCount; }
+
+	/** Test seam: count of evaluations that have already attempted a command-proposal request. */
+	int32 GetRequestedCommandProposalEvaluationCountForTesting() const
+	{
+		return RequestedProposalEvaluationIds.Num();
+	}
+
+	bool HasRequestedCommandProposalForEvaluationForTesting(const FString& EvaluationId) const
+	{
+		return RequestedProposalEvaluationIds.Contains(EvaluationId);
+	}
 
 private:
 	int32 AdvisoryTickCount = 0;

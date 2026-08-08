@@ -63,7 +63,11 @@ struct EDENSPACESIMULATOR_API FEdenOsAdvisoryEvaluationResult
  */
 struct EDENSPACESIMULATOR_API FEdenOsAdvisoryModel
 {
-	/** Advisory evaluation is permitted only in Advisory mode. Observe never evaluates. */
+	/**
+	 * Advisory evaluation is permitted in Advisory and AuthorizedControl.
+	 * Observe never evaluates. Checkpoint L requires Accepted advisories under AuthorizedControl
+	 * before command-proposal automation may run.
+	 */
 	static bool IsAdvisoryEvaluationPermitted(EEdenOsAuthorityMode AuthorityMode);
 
 	/** Heartbeat and event triggers apply only while the mission is Running. */

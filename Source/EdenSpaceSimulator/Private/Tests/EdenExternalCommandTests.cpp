@@ -137,12 +137,16 @@ bool FEdenExternalCommandBoundaryDisabledByDefaultTest::RunTest(const FString& P
 	(void)Parameters;
 	TestFalse(TEXT("Config default disables validation"), FEdenOsConnectionConfig().bExternalCommandValidationEnabled);
 	TestFalse(TEXT("Config default disables execution"), FEdenOsConnectionConfig().bExternalCommandExecutionEnabled);
+	TestFalse(TEXT("Config default disables automation"), FEdenOsConnectionConfig().bExternalCommandAutomationEnabled);
 	TestFalse(
 		TEXT("Settings default disables validation"),
 		GetDefault<UEdenOsConnectionSettings>()->bExternalCommandValidationEnabled);
 	TestFalse(
 		TEXT("Settings default disables execution"),
 		GetDefault<UEdenOsConnectionSettings>()->bExternalCommandExecutionEnabled);
+	TestFalse(
+		TEXT("Settings default disables automation"),
+		GetDefault<UEdenOsConnectionSettings>()->bExternalCommandAutomationEnabled);
 
 	const FEdenExternalCommandValidationOutcome Outcome = FEdenExternalCommandModel::ValidateProposal(
 		EdenExternalCommandTests::MakeThermalProposal(),

@@ -255,6 +255,7 @@ bool FEdenOsStateConnectionSnapshotDefaultsDeterministicallyTest::RunTest(const 
 	TestEqual(TEXT("Default authority"), Snapshot.AuthorityMode, EEdenOsAuthorityMode::Advisory);
 	TestFalse(TEXT("External command validation disabled by default"), Snapshot.bExternalCommandValidationEnabled);
 	TestFalse(TEXT("External command execution disabled by default"), Snapshot.bExternalCommandExecutionEnabled);
+	TestFalse(TEXT("External command automation disabled by default"), Snapshot.bExternalCommandAutomationEnabled);
 	TestEqual(TEXT("Pending count"), Snapshot.PendingMessageCount, 0);
 	TestEqual(TEXT("Dropped count"), Snapshot.DroppedMessageCount, 0);
 	TestTrue(TEXT("No default error"), Snapshot.LastErrorSummary.IsEmpty());

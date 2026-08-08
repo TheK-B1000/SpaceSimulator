@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EdenOs/EdenExternalCommandTypes.h"
 #include "EdenOs/EdenOsAdvisoryTypes.h"
 #include "Telemetry/EdenTelemetrySink.h"
 
@@ -17,6 +18,7 @@ namespace EdenOsWireContract
 	inline const TCHAR* EventsRouteTemplate = TEXT("/api/missions/sessions/{id}/events");
 	inline const TCHAR* CompleteRouteTemplate = TEXT("/api/missions/sessions/{id}/complete");
 	inline const TCHAR* AdvisoriesRouteTemplate = TEXT("/api/missions/sessions/{id}/advisories");
+	inline const TCHAR* CommandProposalsRouteTemplate = TEXT("/api/missions/sessions/{id}/command-proposals");
 }
 
 struct EDENSPACESIMULATOR_API FEdenOsWireSerializationResult
@@ -99,6 +101,32 @@ struct EDENSPACESIMULATOR_API FEdenOsAdvisoryResponseParseResult
 	FString ErrorMessage;
 };
 
+/** Outbound Unreal request asking ProjectEden for a typed command proposal (Checkpoint L). */
+struct EDENSPACESIMULATOR_API FEdenOsCommandProposalRequestV1
+{
+	FString EvaluationId;
+};
+
+/**
+ * Parse outcome for POST /command-proposals.
+ * Success with bNoProposal covers legitimate 204 empty decisions.
+ * Success without bNoProposal carries a typed FEdenExternalCommandProposal for J.
+ */
+struct EDENSPACESIMULATOR_API FEdenOsCommandProposalResponseParseResult
+{
+	static FEdenOsCommandProposalResponseParseResult NoProposal();
+	static FEdenOsCommandProposalResponseParseResult Succeeded(FEdenExternalCommandProposal InProposal);
+	static FEdenOsCommandProposalResponseParseResult Failed(FString InErrorMessage);
+
+	bool IsSuccess() const;
+	bool HasProposal() const;
+
+	bool bSuccess = false;
+	bool bNoProposal = false;
+	FEdenExternalCommandProposal Proposal;
+	FString ErrorMessage;
+};
+
 struct EDENSPACESIMULATOR_API FEdenOsWireSerializationModel
 {
 	/**
@@ -115,6 +143,21 @@ struct EDENSPACESIMULATOR_API FEdenOsWireSerializationModel
 	 */
 	static FEdenOsAdvisoryResponseParseResult ParseAdvisoryResponseV1(
 		const FString& Json,
+		const FString& ExpectedEvaluationId);
+
+	/** Checkpoint L request body: schemaVersion + evaluationId only. */
+	static FEdenOsWireSerializationResult BuildCommandProposalJsonV1(
+		const FEdenOsCommandProposalRequestV1& Request);
+
+	/**
+	 * Checkpoint L response parse.
+	 * 204 → NoProposal. 200/201 → exact wire vocab mapped onto FEdenExternalCommandProposal.
+	 * Correlates sessionId/evaluationId/schemaVersion/proposalId before returning a proposal.
+	 */
+	static FEdenOsCommandProposalResponseParseResult ParseCommandProposalResponseV1(
+		int32 HttpStatusCode,
+		const FString& ResponseBodyJson,
+		const FString& ExpectedSessionId,
 		const FString& ExpectedEvaluationId);
 
 	static FEdenOsWireSerializationResult BuildSessionCreateJsonV1(
