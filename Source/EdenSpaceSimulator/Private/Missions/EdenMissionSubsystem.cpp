@@ -4,7 +4,12 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "Systems/EdenPowerSystemComponent.h"
+#include "Systems/EdenThermalSystemComponent.h"
 #include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "UObject/UObjectIterator.h"
 
 void UEdenMissionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -20,6 +25,7 @@ void UEdenMissionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UEdenMissionSubsystem::Deinitialize()
 {
 	UnregisterFromSimulationClock();
+	ClearMissionExternalModifiers();
 	CurrentRuntimeState = FEdenMissionModel::ResetRuntimeState();
 	ActiveMissionDefinition = FEdenMissionDefinitionConfig();
 
@@ -56,6 +62,17 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 			CurrentRuntimeState.MissionElapsedTimeSeconds);
 
 		OnMissionEventTriggered.Broadcast(EventId);
+
+		const FEdenMissionEventConfig* EventConfigPtr = ActiveMissionDefinition.Events.FindByPredicate(
+			[&EventId](const FEdenMissionEventConfig& Config)
+			{
+				return Config.EventId == EventId;
+			});
+
+		if (EventConfigPtr)
+		{
+			ExecuteMissionEvent(*EventConfigPtr);
+		}
 	}
 
 	const EEdenMissionState EvaluatedOutcome = FEdenMissionModel::EvaluateOutcome(
@@ -164,6 +181,7 @@ bool UEdenMissionSubsystem::AbortMission()
 	}
 
 	UnregisterFromSimulationClock();
+	ClearMissionExternalModifiers();
 	TransitionMissionState(EEdenMissionState::Inactive);
 
 	UE_LOG(
@@ -190,6 +208,7 @@ bool UEdenMissionSubsystem::ResetMission()
 	}
 
 	UnregisterFromSimulationClock();
+	ClearMissionExternalModifiers();
 
 	const EEdenMissionState PreviousState = CurrentRuntimeState.MissionState;
 	CurrentRuntimeState = FEdenMissionModel::ResetRuntimeState();
@@ -329,4 +348,164 @@ void UEdenMissionSubsystem::TransitionMissionPhase(EEdenMissionPhase NewPhase)
 		*UEnum::GetValueAsString(NewPhase));
 
 	OnMissionPhaseChanged.Broadcast(PreviousPhase, NewPhase);
+}
+
+void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& EventConfig)
+{
+	UE_LOG(
+		LogEdenMission,
+		Log,
+		TEXT("%s executing mission command '%s' for event '%s' (FloatParam=%.2f, NameParam='%s')."),
+		*GetNameSafe(this),
+		*UEnum::GetValueAsString(EventConfig.CommandType),
+		*EventConfig.EventId.ToString(),
+		EventConfig.FloatParameter,
+		*EventConfig.NameParameter.ToString());
+
+	switch (EventConfig.CommandType)
+	{
+	case EEdenMissionCommandType::SetMissionPhase:
+	{
+		const EEdenMissionPhase TargetPhase = static_cast<EEdenMissionPhase>(
+			FMath::Clamp(FMath::RoundToInt(EventConfig.FloatParameter), 0, static_cast<int32>(EEdenMissionPhase::Resolved)));
+		TransitionMissionPhase(TargetPhase);
+		break;
+	}
+	case EEdenMissionCommandType::SetExternalHeatingRate:
+	{
+		if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
+		{
+			ThermalComp->SetExternalHeatingRateDegreesCelsiusPerSecond(EventConfig.FloatParameter);
+		}
+		else
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s could not find thermal component to apply external heating rate."),
+				*GetNameSafe(this));
+		}
+		break;
+	}
+	case EEdenMissionCommandType::ClearExternalHeatingRate:
+	{
+		if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
+		{
+			ThermalComp->ClearExternalHeatingRate();
+		}
+		break;
+	}
+	case EEdenMissionCommandType::SetExternalPowerDemand:
+	{
+		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
+		{
+			PowerComp->SetExternalDemandKilowatts(EventConfig.FloatParameter);
+		}
+		else
+		{
+			UE_LOG(
+				LogEdenMission,
+				Warning,
+				TEXT("%s could not find power component to apply external demand."),
+				*GetNameSafe(this));
+		}
+		break;
+	}
+	case EEdenMissionCommandType::ClearExternalPowerDemand:
+	{
+		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
+		{
+			PowerComp->ClearExternalDemand();
+		}
+		break;
+	}
+	case EEdenMissionCommandType::SetPowerGeneration:
+	{
+		if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
+		{
+			PowerComp->SetGenerationKilowatts(EventConfig.FloatParameter);
+		}
+		break;
+	}
+	case EEdenMissionCommandType::ActivateObjective:
+	{
+		CurrentRuntimeState = FEdenMissionModel::ActivateObjective(CurrentRuntimeState, EventConfig.NameParameter);
+		break;
+	}
+	default:
+		break;
+	}
+}
+
+void UEdenMissionSubsystem::ClearMissionExternalModifiers()
+{
+	if (UEdenThermalSystemComponent* ThermalComp = FindThermalComponent())
+	{
+		ThermalComp->ClearExternalHeatingRate();
+	}
+
+	if (UEdenPowerSystemComponent* PowerComp = FindPowerComponent())
+	{
+		PowerComp->ClearExternalDemand();
+	}
+}
+
+UEdenThermalSystemComponent* UEdenMissionSubsystem::FindThermalComponent() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	if (APlayerController* PC = World->GetFirstPlayerController())
+	{
+		if (APawn* Pawn = PC->GetPawn())
+		{
+			if (UEdenThermalSystemComponent* Comp = Pawn->FindComponentByClass<UEdenThermalSystemComponent>())
+			{
+				return Comp;
+			}
+		}
+	}
+
+	for (TObjectIterator<UEdenThermalSystemComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			return *It;
+		}
+	}
+
+	return nullptr;
+}
+
+UEdenPowerSystemComponent* UEdenMissionSubsystem::FindPowerComponent() const
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	if (APlayerController* PC = World->GetFirstPlayerController())
+	{
+		if (APawn* Pawn = PC->GetPawn())
+		{
+			if (UEdenPowerSystemComponent* Comp = Pawn->FindComponentByClass<UEdenPowerSystemComponent>())
+			{
+				return Comp;
+			}
+		}
+	}
+
+	for (TObjectIterator<UEdenPowerSystemComponent> It; It; ++It)
+	{
+		if (It->GetWorld() == World)
+		{
+			return *It;
+		}
+	}
+
+	return nullptr;
 }

@@ -11,6 +11,8 @@
 #include "EdenMissionSubsystem.generated.h"
 
 class UEdenSimulationClockSubsystem;
+class UEdenThermalSystemComponent;
+class UEdenPowerSystemComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FEdenMissionStateChangedSignature,
@@ -95,6 +97,11 @@ public:
 private:
 	void TransitionMissionState(EEdenMissionState NewState);
 	void TransitionMissionPhase(EEdenMissionPhase NewPhase);
+	void ExecuteMissionEvent(const FEdenMissionEventConfig& EventConfig);
+	void ClearMissionExternalModifiers();
+
+	UEdenThermalSystemComponent* FindThermalComponent() const;
+	UEdenPowerSystemComponent* FindPowerComponent() const;
 
 	UPROPERTY(Transient)
 	FEdenMissionDefinitionConfig ActiveMissionDefinition;

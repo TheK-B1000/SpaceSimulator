@@ -25,6 +25,7 @@ Approved — Checkpoint A complete
 | Checkpoint B status | ✅ Implemented and verified (6 tests, 137 total passing) |
 | Checkpoint C status | ✅ Implemented and verified (3 tests, 140 total passing) |
 | Checkpoint D status | ✅ Implemented and verified (6 tests, 146 total passing) |
+| Checkpoint E status | ✅ Implemented and verified (3 tests, 149 total passing) |
 | Working tree | Clean |
 
 ---
@@ -216,13 +217,21 @@ Explicit absolute mission times (configured in Data Asset):
 
 ---
 
-### Checkpoint E — Mission event execution and command dispatch
+### Checkpoint E — Mission event execution and command dispatch ✅ COMPLETE
 
 **Scope:**
-- Event execution within `AdvanceSimulation`.
-- Command dispatch to resource components.
+- Event execution within `UEdenMissionSubsystem::AdvanceSimulation` dispatching configured commands (`SetMissionPhase`, `SetExternalHeatingRate`, `ClearExternalHeatingRate`, `SetExternalPowerDemand`, `ClearExternalPowerDemand`, `SetPowerGeneration`, `ActivateObjective`).
+- Resource component finding and command dispatch to `UEdenThermalSystemComponent` and `UEdenPowerSystemComponent`.
+- Mission-applied external modifier clearing on `AbortMission` and `ResetMission`.
 - Command logging via `LogEdenMission`.
-- Integration tests: `MissionEventCommandsReachThermal`, `MissionEventCommandsReachPower`.
+- Added 3 integration tests in `EdenMissionSubsystemTests.cpp`:
+  - `Eden.Integration.Mission.MissionEventCommandsReachThermal`
+  - `Eden.Integration.Mission.MissionEventCommandsReachPower`
+  - `Eden.Integration.Mission.MissionResetClearsExternalModifiers`
+
+**Evidence:**
+- Build: Win64 Development Editor target built with 0 errors, 0 warnings.
+- Automation: 149 tests passed (3 new tests in Checkpoint E, 146 existing tests, 0 failures, 0 errors).
 
 ---
 
