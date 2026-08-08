@@ -2,11 +2,11 @@
 
 ## Status
 
-**In Progress - Unreal lane Checkpoint A remediation ready for acceptance.**
+**In Progress - Unreal lane Checkpoint B ready for acceptance review.**
 
 Unreal lane execution is locked to one checkpoint at a time: A, then B, then C, then E. ProjectEden owns Checkpoint D in its separate repository. Checkpoint F convergence must not begin until Unreal A/B/C/E are all accepted and ProjectEden D is complete.
 
-Checkpoint A remediation is complete in this worktree and awaits user acceptance. Do not begin Checkpoint B until Checkpoint A is explicitly approved.
+Checkpoint A remediation was accepted at `7a42fcf`. Checkpoint B is implemented in this worktree and awaits user acceptance. Do not begin Checkpoint C until Checkpoint B is explicitly approved.
 
 ## Prerequisite status
 
@@ -553,6 +553,16 @@ Remediation authorized, scoped to Checkpoint A. Expected count after remediation
 2026-08-08: Checkpoint A remediation tests added. Named sink tests now exist for registration/duplicate identity, registration-order fan-out, unregister/scoped registration behavior, partial failure continuation and aggregation, and one immutable payload delivered to all sinks. Added `Eden.Unit.Telemetry.Export.EmptySessionRegression`.
 
 2026-08-08: Checkpoint A remediation validation passed. `git switch main`, `git pull`, and `git status` confirmed `main` was up to date and clean before remediation. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. `EdenSpaceSimulatorEditor` Win64 Development build passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -EngineRoot "K:\Program Files\Epic Games\UE_5.8"`. Focused telemetry automation passed via `UnrealEditor-Cmd.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.Telemetry.; Quit" "-TestExit=Automation Test Queue Empty"` with 11 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Remediation-Telemetry.log`. Full project automation passed via `Automation RunTests Eden.` with 195 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Remediation-Eden.log`. `git diff --check` passed. Source `LogTemp` search returned no matches. Network-scope search found no new HTTP/JWT/Bearer/Authorization/Advisory/EdenOs/socket/network implementation; matches were limited to pre-existing mission "no retry" log text and the existing telemetry export comment.
+
+2026-08-08: Checkpoint A remediation accepted and pushed to `main` as `7a42fcf`. Checkpoint B began directly on `main` after explicit user approval.
+
+2026-08-08: Checkpoint B implemented for review. Added `UEdenOsConnectionSettings`, `FEdenOsConnectionConfig`, `FEdenOsConnectionConfigModel`, `FEdenOsConnectionSnapshot`, `FEdenOsValidationResult`, `EEdenOsConnectionState`, `EEdenOsAuthorityMode`, `UEdenOsAdapterSubsystem`, and `LogEdenOs`. `UEdenOsConnectionSettings` owns serialized configuration only; `UEdenOsAdapterSubsystem` is the single runtime owner of connection state and runtime-injected bearer JWT presence. No HTTP, FastAPI calls, async queue, retry/backoff, advisory request, command routing, ProjectEden changes, Unreal assets, or telemetry history duplication were implemented.
+
+2026-08-08: Checkpoint B validation behavior added. `Eden.Unit.EdenOs.*` tests cover disabled config without URL/token, enabled empty URL rejection, malformed/unsupported URL rejection, invalid timeouts, invalid queue depth, invalid advisory heartbeat interval, absent JWT warning behavior, safe authority-mode default, deterministic connection snapshot defaults, redacted secret/log summaries, and subsystem-owned runtime snapshot/token-presence updates.
+
+2026-08-08: Checkpoint B build-discovery issue diagnosed and resolved. `UnrealEditor.exe` automation initially found 0 `Eden.Unit.EdenOs.` tests because UBT had not regenerated the module source actions after the new source files were added. Running `Build.bat EdenSpaceSimulatorEditor Win64 Development "-Project=K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject" -NoMutex -FromMsBuild` invalidated the makefile for `source file added` and compiled `EdenOsAdapterSubsystem.cpp`, `EdenOsConnectionSettings.cpp`, and `EdenOsConnectionConfigTests.cpp`. The final build passed with explicit `Compile [x64] EdenOsConnectionConfigTests.cpp`, relinked `UnrealEditor-EdenSpaceSimulator.dll`, and returned `Result: Succeeded`. Intermediate response/link manifests now include `EdenOsAdapterSubsystem.cpp.obj`, `EdenOsConnectionSettings.cpp.obj`, and `EdenOsConnectionConfigTests.cpp.obj`.
+
+2026-08-08: Checkpoint B validation passed. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. Focused automation passed via `UnrealEditor.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.EdenOs.; Quit" "-TestExit=Automation Test Queue Empty" -Log`; `Saved/Logs/EdenSpaceSimulator.log` reported 11 tests found, all 11 `Eden.Unit.EdenOs.*` tests completed with `Result={Success}`, and `**** TEST COMPLETE. EXIT CODE: 0 ****`. Full automation passed via `Automation RunTests Eden.`; `Saved/Logs/EdenSpaceSimulator.log` reported 206 tests found, all new EdenOs tests included, and `**** TEST COMPLETE. EXIT CODE: 0 ****`. `git diff --check` passed. Source `LogTemp` search returned no matches. Source HTTP/network-scope search found no `FHttpModule`, `IHttpRequest`, HTTP module include, FastAPI call, WebSocket, socket, retry, or backoff implementation; matches were limited to pre-existing mission "no retry" log text. Secret scan found no realistic committed JWT; matches were limited to synthetic `test-token` literals in `EdenOsConnectionConfigTests.cpp`.
 
 ---
 
