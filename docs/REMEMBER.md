@@ -23,6 +23,8 @@ This file stores durable, verified project facts that future Codex sessions must
 - Operator control config Data Asset: `/Game/Eden/Data/Operations/DA_EdenOperatorControlConfig`.
 - Operator Enhanced Input bindings (first content pass): `T` cycles thermal mode, `L` toggles load-shed, `P` toggles propulsion priority; ownership path is Input → `AEdenFlightPlayerController` → `UEdenOperatorControlComponent` → resource/flight APIs.
 - Interactive PIE verification of operator HUD and input passed on 2026-08-08 (`L_FlightSandbox`): HUD visible, `T`/`L`/`P` update operator state, Solar Crisis trade-offs visible, restart/reset clean, Output Log clean.
+- Telemetry uses `UEdenTelemetrySubsystem` at simulation-clock priority 200 (`Observers`); exports Telemetry Export Schema v1 via `ExportTelemetry` to `Saved/Telemetry/*.json`.
+- After-action review is built by pure `FEdenAfterActionModel` and shown manually with `ShowAfterAction` / `WBP_EdenAfterActionReview` (no automatic popup).
 - Project-specific log categories are declared in `Source/EdenSpaceSimulator/Public/Core/EdenLogCategories.h`.
 - Foundation automation smoke test name: `Eden.Unit.Foundation.Smoke`.
 - Flight automation tests use the `Eden.Unit.Flight` prefix.

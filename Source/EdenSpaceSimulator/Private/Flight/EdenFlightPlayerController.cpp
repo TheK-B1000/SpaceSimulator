@@ -15,6 +15,8 @@
 #include "Operations/EdenAlertSubsystem.h"
 #include "Operations/EdenOperatorControlComponent.h"
 #include "Operations/EdenOperatorHudWidget.h"
+#include "Telemetry/EdenAfterActionReviewWidget.h"
+#include "Telemetry/EdenTelemetrySubsystem.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalSystemComponent.h"
@@ -496,4 +498,74 @@ void AEdenFlightPlayerController::AbortMission()
 	{
 		MissionSubsystem->AbortMission();
 	}
+}
+
+void AEdenFlightPlayerController::ExportTelemetry()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+	if (!Telemetry)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s ExportTelemetry: UEdenTelemetrySubsystem not found."), *GetNameSafe(this));
+		return;
+	}
+
+	const FString Path = Telemetry->WriteSessionJsonV1ToDisk();
+	if (Path.IsEmpty())
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s ExportTelemetry failed."), *GetNameSafe(this));
+		return;
+	}
+
+	UE_LOG(LogEdenFlight, Log, TEXT("%s ExportTelemetry wrote '%s'."), *GetNameSafe(this), *Path);
+}
+
+void AEdenFlightPlayerController::ShowAfterAction()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>();
+	if (!Telemetry)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s ShowAfterAction: UEdenTelemetrySubsystem not found."), *GetNameSafe(this));
+		return;
+	}
+
+	EnsureAfterActionReviewCreated();
+	if (!AfterActionReviewWidget)
+	{
+		UE_LOG(
+			LogEdenFlight,
+			Warning,
+			TEXT("%s ShowAfterAction: AfterActionReviewWidgetClass is unset. Assign WBP_EdenAfterActionReview."),
+			*GetNameSafe(this));
+		return;
+	}
+
+	const FEdenAfterActionResult Result = Telemetry->BuildAfterActionResult();
+	AfterActionReviewWidget->ApplyAfterActionResult(Result);
+	if (!AfterActionReviewWidget->IsInViewport())
+	{
+		AfterActionReviewWidget->AddToViewport(20);
+	}
+	AfterActionReviewWidget->SetVisibility(ESlateVisibility::Visible);
+}
+
+void AEdenFlightPlayerController::EnsureAfterActionReviewCreated()
+{
+	if (AfterActionReviewWidget || !AfterActionReviewWidgetClass)
+	{
+		return;
+	}
+
+	AfterActionReviewWidget = CreateWidget<UEdenAfterActionReviewWidget>(this, AfterActionReviewWidgetClass);
 }

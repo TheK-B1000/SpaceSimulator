@@ -6,6 +6,7 @@
 #include "Core/EdenSimulationTickable.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Telemetry/EdenTelemetryTypes.h"
+#include "Telemetry/EdenAfterActionModel.h"
 #include "Missions/EdenMissionTypes.h"
 #include "Systems/EdenResourceTypes.h"
 #include "Operations/EdenOperatorTypes.h"
@@ -46,8 +47,22 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Telemetry")
 	FEdenTelemetrySessionMetadata GetSessionMetadata() const;
 
+	UFUNCTION(BlueprintPure, Category = "Eden|Telemetry")
+	FString GetSessionId() const;
+
+	/** Builds Telemetry Export Schema v1 JSON (wire contract for 0007). */
 	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
 	FString ExportSessionJsonV1() const;
+
+	/**
+	 * Writes ExportSessionJsonV1 to Saved/Telemetry/<sessionId>.json.
+	 * Returns absolute path on success, empty string on failure.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
+	FString WriteSessionJsonV1ToDisk() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
+	FEdenAfterActionResult BuildAfterActionResult() const;
 
 private:
 	void BindSources();
@@ -125,4 +140,5 @@ private:
 	int32 MaxEvents = 512;
 	int32 MaxSnapshots = 256;
 	bool bHasAggregateSeed = false;
+	FString ActiveSessionId;
 };

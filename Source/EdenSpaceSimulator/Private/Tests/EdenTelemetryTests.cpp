@@ -1,9 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Telemetry/EdenAfterActionModel.h"
+#include "Telemetry/EdenTelemetryExportModel.h"
 #include "Telemetry/EdenTelemetryTypes.h"
 
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/FileManager.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -30,6 +34,11 @@ bool FEdenAfterActionModelReportsAggregatesAndTruncationTest::RunTest(const FStr
 	OperatorEvent.MissionElapsedTimeSeconds = 14.2f;
 	Events.Add(OperatorEvent);
 
+	FEdenTelemetryEvent CriticalAlert;
+	CriticalAlert.EventType = EEdenTelemetryEventType::AlertRaised;
+	CriticalAlert.Detail = TEXT("[EEdenAlertSeverity::Critical] Battery critical");
+	Events.Add(CriticalAlert);
+
 	FEdenTelemetryEvent SuccessEvent;
 	SuccessEvent.EventType = EEdenTelemetryEventType::MissionSucceeded;
 	SuccessEvent.MissionElapsedTimeSeconds = 50.0f;
@@ -41,6 +50,12 @@ bool FEdenAfterActionModelReportsAggregatesAndTruncationTest::RunTest(const FStr
 	FEdenTelemetrySnapshot Last;
 	Last.MissionElapsedTimeSeconds = 50.0f;
 	Last.Mission.MissionState = EEdenMissionState::Succeeded;
+	Last.Mission.ActiveMissionId = TEXT("SolarCrisis");
+	Last.Fuel.FuelFraction = 0.87f;
+	FEdenMissionObjectiveRuntime Objective;
+	Objective.ObjectiveId = TEXT("SurviveSolarEvent");
+	Objective.State = EEdenObjectiveState::Completed;
+	Last.Mission.ObjectiveSnapshots.Add(Objective);
 	Snapshots.Add(First);
 	Snapshots.Add(Last);
 
@@ -48,9 +63,13 @@ bool FEdenAfterActionModelReportsAggregatesAndTruncationTest::RunTest(const FStr
 	TestTrue(TEXT("Duration"), FMath::IsNearlyEqual(Result.DurationSeconds, 50.0f));
 	TestTrue(TEXT("Peak temp"), FMath::IsNearlyEqual(Result.PeakRecordedSimulationTemperatureCelsius, 88.5f));
 	TestTrue(TEXT("Min battery"), FMath::IsNearlyEqual(Result.LowestRecordedBatteryChargeFraction, 0.22f));
+	TestTrue(TEXT("Final fuel"), FMath::IsNearlyEqual(Result.FinalFuelFraction, 0.87f));
 	TestTrue(TEXT("Truncated"), Result.bHistoryTruncated);
 	TestEqual(TEXT("Operator commands"), Result.OperatorCommandCount, 1);
+	TestEqual(TEXT("Critical alerts"), Result.CriticalAlertCount, 1);
 	TestEqual(TEXT("Final state"), Result.FinalMissionState, EEdenMissionState::Succeeded);
+	TestEqual(TEXT("Mission id"), Result.MissionId, FName(TEXT("SolarCrisis")));
+	TestEqual(TEXT("Objective count"), Result.Objectives.Num(), 1);
 	return true;
 }
 
@@ -67,6 +86,114 @@ bool FEdenTelemetrySessionMetadataDefaultsTest::RunTest(const FString& Parameter
 	TestEqual(TEXT("Dropped events default 0"), Metadata.DroppedEventCount, 0);
 	TestFalse(TEXT("Not truncated by default"), Metadata.bHistoryTruncated);
 	TestFalse(TEXT("Integrity ok by default"), Metadata.bEventIntegrityCompromised);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenTelemetryExportSchemaV1ContainsContractFieldsTest,
+	"Eden.Unit.Telemetry.Export.SchemaV1ContainsContractFields",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenTelemetryExportSchemaV1ContainsContractFieldsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenTelemetrySessionMetadata Metadata;
+	Metadata.DroppedSnapshotCount = 1;
+	Metadata.DroppedEventCount = 0;
+	Metadata.bHistoryTruncated = true;
+	Metadata.PeakTemperatureCelsius = 73.4f;
+	Metadata.MinimumBatteryChargeFraction = 0.44f;
+	Metadata.MinimumFuelFraction = 0.87f;
+	Metadata.SnapshotIntervalSeconds = 0.5f;
+
+	TArray<FEdenTelemetryEvent> Events;
+	FEdenTelemetryEvent Started;
+	Started.SequenceNumber = 1;
+	Started.SimulationTimeSeconds = 0.0f;
+	Started.MissionElapsedTimeSeconds = 0.0f;
+	Started.EventType = EEdenTelemetryEventType::MissionStarted;
+	Started.SourceSystem = TEXT("Mission");
+	Started.EventId = TEXT("Running");
+	Started.Detail = TEXT("quote \" and \\ slash");
+	Events.Add(Started);
+
+	FEdenTelemetryEvent Succeeded;
+	Succeeded.SequenceNumber = 2;
+	Succeeded.SimulationTimeSeconds = 50.0f;
+	Succeeded.MissionElapsedTimeSeconds = 50.0f;
+	Succeeded.EventType = EEdenTelemetryEventType::MissionSucceeded;
+	Succeeded.SourceSystem = TEXT("Mission");
+	Succeeded.EventId = TEXT("Succeeded");
+	Events.Add(Succeeded);
+
+	TArray<FEdenTelemetrySnapshot> Snapshots;
+	FEdenTelemetrySnapshot Snapshot;
+	Snapshot.SequenceNumber = 3;
+	Snapshot.SimulationTimeSeconds = 50.0f;
+	Snapshot.MissionElapsedTimeSeconds = 50.0f;
+	Snapshot.Fuel.FuelFraction = 0.87f;
+	Snapshot.Power.ChargeFraction = 0.44f;
+	Snapshot.Power.GenerationKilowatts = 2.0f;
+	Snapshot.Power.TotalDemandKilowatts = 5.0f;
+	Snapshot.Thermal.TemperatureCelsius = 73.4f;
+	Snapshot.Mission.MissionState = EEdenMissionState::Succeeded;
+	Snapshot.Mission.MissionPhase = EEdenMissionPhase::Recovery;
+	Snapshot.Mission.ActiveMissionId = TEXT("SolarCrisis");
+	Snapshots.Add(Snapshot);
+
+	const FString Json = FEdenTelemetryExportModel::BuildSessionJsonV1(
+		Events,
+		Snapshots,
+		Metadata,
+		TEXT("test-session-001"),
+		TEXT("SolarCrisis"));
+
+	TestTrue(TEXT("schemaVersion"), Json.Contains(TEXT("\"schemaVersion\": 1")));
+	TestTrue(TEXT("session block"), Json.Contains(TEXT("\"session\"")));
+	TestTrue(TEXT("sessionId"), Json.Contains(TEXT("\"sessionId\": \"test-session-001\"")));
+	TestTrue(TEXT("missionId"), Json.Contains(TEXT("\"missionId\": \"SolarCrisis\"")));
+	TestTrue(TEXT("outcome"), Json.Contains(TEXT("\"outcome\": \"Succeeded\"")));
+	TestTrue(TEXT("integrity"), Json.Contains(TEXT("\"historyTruncated\": true")));
+	TestTrue(TEXT("droppedSnapshots"), Json.Contains(TEXT("\"droppedSnapshots\": 1")));
+	TestTrue(TEXT("aggregates"), Json.Contains(TEXT("\"aggregates\"")));
+	TestTrue(TEXT("peakTemperature field"), Json.Contains(TEXT("\"peakTemperatureCelsius\"")));
+	TestTrue(TEXT("events array"), Json.Contains(TEXT("\"events\"")));
+	TestTrue(TEXT("snapshots array"), Json.Contains(TEXT("\"snapshots\"")));
+	TestTrue(TEXT("escaped quote"), Json.Contains(TEXT("quote \\\" and \\\\ slash")));
+	TestTrue(TEXT("event type"), Json.Contains(TEXT("\"type\": \"MissionSucceeded\"")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenTelemetryExportFileSmokeTest,
+	"Eden.Unit.Telemetry.Export.FileSmokeWritesSavedTelemetry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenTelemetryExportFileSmokeTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	const FString Json = FEdenTelemetryExportModel::BuildSessionJsonV1(
+		{},
+		{},
+		FEdenTelemetrySessionMetadata(),
+		TEXT("smoke-session"),
+		TEXT("SolarCrisis"));
+
+	const FString Directory = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Telemetry"));
+	IFileManager::Get().MakeDirectory(*Directory, true);
+	const FString AbsolutePath =
+		FPaths::ConvertRelativePathToFull(FPaths::Combine(Directory, TEXT("telemetry_smoke-session.json")));
+
+	TestTrue(
+		TEXT("Write smoke file"),
+		FFileHelper::SaveStringToFile(Json, *AbsolutePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM));
+	TestTrue(TEXT("Smoke file exists"), IFileManager::Get().FileExists(*AbsolutePath));
+
+	FString RoundTrip;
+	TestTrue(TEXT("Read smoke file"), FFileHelper::LoadFileToString(RoundTrip, *AbsolutePath));
+	TestTrue(TEXT("Round-trip schema"), RoundTrip.Contains(TEXT("\"schemaVersion\": 1")));
 	return true;
 }
 
