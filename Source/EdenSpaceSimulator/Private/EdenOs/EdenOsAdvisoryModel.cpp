@@ -199,6 +199,9 @@ FEdenOsAdvisoryContext FEdenOsAdvisoryModel::BuildContext(
 	{
 		const FEdenTelemetrySnapshot& Latest = Context.RecentSnapshots.Last();
 
+		// Snapshot time comes from the selected snapshot itself and is never fabricated from the
+		// evaluation time; decimation means the two legitimately differ.
+		Context.ContextSnapshotSimulationTimeSeconds = Latest.SimulationTimeSeconds;
 		Context.MissionElapsedTimeSeconds = Latest.MissionElapsedTimeSeconds;
 		Context.MissionPhase = Latest.Mission.MissionPhase;
 		Context.ActiveMissionId = Latest.Mission.ActiveMissionId;

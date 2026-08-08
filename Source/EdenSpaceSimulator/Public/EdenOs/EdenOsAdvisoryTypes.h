@@ -93,8 +93,21 @@ struct EDENSPACESIMULATOR_API FEdenOsAdvisoryContext
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	FString SessionId;
 
+	/**
+	 * Authoritative simulation time at which this advisory evaluation became due, read live from
+	 * the simulation clock on the settled step. NOT the timestamp of the context's newest snapshot.
+	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	float SimulationTimeSeconds = 0.0f;
+
+	/**
+	 * Simulation timestamp of the newest telemetry snapshot used to build this context.
+	 *
+	 * Telemetry decimates snapshots, so this can lag SimulationTimeSeconds by up to one decimation
+	 * interval. The two are deliberately separate: reasoning must never assume they are simultaneous.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	float ContextSnapshotSimulationTimeSeconds = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	float MissionElapsedTimeSeconds = 0.0f;

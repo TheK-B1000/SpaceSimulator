@@ -551,6 +551,182 @@ bool FEdenOsAdvisorySameHistoryBuildsDeterministicContextTest::RunTest(const FSt
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisoryEvaluationAndContextTimesCanDifferTest,
+	"Eden.Unit.EdenOs.Advisory.EvaluationAndContextTimesCanDiffer",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisoryEvaluationAndContextTimesCanDifferTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// Newest telemetry snapshot is from 0.5s; the triggering event lands at 0.7s. The evaluation is
+	// due now, but the freshest settled observation available is older.
+	EdenOsAdvisoryTests::FInputFixture Fixture;
+	Fixture.Snapshots.Reset();
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(100, 0.5f, 70.0f, 0.5f, 0.8f));
+	Fixture.Events.Add(EdenOsAdvisoryTests::MakeEvent(101, EEdenTelemetryEventType::ObjectiveStateChanged));
+
+	FEdenOsAdvisoryEvaluationInput Input = Fixture.Build();
+	Input.SimulationTimeSeconds = 0.7f;
+
+	const FEdenOsAdvisoryEvaluationResult Result = FEdenOsAdvisoryModel::Evaluate(Input);
+	TestTrue(TEXT("Evaluation occurs"), Result.bShouldEvaluate);
+
+	TestEqual(TEXT("Evaluation time is the true due time"), Result.Context.SimulationTimeSeconds, 0.7f);
+	TestEqual(
+		TEXT("Context snapshot time is the selected snapshot's own timestamp"),
+		Result.Context.ContextSnapshotSimulationTimeSeconds,
+		0.5f);
+	TestTrue(
+		TEXT("The two timestamps genuinely diverge"),
+		Result.Context.SimulationTimeSeconds > Result.Context.ContextSnapshotSimulationTimeSeconds);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisoryContextSnapshotTimestampMatchesSelectedSnapshotTest,
+	"Eden.Unit.EdenOs.Advisory.ContextSnapshotTimestampMatchesSelectedSnapshot",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisoryContextSnapshotTimestampMatchesSelectedSnapshotTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenOsAdvisoryTests::FInputFixture Fixture;
+	Fixture.Snapshots.Reset();
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(100, 1.0f, 60.0f, 0.9f, 0.9f));
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(101, 1.5f, 65.0f, 0.8f, 0.88f));
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(102, 2.0f, 70.0f, 0.7f, 0.86f));
+	Fixture.Events.Add(EdenOsAdvisoryTests::MakeEvent(103, EEdenTelemetryEventType::AlertRaised));
+
+	FEdenOsAdvisoryEvaluationInput Input = Fixture.Build();
+	Input.SimulationTimeSeconds = 2.3f;
+	// Bound the window so the newest snapshot is still the selected one after truncation.
+	Input.Bounds.MaxSnapshots = 2;
+
+	const FEdenOsAdvisoryEvaluationResult Result = FEdenOsAdvisoryModel::Evaluate(Input);
+
+	TestEqual(
+		TEXT("Snapshot timestamp matches the newest retained snapshot"),
+		Result.Context.ContextSnapshotSimulationTimeSeconds,
+		2.0f);
+	TestEqual(TEXT("Evaluation time is unaffected by truncation"), Result.Context.SimulationTimeSeconds, 2.3f);
+	TestEqual(
+		TEXT("Selected snapshot is the newest one"),
+		Result.Context.RecentSnapshots.Last().SimulationTimeSeconds,
+		2.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisoryHeartbeatUsesTrueSimulationTimeNotSnapshotCadenceTest,
+	"Eden.Unit.EdenOs.Advisory.HeartbeatUsesTrueSimulationTimeNotSnapshotCadence",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisoryHeartbeatUsesTrueSimulationTimeNotSnapshotCadenceTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// Snapshots are sparse (every 2.0s) while the heartbeat interval is 5.0s. If cadence were driven
+	// by snapshot timestamps, the heartbeat would only ever become due at snapshot boundaries.
+	EdenOsAdvisoryTests::FInputFixture Fixture;
+	Fixture.Snapshots.Reset();
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(100, 4.0f, 70.0f, 0.5f, 0.8f));
+
+	FEdenOsAdvisoryEvaluationInput Input = Fixture.Build();
+	Input.HeartbeatIntervalSimulationSeconds = 5.0f;
+	Input.LastEvaluationSimulationSeconds = 0.0f;
+	Input.bHasEvaluatedBefore = true;
+
+	// Stale snapshot at 4.0s, true simulation time 5.0s: the heartbeat is due on true time.
+	Input.SimulationTimeSeconds = 5.0f;
+	const FEdenOsAdvisoryEvaluationResult DueResult = FEdenOsAdvisoryModel::Evaluate(Input);
+
+	TestTrue(TEXT("Heartbeat becomes due on true simulation time"), DueResult.bShouldEvaluate);
+	TestEqual(TEXT("Evaluation stamped with true time"), DueResult.Context.SimulationTimeSeconds, 5.0f);
+	TestEqual(TEXT("Context still reports the stale snapshot time"), DueResult.Context.ContextSnapshotSimulationTimeSeconds, 4.0f);
+	TestTrue(
+		TEXT("Heartbeat is the reason"),
+		DueResult.Context.TriggerReasons.Contains(EEdenOsAdvisoryTriggerReason::Heartbeat));
+
+	// Just under the interval it must not be due, even though the same stale snapshot is present.
+	Input.SimulationTimeSeconds = 4.9f;
+	TestFalse(
+		TEXT("Not yet due just below the interval"),
+		FEdenOsAdvisoryModel::Evaluate(Input).bShouldEvaluate);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisorySnapshotDecimationDoesNotDelayHeartbeatTest,
+	"Eden.Unit.EdenOs.Advisory.SnapshotDecimationDoesNotDelayHeartbeat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisorySnapshotDecimationDoesNotDelayHeartbeatTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// No new snapshot arrives at or near the due time; the newest is far older.
+	EdenOsAdvisoryTests::FInputFixture Fixture;
+	Fixture.Snapshots.Reset();
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(100, 2.0f, 70.0f, 0.5f, 0.8f));
+
+	FEdenOsAdvisoryEvaluationInput Input = Fixture.Build();
+	Input.HeartbeatIntervalSimulationSeconds = 5.0f;
+	Input.LastEvaluationSimulationSeconds = 2.0f;
+	Input.bHasEvaluatedBefore = true;
+	Input.SimulationTimeSeconds = 7.0f;
+
+	const FEdenOsAdvisoryEvaluationResult Result = FEdenOsAdvisoryModel::Evaluate(Input);
+
+	TestTrue(TEXT("Heartbeat fires without a fresh snapshot"), Result.bShouldEvaluate);
+	TestEqual(TEXT("Due exactly one interval after the last evaluation"), Result.Context.SimulationTimeSeconds, 7.0f);
+	TestEqual(TEXT("Context carries the older snapshot"), Result.Context.ContextSnapshotSimulationTimeSeconds, 2.0f);
+	TestEqual(TEXT("Next evaluation cursor uses true time"), Result.NewLastEvaluationSimulationSeconds, 7.0f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenOsAdvisoryHeartbeatStillCoalescesWithSameStepTriggerTest,
+	"Eden.Unit.EdenOs.Advisory.HeartbeatStillCoalescesWithSameStepTrigger",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenOsAdvisoryHeartbeatStillCoalescesWithSameStepTriggerTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenOsAdvisoryTests::FInputFixture Fixture;
+	Fixture.Snapshots.Reset();
+	Fixture.Snapshots.Add(EdenOsAdvisoryTests::MakeSnapshot(100, 5.5f, 70.0f, 0.5f, 0.8f));
+	Fixture.Events.Add(EdenOsAdvisoryTests::MakeEvent(101, EEdenTelemetryEventType::ObjectiveStateChanged));
+
+	FEdenOsAdvisoryEvaluationInput Input = Fixture.Build();
+	Input.HeartbeatIntervalSimulationSeconds = 5.0f;
+	Input.LastEvaluationSimulationSeconds = 1.0f;
+	Input.bHasEvaluatedBefore = true;
+	Input.SimulationTimeSeconds = 6.0f;
+
+	const FEdenOsAdvisoryEvaluationResult Result = FEdenOsAdvisoryModel::Evaluate(Input);
+
+	TestTrue(TEXT("Evaluation occurs"), Result.bShouldEvaluate);
+	TestEqual(TEXT("Exactly one evaluation carrying both reasons"), Result.Context.TriggerReasons.Num(), 2);
+	TestTrue(
+		TEXT("Objective reason preserved"),
+		Result.Context.TriggerReasons.Contains(EEdenOsAdvisoryTriggerReason::ObjectiveTransition));
+	TestTrue(
+		TEXT("Heartbeat reason preserved"),
+		Result.Context.TriggerReasons.Contains(EEdenOsAdvisoryTriggerReason::Heartbeat));
+	TestEqual(TEXT("Stamped with true evaluation time"), Result.Context.SimulationTimeSeconds, 6.0f);
+	TestEqual(TEXT("Snapshot time remains the snapshot's own"), Result.Context.ContextSnapshotSimulationTimeSeconds, 5.5f);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenOsAdvisoryCursorSuppressesRepeatTriggersTest,
 	"Eden.Unit.EdenOs.Advisory.CursorSuppressesAlreadyProcessedEvents",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

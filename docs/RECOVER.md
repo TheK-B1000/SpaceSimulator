@@ -9,7 +9,7 @@ This file is the operational handoff for interrupted work and fresh Codex sessio
 | Date | 2026-08-08 |
 | Branch | `main` |
 | Milestone tag (main) | `v0.3.0-emergency-mission` |
-| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint H implemented and ready for acceptance; Checkpoints I-M locked |
+| Active ExecPlan | **0007 EDEN OS adapter** - Checkpoint H accepted at `285016c`; narrow H corrective amendment (evaluation time vs snapshot time) ready for re-acceptance; H.1 ProjectEden advisory API contract locked but not started; Checkpoints I-M locked |
 | ExecPlan 0004 | Complete |
 | ExecPlan 0005 | Complete |
 | ExecPlan 0006 | **Complete** — JSON export + ShowAfterAction (2B) |

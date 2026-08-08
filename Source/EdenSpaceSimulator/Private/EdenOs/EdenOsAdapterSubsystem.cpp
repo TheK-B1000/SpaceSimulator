@@ -472,12 +472,23 @@ void UEdenOsAdapterSubsystem::EvaluateAdvisoryForSettledStep()
 
 	const FEdenTelemetrySnapshot& SettledSnapshot = Snapshots.Last();
 
+	// Evaluation timing is owned by the simulation clock; telemetry owns observation history.
+	// Reading the clock live is what keeps evaluation time distinct from the (decimated) snapshot
+	// time and keeps the heartbeat on true fixed-step cadence rather than snapshot cadence.
+	UEdenSimulationClockSubsystem* Clock = RegisteredSimulationClock.IsValid()
+		? RegisteredSimulationClock.Get()
+		: World->GetSubsystem<UEdenSimulationClockSubsystem>();
+	if (!Clock)
+	{
+		return;
+	}
+
 	FEdenOsAdvisoryEvaluationInput Input;
 	Input.Events = Events;
 	Input.Snapshots = Snapshots;
 	Input.Metadata = Telemetry->GetSessionMetadata();
 	Input.SessionId = Telemetry->GetSessionId();
-	Input.SimulationTimeSeconds = SettledSnapshot.SimulationTimeSeconds;
+	Input.SimulationTimeSeconds = Clock->GetElapsedSimulationTimeSeconds();
 	Input.MissionState = SettledSnapshot.Mission.MissionState;
 	Input.AuthorityMode = RuntimeConfig.AuthorityMode;
 	Input.HeartbeatIntervalSimulationSeconds = RuntimeConfig.AdvisoryHeartbeatSimulationSeconds;
