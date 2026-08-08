@@ -15,12 +15,16 @@
 #include "Telemetry/EdenTelemetrySink.h"
 #include "Telemetry/EdenTelemetrySubsystem.h"
 
+#include "Dom/JsonObject.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
 #include "UObject/Package.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -637,6 +641,75 @@ namespace EdenOsTransportTests
 		return nullptr;
 	}
 
+	struct FLiveAdvisoryReturnPathEvidence
+	{
+		int32 AdvisoryIssuedCount = 0;
+		bool bHasLatestEvent = false;
+		FString AdvisoryId;
+		FString EvaluationId;
+		FString Recommendation;
+		FString Rationale;
+		float IssuedSimulationTimeSeconds = 0.0f;
+		float EvaluationSimulationTimeSeconds = 0.0f;
+		float ContextSnapshotSimulationTimeSeconds = 0.0f;
+		TArray<FString> TriggerReasons;
+		bool bHasPresentation = false;
+		FString PresentationRecommendation;
+		FString PresentationRationale;
+		FString PresentationAdvisoryId;
+		float PresentationIssuedSimulationTimeSeconds = 0.0f;
+	};
+
+	bool TryParseIssuedAdvisoryDetail(
+		const FString& DetailJson,
+		FString& OutAdvisoryId,
+		FString& OutEvaluationId,
+		FString& OutRecommendation,
+		FString& OutRationale,
+		float& OutEvaluationSimulationTimeSeconds,
+		float& OutContextSnapshotSimulationTimeSeconds,
+		TArray<FString>& OutTriggerReasons)
+	{
+		TSharedPtr<FJsonObject> Root;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(DetailJson);
+		if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+		{
+			return false;
+		}
+
+		if (!Root->TryGetStringField(TEXT("advisoryId"), OutAdvisoryId)
+			|| !Root->TryGetStringField(TEXT("evaluationId"), OutEvaluationId)
+			|| !Root->TryGetStringField(TEXT("recommendation"), OutRecommendation)
+			|| !Root->TryGetStringField(TEXT("rationale"), OutRationale))
+		{
+			return false;
+		}
+
+		double EvaluationTime = 0.0;
+		double SnapshotTime = 0.0;
+		if (!Root->TryGetNumberField(TEXT("evaluationSimulationTimeSeconds"), EvaluationTime)
+			|| !Root->TryGetNumberField(TEXT("contextSnapshotSimulationTimeSeconds"), SnapshotTime))
+		{
+			return false;
+		}
+		OutEvaluationSimulationTimeSeconds = static_cast<float>(EvaluationTime);
+		OutContextSnapshotSimulationTimeSeconds = static_cast<float>(SnapshotTime);
+
+		OutTriggerReasons.Reset();
+		const TArray<TSharedPtr<FJsonValue>>* TriggerArray = nullptr;
+		if (Root->TryGetArrayField(TEXT("triggerReasons"), TriggerArray) && TriggerArray)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *TriggerArray)
+			{
+				if (Value.IsValid() && Value->Type == EJson::String)
+				{
+					OutTriggerReasons.Add(Value->AsString());
+				}
+			}
+		}
+		return true;
+	}
+
 	bool WriteLiveE2EEvidence(
 		const FString& EvidenceDirectory,
 		const FString& SessionId,
@@ -644,7 +717,8 @@ namespace EdenOsTransportTests
 		EEdenMissionState MissionState,
 		EEdenOsAuthorityMode AuthorityMode,
 		const FEdenOsConnectionSnapshot& Snapshot,
-		const TArray<FEdenOsDeliveryRecord>& Records)
+		const TArray<FEdenOsDeliveryRecord>& Records,
+		const FLiveAdvisoryReturnPathEvidence& ReturnPath)
 	{
 		IFileManager::Get().MakeDirectory(*EvidenceDirectory, true);
 		const FString EvidencePath = FPaths::Combine(EvidenceDirectory, TEXT("UnrealLiveE2E.json"));
@@ -666,6 +740,70 @@ namespace EdenOsTransportTests
 		Json += FString::Printf(TEXT("  \"pendingMessageCount\": %d,\n"), Snapshot.PendingMessageCount);
 		Json += FString::Printf(TEXT("  \"droppedMessageCount\": %d,\n"), Snapshot.DroppedMessageCount);
 		Json += FString::Printf(TEXT("  \"expectedRequestCount\": %d,\n"), ExpectedRequestCount);
+		Json += FString::Printf(TEXT("  \"advisoryIssuedCount\": %d,\n"), ReturnPath.AdvisoryIssuedCount);
+
+		if (ReturnPath.bHasLatestEvent)
+		{
+			Json += TEXT("  \"latestAdvisoryEvent\": {\n");
+			Json += FString::Printf(
+				TEXT("    \"advisoryId\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.AdvisoryId));
+			Json += FString::Printf(
+				TEXT("    \"evaluationId\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.EvaluationId));
+			Json += FString::Printf(
+				TEXT("    \"recommendation\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.Recommendation));
+			Json += FString::Printf(
+				TEXT("    \"rationale\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.Rationale));
+			Json += FString::Printf(
+				TEXT("    \"issuedSimulationTimeSeconds\": %.6f,\n"),
+				ReturnPath.IssuedSimulationTimeSeconds);
+			Json += FString::Printf(
+				TEXT("    \"evaluationSimulationTimeSeconds\": %.6f,\n"),
+				ReturnPath.EvaluationSimulationTimeSeconds);
+			Json += FString::Printf(
+				TEXT("    \"contextSnapshotSimulationTimeSeconds\": %.6f,\n"),
+				ReturnPath.ContextSnapshotSimulationTimeSeconds);
+			Json += TEXT("    \"triggerReasons\": [");
+			for (int32 Index = 0; Index < ReturnPath.TriggerReasons.Num(); ++Index)
+			{
+				Json += FString::Printf(
+					TEXT("%s\"%s\""),
+					Index > 0 ? TEXT(", ") : TEXT(""),
+					*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.TriggerReasons[Index]));
+			}
+			Json += TEXT("]\n");
+			Json += TEXT("  },\n");
+		}
+		else
+		{
+			Json += TEXT("  \"latestAdvisoryEvent\": null,\n");
+		}
+
+		if (ReturnPath.bHasPresentation)
+		{
+			Json += TEXT("  \"latestAdvisoryPresentation\": {\n");
+			Json += FString::Printf(
+				TEXT("    \"recommendation\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.PresentationRecommendation));
+			Json += FString::Printf(
+				TEXT("    \"rationale\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.PresentationRationale));
+			Json += FString::Printf(
+				TEXT("    \"advisoryId\": \"%s\",\n"),
+				*FEdenTelemetryExportModel::EscapeJsonString(ReturnPath.PresentationAdvisoryId));
+			Json += FString::Printf(
+				TEXT("    \"issuedSimulationTimeSeconds\": %.6f\n"),
+				ReturnPath.PresentationIssuedSimulationTimeSeconds);
+			Json += TEXT("  },\n");
+		}
+		else
+		{
+			Json += TEXT("  \"latestAdvisoryPresentation\": null,\n");
+		}
+
 		Json += TEXT("  \"deliveries\": [\n");
 		for (int32 Index = 0; Index < Records.Num(); ++Index)
 		{
@@ -764,6 +902,7 @@ namespace EdenOsTransportTests
 			const int32 TelemetryCount = CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Telemetry);
 			const int32 EventCount = CountDeliveryRecordsOfType(Records, EEdenOsOutboundMessageType::Event);
 			const int32 LifecycleMinimum = ExpectedRequestCount;
+			FLiveAdvisoryReturnPathEvidence ReturnPath;
 
 			// Advisory mode flushes lifecycle during the mission, so total deliveries can exceed the
 			// classic create+telemetry+events+complete count. Require the lifecycle floor, not equality.
@@ -781,21 +920,148 @@ namespace EdenOsTransportTests
 			{
 				Test->TestTrue(TEXT("Advisory mode issued at least one advisory request"), AdvisoryCount >= 1);
 				int32 SuccessfulAdvisories = 0;
+				const FEdenOsDeliveryRecord* FirstSuccessfulAdvisory = nullptr;
 				for (const FEdenOsDeliveryRecord& Record : Records)
 				{
 					if (Record.MessageType == EEdenOsOutboundMessageType::Advisory && Record.bSucceeded)
 					{
 						++SuccessfulAdvisories;
+						if (!FirstSuccessfulAdvisory)
+						{
+							FirstSuccessfulAdvisory = &Record;
+						}
 					}
 				}
 				Test->TestTrue(TEXT("At least one advisory HTTP response succeeded"), SuccessfulAdvisories >= 1);
+
+				UWorld* World = AdapterPtr->GetWorld();
+				UEdenTelemetrySubsystem* Telemetry =
+					World ? World->GetSubsystem<UEdenTelemetrySubsystem>() : nullptr;
+				if (!Test->TestNotNull(TEXT("Live telemetry subsystem exists for return-path proof"), Telemetry)
+					|| !Test->TestNotNull(TEXT("Successful advisory delivery record exists"), FirstSuccessfulAdvisory))
+				{
+					ScopedWorld.Reset();
+					return true;
+				}
+
+				const FEdenOsAdvisoryResponseParseResult ParsedResponse =
+					FEdenOsWireSerializationModel::ParseAdvisoryResponseV1(
+						FirstSuccessfulAdvisory->ResponseBodyJson,
+						FString());
+				if (!Test->TestTrue(TEXT("Live advisory response parses"), ParsedResponse.IsSuccess()))
+				{
+					ScopedWorld.Reset();
+					return true;
+				}
+
+				// GetEventHistory returns by value — keep the array alive while reading IssuedEvent.
+				const TArray<FEdenTelemetryEvent> EventHistory = Telemetry->GetEventHistory();
+				int32 IssuedCount = 0;
+				const FEdenTelemetryEvent* IssuedEvent = nullptr;
+				for (const FEdenTelemetryEvent& Event : EventHistory)
+				{
+					if (Event.EventType == EEdenTelemetryEventType::EdenAdvisoryIssued)
+					{
+						++IssuedCount;
+						IssuedEvent = &Event;
+					}
+				}
+				Test->TestEqual(TEXT("Exactly one EdenAdvisoryIssued for live accepted response"), IssuedCount, 1);
+				if (!Test->TestNotNull(TEXT("Issued advisory event exists"), IssuedEvent))
+				{
+					ScopedWorld.Reset();
+					return true;
+				}
+
+				FString EventAdvisoryId;
+				FString EventEvaluationId;
+				FString EventRecommendation;
+				FString EventRationale;
+				float EventEvaluationTime = 0.0f;
+				float EventSnapshotTime = 0.0f;
+				TArray<FString> EventTriggers;
 				Test->TestTrue(
-					TEXT("Accepted advisory is available for HUD"),
-					AdapterPtr->GetLatestAcceptedAdvisory().bIsValid);
+					TEXT("Issued advisory Detail parses"),
+					TryParseIssuedAdvisoryDetail(
+						IssuedEvent->Detail,
+						EventAdvisoryId,
+						EventEvaluationId,
+						EventRecommendation,
+						EventRationale,
+						EventEvaluationTime,
+						EventSnapshotTime,
+						EventTriggers));
+
+				Test->TestEqual(TEXT("Issued advisoryId matches ProjectEden response"), EventAdvisoryId, ParsedResponse.Response.AdvisoryId);
+				Test->TestEqual(TEXT("Issued evaluationId matches ProjectEden response"), EventEvaluationId, ParsedResponse.Response.EvaluationId);
+				Test->TestEqual(TEXT("Issued recommendation matches ProjectEden response"), EventRecommendation, ParsedResponse.Response.Recommendation);
+				Test->TestEqual(TEXT("Issued rationale matches ProjectEden response"), EventRationale, ParsedResponse.Response.Rationale);
+				Test->TestTrue(
+					TEXT("issued >= evaluation"),
+					IssuedEvent->SimulationTimeSeconds >= EventEvaluationTime);
+				Test->TestTrue(
+					TEXT("evaluation >= context snapshot"),
+					EventEvaluationTime >= EventSnapshotTime);
+				Test->TestFalse(TEXT("Issued Detail invents no confidence"), IssuedEvent->Detail.Contains(TEXT("confidence")));
+				Test->TestFalse(TEXT("Issued Detail invents no severity"), IssuedEvent->Detail.Contains(TEXT("severity")));
+				Test->TestFalse(TEXT("Issued Detail invents no recommendationCode"), IssuedEvent->Detail.Contains(TEXT("recommendationCode")));
+
+				const FEdenOsAcceptedAdvisory Accepted = AdapterPtr->GetLatestAcceptedAdvisory();
+				Test->TestTrue(TEXT("Accepted advisory is available for HUD"), Accepted.bIsValid);
+				Test->TestEqual(TEXT("Presentation recommendation matches response"), Accepted.Recommendation, ParsedResponse.Response.Recommendation);
+				Test->TestEqual(TEXT("Presentation rationale matches response"), Accepted.Rationale, ParsedResponse.Response.Rationale);
+				Test->TestEqual(TEXT("Presentation advisoryId matches response"), Accepted.AdvisoryId, ParsedResponse.Response.AdvisoryId);
+
+				const FEdenOperatorHudSnapshot Hud = FEdenOperatorHudModel::Assemble(
+					FEdenMissionStateSnapshot(),
+					FEdenFuelStateSnapshot(),
+					FEdenPowerStateSnapshot(),
+					FEdenThermalStateSnapshot(),
+					FEdenOperatorStateSnapshot(),
+					TArray<FEdenAlert>(),
+					IssuedEvent->SimulationTimeSeconds,
+					Accepted);
+				Test->TestTrue(TEXT("HUD snapshot surfaces advisory"), Hud.bHasAdvisory);
+				Test->TestEqual(TEXT("HUD recommendation matches response"), Hud.AdvisoryRecommendation, ParsedResponse.Response.Recommendation);
+				Test->TestEqual(TEXT("HUD rationale matches response"), Hud.AdvisoryRationale, ParsedResponse.Response.Rationale);
+				Test->TestFalse(TEXT("HUD invents no confidence field name in recommendation"), Hud.AdvisoryRecommendation.Contains(TEXT("confidence")));
+				Test->TestFalse(TEXT("HUD invents no severity field name in rationale"), Hud.AdvisoryRationale.Contains(TEXT("severity")));
+
+				ReturnPath.AdvisoryIssuedCount = IssuedCount;
+				ReturnPath.bHasLatestEvent = true;
+				ReturnPath.AdvisoryId = EventAdvisoryId;
+				ReturnPath.EvaluationId = EventEvaluationId;
+				ReturnPath.Recommendation = EventRecommendation;
+				ReturnPath.Rationale = EventRationale;
+				ReturnPath.IssuedSimulationTimeSeconds = IssuedEvent->SimulationTimeSeconds;
+				ReturnPath.EvaluationSimulationTimeSeconds = EventEvaluationTime;
+				ReturnPath.ContextSnapshotSimulationTimeSeconds = EventSnapshotTime;
+				ReturnPath.TriggerReasons = EventTriggers;
+				ReturnPath.bHasPresentation = true;
+				ReturnPath.PresentationRecommendation = Accepted.Recommendation;
+				ReturnPath.PresentationRationale = Accepted.Rationale;
+				ReturnPath.PresentationAdvisoryId = Accepted.AdvisoryId;
+				ReturnPath.PresentationIssuedSimulationTimeSeconds = Accepted.IssuedSimulationTimeSeconds;
 			}
 			else
 			{
 				Test->TestEqual(TEXT("Observe mode issues no advisory requests"), AdvisoryCount, 0);
+				if (UWorld* World = AdapterPtr->GetWorld())
+				{
+					if (UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
+					{
+						int32 IssuedCount = 0;
+						for (const FEdenTelemetryEvent& Event : Telemetry->GetEventHistory())
+						{
+							if (Event.EventType == EEdenTelemetryEventType::EdenAdvisoryIssued)
+							{
+								++IssuedCount;
+							}
+						}
+						Test->TestEqual(TEXT("Observe mode emits no EdenAdvisoryIssued"), IssuedCount, 0);
+						ReturnPath.AdvisoryIssuedCount = IssuedCount;
+					}
+				}
 			}
 
 			const FEdenOsDeliveryRecord* CreateRecord = FindFirstDeliveryRecordOfType(Records, EEdenOsOutboundMessageType::SessionCreate);
@@ -833,7 +1099,8 @@ namespace EdenOsTransportTests
 					EEdenMissionState::Succeeded,
 					Snapshot.AuthorityMode,
 					Snapshot,
-					Records));
+					Records,
+					ReturnPath));
 
 			ScopedWorld.Reset();
 			return true;
@@ -1325,7 +1592,7 @@ bool FEdenOsAdvisoryResponseIssuesTelemetryAndHudFactTest::RunTest(const FString
 			TestFalse(TEXT("No invented confidence field"), Event.Detail.Contains(TEXT("confidence")));
 		}
 	}
-	TestTrue(TEXT("Exactly one EdenAdvisoryIssued for first accepted response path"), IssuedCount >= 1);
+	TestTrue(TEXT("Exactly one EdenAdvisoryIssued for one accepted response"), IssuedCount == 1);
 
 	const FEdenOperatorHudSnapshot Hud = FEdenOperatorHudModel::Assemble(
 		Mission->GetMissionStateSnapshot(),
