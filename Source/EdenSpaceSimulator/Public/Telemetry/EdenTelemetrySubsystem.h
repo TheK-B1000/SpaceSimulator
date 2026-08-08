@@ -51,8 +51,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Telemetry")
 	FString GetSessionId() const;
 
+	bool RegisterTelemetrySink(IEdenTelemetrySink* Sink);
+	bool UnregisterTelemetrySink(IEdenTelemetrySink* Sink);
+	int32 GetRegisteredTelemetrySinkCount() const;
+
 	FEdenTelemetrySessionPayload BuildSessionPayload() const;
 	FEdenTelemetrySinkResult DeliverSessionToSink(IEdenTelemetrySink& Sink) const;
+	FEdenTelemetrySinkDeliverySummary DeliverSessionToRegisteredSinks() const;
 
 	/** Builds Telemetry Export Schema v1 JSON (wire contract for 0007). */
 	UFUNCTION(BlueprintCallable, Category = "Eden|Telemetry")
@@ -139,6 +144,7 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UEdenFlightMovementComponent> BoundMovement;
 
+	TArray<IEdenTelemetrySink*> RegisteredSinks;
 	int64 NextSequenceNumber = 1;
 	int32 StepsSinceSnapshot = 0;
 	int32 SnapshotDecimationSteps = 5;
@@ -146,4 +152,25 @@ private:
 	int32 MaxSnapshots = 256;
 	bool bHasAggregateSeed = false;
 	FString ActiveSessionId;
+};
+
+class EDENSPACESIMULATOR_API FEdenScopedTelemetrySinkRegistration
+{
+public:
+	FEdenScopedTelemetrySinkRegistration(UEdenTelemetrySubsystem& InTelemetrySubsystem, IEdenTelemetrySink& InSink);
+	~FEdenScopedTelemetrySinkRegistration();
+
+	FEdenScopedTelemetrySinkRegistration(const FEdenScopedTelemetrySinkRegistration&) = delete;
+	FEdenScopedTelemetrySinkRegistration& operator=(const FEdenScopedTelemetrySinkRegistration&) = delete;
+
+	FEdenScopedTelemetrySinkRegistration(FEdenScopedTelemetrySinkRegistration&& Other);
+	FEdenScopedTelemetrySinkRegistration& operator=(FEdenScopedTelemetrySinkRegistration&& Other);
+
+	bool IsRegistered() const;
+	void Unregister();
+
+private:
+	UEdenTelemetrySubsystem* TelemetrySubsystem = nullptr;
+	IEdenTelemetrySink* Sink = nullptr;
+	bool bRegistered = false;
 };

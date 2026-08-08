@@ -178,7 +178,7 @@ FString FEdenTelemetryExportModel::BuildSessionJsonV1(const FEdenTelemetrySessio
 	Json += TEXT("{\n");
 	Json += TEXT("  \"schemaVersion\": 1,\n");
 	Json += TEXT("  \"session\": {\n");
-	Json += FString::Printf(TEXT("    \"sessionId\": \"%s\",\n"), *EscapeJsonString(Payload.GetSafeSessionId()));
+	Json += FString::Printf(TEXT("    \"sessionId\": \"%s\",\n"), *EscapeJsonString(Payload.SessionId));
 	Json += FString::Printf(
 		TEXT("    \"missionId\": \"%s\",\n"),
 		*EscapeJsonString(ResolvedMissionId.ToString()));

@@ -48,6 +48,16 @@ bool FEdenTelemetrySinkResult::IsSuccess() const
 	return Result == EEdenSinkResult::Success;
 }
 
+bool FEdenTelemetrySinkDeliverySummary::WasAttempted() const
+{
+	return AttemptedCount > 0;
+}
+
+bool FEdenTelemetrySinkDeliverySummary::WasFullySuccessful() const
+{
+	return AttemptedCount > 0 && FailedCount == 0 && SucceededCount == AttemptedCount;
+}
+
 FEdenLocalJsonTelemetrySink::FEdenLocalJsonTelemetrySink(FString InOutputDirectory)
 	: OutputDirectory(MoveTemp(InOutputDirectory))
 {

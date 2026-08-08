@@ -53,6 +53,7 @@ void UEdenTelemetrySubsystem::Deinitialize()
 		Clock->UnregisterSimulationTickable(this);
 	}
 	RegisteredClock.Reset();
+	RegisteredSinks.Reset();
 	Super::Deinitialize();
 }
 
@@ -98,13 +99,71 @@ FString UEdenTelemetrySubsystem::GetSessionId() const
 	return ActiveSessionId;
 }
 
+bool UEdenTelemetrySubsystem::RegisterTelemetrySink(IEdenTelemetrySink* Sink)
+{
+	if (!Sink)
+	{
+		UE_LOG(LogEdenTelemetry, Warning, TEXT("RegisterTelemetrySink rejected a null sink."));
+		return false;
+	}
+
+	const FName SinkName = Sink->GetTelemetrySinkName();
+	for (const IEdenTelemetrySink* RegisteredSink : RegisteredSinks)
+	{
+		if (RegisteredSink == Sink)
+		{
+			UE_LOG(
+				LogEdenTelemetry,
+				Warning,
+				TEXT("RegisterTelemetrySink rejected duplicate sink pointer '%s'."),
+				*SinkName.ToString());
+			return false;
+		}
+
+		if (RegisteredSink && RegisteredSink->GetTelemetrySinkName() == SinkName)
+		{
+			UE_LOG(
+				LogEdenTelemetry,
+				Warning,
+				TEXT("RegisterTelemetrySink rejected duplicate sink name '%s'."),
+				*SinkName.ToString());
+			return false;
+		}
+	}
+
+	RegisteredSinks.Add(Sink);
+	return true;
+}
+
+bool UEdenTelemetrySubsystem::UnregisterTelemetrySink(IEdenTelemetrySink* Sink)
+{
+	if (!Sink)
+	{
+		return false;
+	}
+
+	const int32 Index = RegisteredSinks.IndexOfByKey(Sink);
+	if (Index == INDEX_NONE)
+	{
+		return false;
+	}
+
+	RegisteredSinks.RemoveAt(Index, 1, EAllowShrinking::No);
+	return true;
+}
+
+int32 UEdenTelemetrySubsystem::GetRegisteredTelemetrySinkCount() const
+{
+	return RegisteredSinks.Num();
+}
+
 FEdenTelemetrySessionPayload UEdenTelemetrySubsystem::BuildSessionPayload() const
 {
 	return FEdenTelemetrySessionPayload(
 		EventHistory,
 		SnapshotHistory,
 		SessionMetadata,
-		ActiveSessionId,
+		ActiveSessionId.IsEmpty() ? TEXT("unknown-session") : ActiveSessionId,
 		ResolveMissionIdForExport());
 }
 
@@ -121,6 +180,49 @@ FEdenTelemetrySinkResult UEdenTelemetrySubsystem::DeliverSessionToSink(IEdenTele
 			*Result.ErrorMessage);
 	}
 	return Result;
+}
+
+FEdenTelemetrySinkDeliverySummary UEdenTelemetrySubsystem::DeliverSessionToRegisteredSinks() const
+{
+	FEdenTelemetrySinkDeliverySummary Summary;
+	const FEdenTelemetrySessionPayload Payload = BuildSessionPayload();
+
+	for (IEdenTelemetrySink* Sink : RegisteredSinks)
+	{
+		if (!Sink)
+		{
+			FEdenTelemetrySinkDeliveryRecord Record;
+			Record.SinkName = TEXT("InvalidTelemetrySink");
+			Record.Result = FEdenTelemetrySinkResult::Failed(TEXT("Registered telemetry sink pointer is invalid."));
+			Summary.Records.Add(MoveTemp(Record));
+			++Summary.AttemptedCount;
+			++Summary.FailedCount;
+			UE_LOG(LogEdenTelemetry, Warning, TEXT("Skipping invalid registered telemetry sink."));
+			continue;
+		}
+
+		FEdenTelemetrySinkDeliveryRecord Record;
+		Record.SinkName = Sink->GetTelemetrySinkName();
+		Record.Result = Sink->DeliverTelemetrySession(Payload);
+		Summary.Records.Add(Record);
+		++Summary.AttemptedCount;
+		if (Record.Result.IsSuccess())
+		{
+			++Summary.SucceededCount;
+		}
+		else
+		{
+			++Summary.FailedCount;
+			UE_LOG(
+				LogEdenTelemetry,
+				Warning,
+				TEXT("Telemetry sink '%s' failed during fan-out: %s"),
+				*Record.SinkName.ToString(),
+				*Record.Result.ErrorMessage);
+		}
+	}
+
+	return Summary;
 }
 
 FString UEdenTelemetrySubsystem::ExportSessionJsonV1() const
@@ -501,4 +603,64 @@ void UEdenTelemetrySubsystem::HandleThermalStateChanged(EEdenThermalState Previo
 		TEXT("Thermal"),
 		*UEnum::GetValueAsString(NewState),
 		FString::Printf(TEXT("%s -> %s"), *UEnum::GetValueAsString(PreviousState), *UEnum::GetValueAsString(NewState)));
+}
+
+FEdenScopedTelemetrySinkRegistration::FEdenScopedTelemetrySinkRegistration(
+	UEdenTelemetrySubsystem& InTelemetrySubsystem,
+	IEdenTelemetrySink& InSink)
+	: TelemetrySubsystem(&InTelemetrySubsystem)
+	, Sink(&InSink)
+	, bRegistered(InTelemetrySubsystem.RegisterTelemetrySink(&InSink))
+{
+}
+
+FEdenScopedTelemetrySinkRegistration::~FEdenScopedTelemetrySinkRegistration()
+{
+	Unregister();
+}
+
+FEdenScopedTelemetrySinkRegistration::FEdenScopedTelemetrySinkRegistration(
+	FEdenScopedTelemetrySinkRegistration&& Other)
+	: TelemetrySubsystem(Other.TelemetrySubsystem)
+	, Sink(Other.Sink)
+	, bRegistered(Other.bRegistered)
+{
+	Other.TelemetrySubsystem = nullptr;
+	Other.Sink = nullptr;
+	Other.bRegistered = false;
+}
+
+FEdenScopedTelemetrySinkRegistration& FEdenScopedTelemetrySinkRegistration::operator=(
+	FEdenScopedTelemetrySinkRegistration&& Other)
+{
+	if (this != &Other)
+	{
+		Unregister();
+		TelemetrySubsystem = Other.TelemetrySubsystem;
+		Sink = Other.Sink;
+		bRegistered = Other.bRegistered;
+
+		Other.TelemetrySubsystem = nullptr;
+		Other.Sink = nullptr;
+		Other.bRegistered = false;
+	}
+
+	return *this;
+}
+
+bool FEdenScopedTelemetrySinkRegistration::IsRegistered() const
+{
+	return bRegistered;
+}
+
+void FEdenScopedTelemetrySinkRegistration::Unregister()
+{
+	if (bRegistered && TelemetrySubsystem && Sink)
+	{
+		TelemetrySubsystem->UnregisterTelemetrySink(Sink);
+	}
+
+	bRegistered = false;
+	TelemetrySubsystem = nullptr;
+	Sink = nullptr;
 }

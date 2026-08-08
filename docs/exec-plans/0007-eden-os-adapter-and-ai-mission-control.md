@@ -2,11 +2,11 @@
 
 ## Status
 
-**In Progress - Unreal lane Checkpoint A ready for acceptance.**
+**In Progress - Unreal lane Checkpoint A remediation ready for acceptance.**
 
 Unreal lane execution is locked to one checkpoint at a time: A, then B, then C, then E. ProjectEden owns Checkpoint D in its separate repository. Checkpoint F convergence must not begin until Unreal A/B/C/E are all accepted and ProjectEden D is complete.
 
-Checkpoint A implementation is complete in this worktree and awaits user acceptance. Do not begin Checkpoint B until Checkpoint A is explicitly approved.
+Checkpoint A remediation is complete in this worktree and awaits user acceptance. Do not begin Checkpoint B until Checkpoint A is explicitly approved.
 
 ## Prerequisite status
 
@@ -546,6 +546,14 @@ Passed: pure-refactor boundary (zero HTTP/auth/advisory/connection code in `Tele
 
 Remediation authorized, scoped to Checkpoint A. Expected count after remediation: **≥194** `Eden.*` tests.
 
+2026-08-08: Checkpoint A remediation implemented directly on `main`. Added plural non-owning `IEdenTelemetrySink` registration on `UEdenTelemetrySubsystem`, `RegisterTelemetrySink`, `UnregisterTelemetrySink`, deterministic registration-order fan-out, duplicate pointer/name rejection, stable unregistration, `FEdenScopedTelemetrySinkRegistration`, aggregate delivery records/counts, and failure-isolated continuation. `DeliverSessionToRegisteredSinks()` builds one immutable payload and delivers that same payload to all registered sinks. Registered sinks are explicitly non-owned and cleared on subsystem deinitialization.
+
+2026-08-08: Checkpoint A remediation restored regression coverage. Reinstated the `telemetry_smoke-session.json` filename assertion, restored the direct 5-argument `BuildSessionJsonV1` empty-session behavior, kept subsystem-originated exports on `unknown-session` when needed, and retained local sink safe filenames for empty session IDs.
+
+2026-08-08: Checkpoint A remediation tests added. Named sink tests now exist for registration/duplicate identity, registration-order fan-out, unregister/scoped registration behavior, partial failure continuation and aggregation, and one immutable payload delivered to all sinks. Added `Eden.Unit.Telemetry.Export.EmptySessionRegression`.
+
+2026-08-08: Checkpoint A remediation validation passed. `git switch main`, `git pull`, and `git status` confirmed `main` was up to date and clean before remediation. Repository validation passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1`. `EdenSpaceSimulatorEditor` Win64 Development build passed via `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\Validate-Project.ps1 -Build -EngineRoot "K:\Program Files\Epic Games\UE_5.8"`. Focused telemetry automation passed via `UnrealEditor-Cmd.exe ... -DDC-ForceMemoryCache "-ExecCmds=Automation RunTests Eden.Unit.Telemetry.; Quit" "-TestExit=Automation Test Queue Empty"` with 11 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Remediation-Telemetry.log`. Full project automation passed via `Automation RunTests Eden.` with 195 tests found and `**** TEST COMPLETE. EXIT CODE: 0 ****` in `Saved/Logs/Automation-0007A-Remediation-Eden.log`. `git diff --check` passed. Source `LogTemp` search returned no matches. Network-scope search found no new HTTP/JWT/Bearer/Authorization/Advisory/EdenOs/socket/network implementation; matches were limited to pre-existing mission "no retry" log text and the existing telemetry export comment.
+
 ---
 
 ## 17. Checkpoint acceptance protocol
@@ -573,3 +581,28 @@ Supporting rules:
 - **A test count is a smell test, not authority.** Source inspection decides.
 - **Named acceptance tests must exist as named tests.** Extra assertions folded into an unrelated existing test do not satisfy named coverage.
 - **A checkpoint declared "pure refactor" carries no semantic improvements**, however harmless. Behavior changes ride their own checkpoint.
+
+### 17.1 Git operating model — LOCKED 2026-08-08
+
+0007 proceeds **directly on `main`**. No checkpoint branches, no merge choreography.
+
+```text
+main
+ → repair/implement checkpoint
+ → build + tests + audit
+ → commit
+ → explicit approval
+ → next checkpoint
+```
+
+The governing rule:
+
+> **`main` may contain work-in-progress checkpoint code, but the next checkpoint does not begin until the current checkpoint passes acceptance.**
+
+Acceptance is controlled by **tests plus audit**, not by branch topology.
+
+**Why this changed.** Branch topology was never the control mechanism, and pretending otherwise produced a false sense of one. Checkpoint A was audited, rejected on two locked gates, and merged to `main` anyway via PR #5 (`f8edfb0`) with no remediation. The branch gate did not hold, and `main`'s suite reports 189/189 green over a seam that cannot register a second sink — a true statement about code that does not meet its checkpoint contract.
+
+Removing the branch ceremony removes the illusion. What remains is the thing that actually caught the defect: source inspection against locked acceptance criteria (§17).
+
+**Consequence to keep in view:** a green suite on `main` no longer implies any checkpoint was accepted. Approval is recorded in §16, and §16 is the authority on what has been accepted — not the merge history, and not the build badge.

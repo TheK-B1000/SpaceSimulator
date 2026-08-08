@@ -42,6 +42,23 @@ struct EDENSPACESIMULATOR_API FEdenTelemetrySinkResult
 	FString ErrorMessage;
 };
 
+struct EDENSPACESIMULATOR_API FEdenTelemetrySinkDeliveryRecord
+{
+	FName SinkName = NAME_None;
+	FEdenTelemetrySinkResult Result;
+};
+
+struct EDENSPACESIMULATOR_API FEdenTelemetrySinkDeliverySummary
+{
+	bool WasAttempted() const;
+	bool WasFullySuccessful() const;
+
+	TArray<FEdenTelemetrySinkDeliveryRecord> Records;
+	int32 AttemptedCount = 0;
+	int32 SucceededCount = 0;
+	int32 FailedCount = 0;
+};
+
 class EDENSPACESIMULATOR_API IEdenTelemetrySink
 {
 public:
