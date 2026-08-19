@@ -10,6 +10,8 @@ public class EdenSpaceSimulatorTarget : TargetRules
 		Type = TargetType.Game;
 		DefaultBuildSettings = BuildSettingsVersion.V7;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_8;
+		WindowsPlatform.Compiler = WindowsCompiler.VisualStudio2022;
+		WindowsPlatform.CompilerVersion = "14.44.35207";
 		ExtraModuleNames.Add("EdenSpaceSimulator");
 	}
 }

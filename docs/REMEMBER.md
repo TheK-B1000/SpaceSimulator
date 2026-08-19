@@ -6,6 +6,7 @@ This file stores durable, verified project facts that future Codex sessions must
 
 - Project name: `EdenSpaceSimulator`
 - Engine baseline: Unreal Engine 5.8
+- MSVC is pinned to Visual Studio 2022 `14.44.35207` (`WindowsPlatform.Compiler` / `CompilerVersion` in both Target.cs files and `Config/DefaultEngine.ini`). VS 2026 MSVC `14.50` ICE/C1001s on this project's unity files. Local UBT `Saved/UnrealBuildTool/BuildConfiguration.xml` (gitignored) should keep `MaxParallelActions` at 1 while the Editor is open; this machine's commit limit is tight (~62 GB).
 - Project type: C++ Unreal project
 - Primary runtime module: `EdenSpaceSimulator`
 - Primary platform: Windows desktop
