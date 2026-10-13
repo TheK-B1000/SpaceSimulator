@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Flight/EdenFlightTypes.h"
+#include "Systems/EdenResourceTypes.h"
 
 namespace EdenFlightUnits
 {
@@ -104,24 +105,74 @@ struct EDENSPACESIMULATOR_API FEdenFlightStepInput
 	FEdenFlightInputCommand Command;
 	FEdenFlightTranslationState Translation;
 	FEdenFlightRotationState Rotation;
-	double MassKilograms = 0.0;
+	double DryMassKilograms = 0.0;
 
-	/** Product of every thrust limit, in [0,1]. Scales translation thrust and attitude torque alike. */
+	/** True when a propellant supply is simulated. False: propellant is unconstrained and massless. */
+	bool bPropellantMetered = false;
+
+	/** Stored propellant at the start of the step (metered only). Read-only here; the supply owns it. */
+	double PropellantMassKilograms = 0.0;
+
+	/** Operator authority in [0,1]. Shapes the controller envelope (what may be requested). */
 	double ThrustAuthority = 1.0;
 
+	/** Power fraction in [0,1]. Limits delivery after the controller has asked. */
+	double PowerThrustFraction = 1.0;
+
 	bool bAssistAvailable = true;
+};
+
+/**
+ * First half of a flight step: what the controllers request, what power lets them deliver,
+ * and how much propellant that delivery needs. No state changes.
+ */
+struct EDENSPACESIMULATOR_API FEdenFlightStepPlan
+{
+	FEdenFlightInputCommand Command;
+	FEdenFlightThrustEnvelope Envelope;
+	FEdenFlightTorqueEnvelope TorqueEnvelope;
+	FVector RequestedBodyForceNewtons = FVector::ZeroVector;
+	FVector RequestedBodyTorqueNewtonMeters = FVector::ZeroVector;
+	double PowerThrustFraction = 1.0;
+	FVector PoweredBodyForceNewtons = FVector::ZeroVector;
+	FVector PoweredBodyTorqueNewtonMeters = FVector::ZeroVector;
+	double RequestedThrusterOutputNewtons = 0.0;
+	double PoweredThrusterOutputNewtons = 0.0;
+
+	/** Propellant the powered thrust needs over the whole step: output * dt / (Isp g0). */
+	double RequiredPropellantKilograms = 0.0;
+
+	double MassAtStartKilograms = 0.0;
+	bool bAssistActive = false;
+	bool bInputWasSanitized = false;
+	bool bPlanWasValid = true;
 };
 
 struct EDENSPACESIMULATOR_API FEdenFlightStepOutput
 {
 	FEdenFlightTranslationStepResult Translation;
 	FEdenFlightRotationStepResult Rotation;
+	FVector RequestedBodyForceNewtons = FVector::ZeroVector;
+	FVector RequestedBodyTorqueNewtonMeters = FVector::ZeroVector;
+
+	/** Delivered, averaged over the step. */
 	FVector AppliedBodyForceNewtons = FVector::ZeroVector;
 	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
+
 	FEdenFlightThrustEnvelope Envelope;
 	FEdenFlightTorqueEnvelope TorqueEnvelope;
-	double ThrusterOutputNewtons = 0.0;
+	double RequestedThrusterOutputNewtons = 0.0;
+	double DeliveredThrusterOutputNewtons = 0.0;
+	double PowerThrustFraction = 1.0;
+
+	/** Part of the step the thrusters burned before propellant ran out, in [0,1]. */
+	double PropellantBurnFraction = 1.0;
+	double PropellantRequiredKilograms = 0.0;
+	double PropellantConsumedKilograms = 0.0;
+	double MassAtEndKilograms = 0.0;
 	float PropulsionDemandNormalized = 0.0f;
+	bool bPowerLimited = false;
+	bool bPropellantLimited = false;
 	bool bAssistActive = false;
 	bool bInputWasSanitized = false;
 	bool bStepWasValid = true;
@@ -141,6 +192,9 @@ struct EDENSPACESIMULATOR_API FEdenFlightMovementModel
 {
 	/** Stick deflection at or below this magnitude counts as released. */
 	static constexpr double InputReleaseTolerance = 0.001;
+
+	/** Standard gravity: the unit conversion in mdot = F / (Isp g0). Not a force on the spacecraft. */
+	static constexpr double StandardGravityMetersPerSecondSquared = 9.80665;
 
 	static FEdenFlightInputCommand SanitizeCommand(
 		const FEdenFlightInputCommand& Command,
@@ -205,6 +259,18 @@ struct EDENSPACESIMULATOR_API FEdenFlightMovementModel
 	/** Fraction of reference (forward) thrust in use: ThrusterOutput / ForwardThrust, clamped to [0,1]. */
 	static float CalculatePropulsionDemandNormalized(double ThrusterOutputNewtons, const FEdenFlightPropulsionSettings& Settings);
 
+	/** mdot = ThrusterOutput / (Isp g0), kg/s. */
+	static double CalculatePropellantMassFlowKilogramsPerSecond(double ThrusterOutputNewtons, const FEdenFlightPropulsionSettings& Settings);
+
+	/** 1 for Normal/Warning, CriticalPowerThrustFraction for Critical, DepletedPowerThrustFraction for Depleted. */
+	static double CalculatePowerThrustFraction(EEdenPowerState PowerState, const FEdenFlightPropulsionSettings& Settings);
+
+	/**
+	 * Inertia scales with total mass (propellant assumed distributed like the hull): I(m) = I_dry * m / m_dry.
+	 * Exactly 1 when no propellant is aboard, so unmetered flight matches Checkpoint B bit for bit.
+	 */
+	static double CalculateInertiaScale(double MassKilograms, double DryMassKilograms);
+
 	// --- Rotation ------------------------------------------------------------
 
 	/**
@@ -257,10 +323,33 @@ struct EDENSPACESIMULATOR_API FEdenFlightMovementModel
 	// --- Step ----------------------------------------------------------------
 
 	/**
-	 * One complete fixed flight step without collision: choose controllers from the
-	 * assist state, saturate by the envelopes, integrate translation with the starting
-	 * orientation, then integrate rotation. The movement component and the deterministic
-	 * test harness both call this.
+	 * Step part 1 (pure): controllers -> requested force/torque -> power-limited delivery ->
+	 * propellant required. Mass is dry + stored propellant.
+	 */
+	static FEdenFlightStepPlan PlanFlightStep(
+		const FEdenFlightStepInput& Input,
+		const FEdenFlightPropulsionSettings& PropulsionSettings,
+		const FEdenFlightAttitudeSettings& AttitudeSettings,
+		double DeltaTimeSeconds);
+
+	/**
+	 * Step part 2 (pure), after the single propellant transaction granted GrantedPropellantKilograms:
+	 * burn at powered thrust for f dt (f = granted / required) at midpoint mass, then coast for
+	 * (1 - f) dt with zero force and torque. No negative propellant, no free acceleration.
+	 */
+	static FEdenFlightStepOutput ExecuteFlightStep(
+		const FEdenFlightStepInput& Input,
+		const FEdenFlightStepPlan& Plan,
+		double GrantedPropellantKilograms,
+		const FEdenFlightPropulsionSettings& PropulsionSettings,
+		const FEdenFlightAttitudeSettings& AttitudeSettings,
+		double DeltaTimeSeconds);
+
+	/**
+	 * One complete fixed flight step without collision: Plan, grant min(required, stored) when
+	 * metered (the whole requirement when not), Execute. The movement component performs the same
+	 * sequence with the real supply DrawPropellantKilograms between Plan and Execute; the
+	 * deterministic test harness calls this.
 	 */
 	static FEdenFlightStepOutput StepFlight(
 		const FEdenFlightStepInput& Input,

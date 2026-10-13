@@ -67,6 +67,9 @@ struct FBodyState
 {
 	FEdenFlightTranslationState Translation;
 	FEdenFlightRotationState Rotation;
+
+	/** Stored propellant when metered; the harness plays the fuel system and mirrors its ledger arithmetic. */
+	double PropellantKilograms = 0.0;
 };
 
 struct FRunConfig
@@ -80,7 +83,11 @@ struct FRunConfig
 	FBodyState Initial;
 	double DurationSeconds = 60.0;
 	double ThrustAuthority = 1.0;
+	double PowerThrustFraction = 1.0;
 	bool bAssistAvailable = true;
+
+	/** Meter propellant from Initial.PropellantKilograms (false = unconstrained, massless, as before Checkpoint D). */
+	bool bPropellantMetered = false;
 };
 
 struct FRunResult
@@ -95,6 +102,9 @@ struct FRunResult
 	double MaxStepDeltaVelocityMetersPerSecond = 0.0;
 	double MaxEnvelopeExcessNewtons = 0.0;
 	double MaxTorqueEnvelopeExcessNewtonMeters = 0.0;
+	double PropellantConsumedKilograms = 0.0;
+	double MinPropellantKilograms = TNumericLimits<double>::Max();
+	int64 PropellantLimitedSteps = 0;
 };
 
 inline double NextFrameDeltaSeconds(const FFrameSource& Source, FRandomStream& Random)
@@ -188,7 +198,10 @@ inline FRunResult Run(const FRunConfig& Config)
 				: FrameCommand;
 			Input.Translation = Result.Final.Translation;
 			Input.Rotation = Result.Final.Rotation;
-			Input.MassKilograms = Config.Propulsion.DryMassKilograms;
+			Input.DryMassKilograms = Config.Propulsion.DryMassKilograms;
+			Input.bPropellantMetered = Config.bPropellantMetered;
+			Input.PropellantMassKilograms = Result.Final.PropellantKilograms;
+			Input.PowerThrustFraction = Config.PowerThrustFraction;
 			Input.ThrustAuthority = Config.ThrustAuthority;
 			Input.bAssistAvailable = Config.bAssistAvailable;
 
@@ -206,6 +219,15 @@ inline FRunResult Run(const FRunConfig& Config)
 
 			Result.Final.Translation = Output.Translation.State;
 			Result.Final.Rotation = Output.Rotation.State;
+			if (Config.bPropellantMetered)
+			{
+				const double Stored = Result.Final.PropellantKilograms;
+				const double Granted = Output.PropellantConsumedKilograms;
+				Result.Final.PropellantKilograms = Granted >= Stored ? 0.0 : Stored - Granted;
+				Result.PropellantConsumedKilograms += Granted;
+				Result.MinPropellantKilograms = FMath::Min(Result.MinPropellantKilograms, Result.Final.PropellantKilograms);
+				Result.PropellantLimitedSteps += Output.bPropellantLimited ? 1 : 0;
+			}
 			++Result.Steps;
 		}
 

@@ -469,3 +469,13 @@ FString UEdenPowerSystemComponent::MakeLogContext() const
 		*GetNameSafe(this),
 		*GetNameSafe(GetOwner()));
 }
+
+bool UEdenPowerSystemComponent::IsPropulsionPowerSourceAvailable() const
+{
+	return IsPowerSimulationEnabled();
+}
+
+EEdenPowerState UEdenPowerSystemComponent::GetPropulsionPowerState() const
+{
+	return GetPowerStateSnapshot().PowerState;
+}

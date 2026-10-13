@@ -5,7 +5,9 @@
 #include "CoreMinimal.h"
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenFlightTypes.h"
+#include "Flight/EdenPropellantSupply.h"
 #include "Flight/EdenPropulsionDemandSource.h"
+#include "Flight/EdenPropulsionPowerSource.h"
 #include "GameFramework/PawnMovementComponent.h"
 
 #include "EdenFlightMovementComponent.generated.h"
@@ -22,6 +24,13 @@ public:
 	virtual void SetUpdatedComponent(USceneComponent* NewUpdatedComponent) override;
 	virtual void StopMovementImmediately() override;
 	virtual float GetPropulsionDemandNormalized() const override;
+
+	/** True while a propellant supply is simulated: this component then draws propellant itself, once per flight step. */
+	virtual bool MetersPropellantDirectly() const override;
+
+	/** Finds the owner's IEdenPropellantSupply and IEdenPropulsionPowerSource. Runs at BeginPlay and lazily. */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
+	bool RefreshResourceSources();
 
 	/**
 	 * Advances flight by DeltaTimeSeconds of world time in fixed steps (StepSettings).
@@ -57,11 +66,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
 	void SetAngularVelocityBodyRadiansPerSecond(FVector NewAngularVelocityBodyRadiansPerSecond);
 
-	/** Operator authority x future resource limits; what the thrusters can actually deliver. */
+	/** Operator authority x power fraction. Propellant is a separate, per-step limit. */
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	float GetEffectiveThrustAuthority() const;
 
-	/** Mass used by the dynamics this step. Dry mass until propellant mass joins (0008 Checkpoint D). */
+	/** Fraction of thrust and torque the power system allows right now (1 when power is not simulated). */
+	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
+	float GetPowerThrustFraction() const;
+
+	/** Stored propellant as reported by the supply (0 when unmetered). Read-only: the fuel system owns it. */
+	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
+	float GetPropellantMassKilograms() const;
+
+	/** Total mass used by the dynamics: dry + stored propellant. */
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	float GetMassKilograms() const;
 
@@ -82,8 +99,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight")
 	FEdenFlightStepSettings StepSettings;
 
+protected:
+	virtual void BeginPlay() override;
+
 private:
 	bool ValidateUpdatedComponentForFlight() const;
+	IEdenPropellantSupply* GetPropellantSupply() const;
+	const IEdenPropulsionPowerSource* GetPowerSource() const;
+	bool IsPropellantMetered() const;
 	bool IsFlightTimePaused() const;
 	FEdenFlightPropulsionSettings GetActivePropulsionSettings() const;
 	FEdenFlightPropulsionSettings ResolvePropulsionSettings(double FixedStepSeconds);
@@ -104,15 +127,6 @@ private:
 	FVector AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	float ThrusterOutputNewtons = 0.0f;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	FVector LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	float PropulsionDemandNormalized = 0.0f;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
@@ -120,12 +134,6 @@ private:
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	bool bStabilizationAssistAvailable = true;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	FVector AppliedBodyForceNewtons = FVector::ZeroVector;
-
-	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	FVector LastAccelerationWorldMetersPerSecondSquared = FVector::ZeroVector;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	bool bFlightAssistRequested = true;
@@ -143,6 +151,17 @@ private:
 	int64 DroppedFlightStepCount = 0;
 
 	double FlightAccumulatorSeconds = 0.0;
+
+	/** Requested / delivered / propellant results of the most recent flight step. */
+	FEdenFlightStepOutput LastStep;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UActorComponent> PropellantSupplyComponent;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UActorComponent> PowerSourceComponent;
+
+	bool bResourceSourcesDiscovered = false;
 
 	bool bLoggedInvalidInputState = false;
 	bool bLoggedInvalidPropulsionSettings = false;

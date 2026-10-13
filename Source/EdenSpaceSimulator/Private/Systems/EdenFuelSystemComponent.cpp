@@ -48,6 +48,13 @@ void UEdenFuelSystemComponent::AdvanceSimulation(float FixedDeltaSeconds)
 	}
 
 	const float DemandNormalized = ResolveConsumptionDemandNormalized();
+	if (IsDemandSourceMeteringPropellant())
+	{
+		// The demand source already drew this propellant through DrawPropellantKilograms; billing
+		// demand x rate here as well would subtract the same propellant twice.
+		return;
+	}
+
 	const FEdenFuelStepResult StepResult = FEdenFuelModel::Step(
 		ActiveFuelConfig,
 		CurrentSnapshot,
@@ -352,6 +359,7 @@ void UEdenFuelSystemComponent::DisableFuelSimulation(const FString& Reason)
 	bLoggedExpiredPropulsionDemandSource = false;
 	bLoggedSanitizedPropulsionDemand = false;
 	CurrentSnapshot = FEdenFuelStateSnapshot();
+	PropellantLedgerKilograms = 0.0;
 
 	UE_LOG(LogEdenSystems, Warning, TEXT("%s disabled fuel simulation: %s."), *MakeLogContext(), *Reason);
 }
@@ -454,10 +462,45 @@ float UEdenFuelSystemComponent::GetDebugPropulsionDemandNormalized() const
 	return FEdenFuelModel::SanitizeDemandNormalized(DemandSource->GetPropulsionDemandNormalized());
 }
 
-void UEdenFuelSystemComponent::ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents)
+bool UEdenFuelSystemComponent::IsPropellantSupplyAvailable() const
+{
+	return bFuelSimulationEnabled;
+}
+
+double UEdenFuelSystemComponent::GetPropellantMassKilograms() const
+{
+	return bFuelSimulationEnabled ? PropellantLedgerKilograms : 0.0;
+}
+
+double UEdenFuelSystemComponent::DrawPropellantKilograms(double RequestedKilograms)
+{
+	if (!bFuelSimulationEnabled || !FMath::IsFinite(RequestedKilograms) || RequestedKilograms <= 0.0)
+	{
+		return 0.0;
+	}
+
+	const double Granted = FMath::Min(RequestedKilograms, PropellantLedgerKilograms);
+	if (Granted <= 0.0)
+	{
+		return 0.0;
+	}
+
+	const double Remaining = Granted >= PropellantLedgerKilograms ? 0.0 : PropellantLedgerKilograms - Granted;
+	ApplySnapshot(FEdenFuelModel::MakeSnapshot(ActiveFuelConfig, static_cast<float>(Remaining)), true, &Remaining);
+	return Granted;
+}
+
+bool UEdenFuelSystemComponent::IsDemandSourceMeteringPropellant() const
+{
+	const IEdenPropulsionDemandSource* DemandSource = Cast<IEdenPropulsionDemandSource>(PropulsionDemandSourceComponent.Get());
+	return DemandSource && DemandSource->MetersPropellantDirectly();
+}
+
+void UEdenFuelSystemComponent::ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents, const double* PreciseKilograms)
 {
 	const EEdenFuelState PreviousState = CurrentSnapshot.FuelState;
 	CurrentSnapshot = NewSnapshot;
+	PropellantLedgerKilograms = PreciseKilograms ? FMath::Max(0.0, *PreciseKilograms) : static_cast<double>(NewSnapshot.FuelQuantityKilograms);
 
 	if (!bBroadcastEvents || PreviousState == CurrentSnapshot.FuelState)
 	{

@@ -19,4 +19,13 @@ class EDENSPACESIMULATOR_API IEdenPropulsionDemandSource
 
 public:
 	virtual float GetPropulsionDemandNormalized() const = 0;
+
+	/**
+	 * True when this source draws propellant itself through IEdenPropellantSupply. The fuel
+	 * system must then not also bill demand x rate, so propellant is subtracted exactly once.
+	 */
+	virtual bool MetersPropellantDirectly() const
+	{
+		return false;
+	}
 };

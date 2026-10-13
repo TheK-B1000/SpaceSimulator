@@ -146,7 +146,7 @@ bool FEdenFlightInvalidDeltaTimeDoesNotMutateVelocityTest::RunTest(const FString
 		StepInput.Command = Command;
 		StepInput.Translation.VelocityWorldMetersPerSecond = FVector(10.0, -20.0, 30.0);
 		StepInput.Rotation.AngularVelocityBodyRadiansPerSecond = InitialAngularVelocity;
-		StepInput.MassKilograms = 10000.0;
+		StepInput.DryMassKilograms = 10000.0;
 		const FEdenFlightStepOutput StepOutput =
 			FEdenFlightMovementModel::StepFlight(StepInput, FEdenFlightPropulsionSettings(), Attitude, DeltaTimeSeconds);
 		TestFalse(TEXT("Invalid DeltaTime flight step is reported"), StepOutput.bStepWasValid);

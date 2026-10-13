@@ -51,9 +51,9 @@ FSteppedRun StepN(FEdenFlightStepInput State, int32 Steps, const FEdenFlightAtti
 {
 	FSteppedRun Run;
 	const FEdenFlightPropulsionSettings Propulsion;
-	if (State.MassKilograms <= 0.0)
+	if (State.DryMassKilograms <= 0.0)
 	{
-		State.MassKilograms = Propulsion.DryMassKilograms;
+		State.DryMassKilograms = Propulsion.DryMassKilograms;
 	}
 
 	for (int32 Step = 0; Step < Steps; ++Step)
@@ -386,7 +386,7 @@ bool FEdenFlightRotationAuthoritySaturatesTorqueTest::RunTest(const FString& Par
 	const FEdenFlightPropulsionSettings Propulsion;
 
 	FEdenFlightStepInput Input;
-	Input.MassKilograms = Propulsion.DryMassKilograms;
+	Input.DryMassKilograms = Propulsion.DryMassKilograms;
 	Input.Command = MakeCommand(FVector(1.0, 0.0, 0.0), false);
 
 	Input.ThrustAuthority = 1.0;
@@ -586,7 +586,7 @@ bool FEdenFlightRotationAttitudeThrustBillsPropellantTest::RunTest(const FString
 	{
 		FEdenFlightStepInput Input;
 		Input.Command = Command;
-		Input.MassKilograms = Propulsion.DryMassKilograms;
+		Input.DryMassKilograms = Propulsion.DryMassKilograms;
 		Input.Rotation.AngularVelocityBodyRadiansPerSecond = BodyRate;
 		return FEdenFlightMovementModel::StepFlight(Input, Propulsion, Attitude, FixedStep);
 	};
@@ -606,7 +606,7 @@ bool FEdenFlightRotationAttitudeThrustBillsPropellantTest::RunTest(const FString
 	for (const FCase& Case : Cases)
 	{
 		const FEdenFlightStepOutput Output = Step(MakeCommand(Case.Input, false), FVector::ZeroVector);
-		TestNearlyEqualRelative(*this, FString::Printf(TEXT("%s thruster output"), Case.Name), Output.ThrusterOutputNewtons, Case.ExpectedThrusterNewtons, 1.0e-9);
+		TestNearlyEqualRelative(*this, FString::Printf(TEXT("%s thruster output"), Case.Name), Output.DeliveredThrusterOutputNewtons, Case.ExpectedThrusterNewtons, 1.0e-9);
 		TestNearlyEqualRelative(
 			*this,
 			FString::Printf(TEXT("%s propulsion demand"), Case.Name),
@@ -617,7 +617,7 @@ bool FEdenFlightRotationAttitudeThrustBillsPropellantTest::RunTest(const FString
 
 	const FVector Spin(0.0, 0.0, 0.5);
 	const FEdenFlightStepOutput Coasting = Step(MakeCommand(FVector::ZeroVector, false), Spin);
-	TestEqual(TEXT("Free spin with assist off fires no thrusters"), Coasting.ThrusterOutputNewtons, 0.0);
+	TestEqual(TEXT("Free spin with assist off fires no thrusters"), Coasting.DeliveredThrusterOutputNewtons, 0.0);
 	TestEqual(TEXT("Free spin with assist off bills no propellant"), Coasting.PropulsionDemandNormalized, 0.0f);
 
 	const FEdenFlightStepOutput Braking = Step(MakeCommand(FVector::ZeroVector, true), Spin);
@@ -625,16 +625,16 @@ bool FEdenFlightRotationAttitudeThrustBillsPropellantTest::RunTest(const FString
 	TestNearlyEqualRelative(
 		*this,
 		TEXT("Assist braking output is its torque over the lever arm"),
-		Braking.ThrusterOutputNewtons,
+		Braking.DeliveredThrusterOutputNewtons,
 		FMath::Abs(Braking.AppliedBodyTorqueNewtonMeters.Z) / Attitude.ThrusterLeverArmsMeters.Z,
 		1.0e-9);
 
 	const FEdenFlightStepOutput Idle = Step(MakeCommand(FVector::ZeroVector, true), FVector::ZeroVector);
-	TestEqual(TEXT("Assist at rest fires no thrusters"), Idle.ThrusterOutputNewtons, 0.0);
+	TestEqual(TEXT("Assist at rest fires no thrusters"), Idle.DeliveredThrusterOutputNewtons, 0.0);
 
 	// Demand saturates at 1, but thruster output reports the full truth.
 	const FEdenFlightStepOutput Combined = Step(MakeCommand(FVector(0.0, 1.0, 0.0), false, FVector(1.0, 0.0, 0.0)), FVector::ZeroVector);
-	TestNearlyEqualRelative(*this, TEXT("Combined burn and yaw output is 120 kN"), Combined.ThrusterOutputNewtons, 120000.0, 1.0e-9);
+	TestNearlyEqualRelative(*this, TEXT("Combined burn and yaw output is 120 kN"), Combined.DeliveredThrusterOutputNewtons, 120000.0, 1.0e-9);
 	TestEqual(TEXT("Combined demand clamps at 1"), Combined.PropulsionDemandNormalized, 1.0f);
 
 	FEdenFlightAttitudeSettings NoLeverArm;

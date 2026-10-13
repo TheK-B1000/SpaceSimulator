@@ -135,6 +135,23 @@ struct EDENSPACESIMULATOR_API FEdenFlightPropulsionSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Propulsion", meta = (ClampMin = "0.0", Units = "N"))
 	float VerticalThrustNewtons = 20000.0f;
 
+	/**
+	 * Effective specific impulse of all thrusters, in seconds. Propellant flow is
+	 * mdot = ThrusterOutput / (Isp * g0), with g0 = 9.80665 m/s^2 (a unit conversion, not gravity).
+	 * Placeholder default: 100 kN / (1 kg/s * g0) ~= 10197 s, which reproduces the pre-0008 balance
+	 * (1 kg/s at full forward thrust). Calibrated with tank size and thrust in a later rebalance.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Propulsion", meta = (ClampMin = "0.001", Units = "s"))
+	float SpecificImpulseSeconds = 10197.162f;
+
+	/** Fraction of thrust and torque deliverable when the power system is Critical. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Propulsion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float CriticalPowerThrustFraction = 0.4f;
+
+	/** Fraction of thrust and torque deliverable when the power system is Depleted (valves and controllers unpowered). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Propulsion", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float DepletedPowerThrustFraction = 0.0f;
+
 	/** Flight Assist: full stick commands this body-axis velocity. Not a speed cap; assist reaches it only through thrust. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Assist", meta = (ClampMin = "0.0", Units = "m/s"))
 	float AssistMaxSpeedMetersPerSecond = 100.0f;
@@ -183,28 +200,65 @@ struct EDENSPACESIMULATOR_API FEdenFlightDynamicsSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AccelerationWorldMetersPerSecondSquared = FVector::ZeroVector;
 
+	/** Requested body force on the last step: controller output inside the operator-limited envelope. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector RequestedBodyForceNewtons = FVector::ZeroVector;
+
+	/** Delivered body force (step average after power and propellant limits). This is what accelerated the ship. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AppliedBodyForceNewtons = FVector::ZeroVector;
 
-	/**
-	 * Total thruster output on the last step: sum |F_i| for translation plus sum |tau_i| / LeverArm_i
-	 * for attitude, in newtons. Unclamped, unlike PropulsionDemandNormalized.
-	 */
+	/** Requested thruster output: sum |F_i| + sum |tau_i| / LeverArm_i before power and propellant limits, newtons. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
-	float ThrusterOutputNewtons = 0.0f;
+	float RequestedThrusterOutputNewtons = 0.0f;
 
-	/** Thrust available right now along +X/+Y/+Z, after every authority limit. */
+	/** Delivered thruster output (step average), newtons. Unclamped, unlike PropulsionDemandNormalized. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float DeliveredThrusterOutputNewtons = 0.0f;
+
+	/** Propellant mass flow actually drawn on the last step, kg/s (from delivered thrust: mdot = F / (Isp g0)). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float PropellantFlowKilogramsPerSecond = 0.0f;
+
+	/** Fraction of thrust the power system allows (1 Normal/Warning, CriticalPowerThrustFraction, DepletedPowerThrustFraction). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float PowerThrustFraction = 1.0f;
+
+	/** Fraction of the last step the thrusters could burn before propellant ran out (1 = whole step). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float PropellantBurnFraction = 1.0f;
+
+	/** Delivered < requested because of power on the last step. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	bool bPowerLimited = false;
+
+	/** Delivered < requested because propellant ran out on the last step (or the tank is empty). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	bool bPropellantLimited = false;
+
+	/** True when a fuel system meters propellant; false = no supply simulated (propellant unconstrained, massless). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	bool bPropellantMetered = false;
+
+	/** Thrust available right now along +X/+Y/+Z, after operator, power and propellant limits. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AvailablePositiveThrustNewtons = FVector::ZeroVector;
 
-	/** Thrust available right now along -X/-Y/-Z (magnitudes), after every authority limit. */
+	/** Thrust available right now along -X/-Y/-Z (magnitudes), after operator, power and propellant limits. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AvailableNegativeThrustNewtons = FVector::ZeroVector;
 
+	/** Total mass: dry + stored propellant. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (Units = "kg"))
 	float MassKilograms = 0.0f;
 
-	/** Product of every thrust limit (operator today; fuel/power from Checkpoint D). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (Units = "kg"))
+	float DryMassKilograms = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (Units = "kg"))
+	float PropellantMassKilograms = 0.0f;
+
+	/** Operator authority x power fraction (propellant is reported separately). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	float EffectiveThrustAuthority = 1.0f;
 
@@ -226,6 +280,11 @@ struct EDENSPACESIMULATOR_API FEdenFlightDynamicsSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
 
+	/** Requested control torque on the last step, inside the operator-limited torque envelope. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector RequestedBodyTorqueNewtonMeters = FVector::ZeroVector;
+
+	/** Delivered control torque (step average after power and propellant limits). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
 

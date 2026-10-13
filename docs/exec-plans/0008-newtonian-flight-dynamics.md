@@ -2,9 +2,9 @@
 
 ## Status
 
-Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B provisionally approved (automation green; **human PIE pending**). Checkpoint C implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
+Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B provisionally approved (automation green; **human PIE pending**). Checkpoint C implemented (automation green; **human PIE pending**). Checkpoint D implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
 
-Fuel note until Phase 4: propulsion demand (translation **and**, from CP-C, attitude thrust) **drives fuel consumption**, but fuel availability does **not** yet constrain thrust or torque. An empty tank still produces full thrust.
+Fuel note (CP-D): propellant is drawn from **delivered** thrust (translation and attitude), one fuel-system transaction per 120 Hz flight step. An empty tank delivers no thrust or torque, and limited power reduces delivery. Gameplay values are not rebalanced: the Isp placeholder reproduces the pre-0008 rate.
 
 ## Problem and outcome
 
@@ -311,9 +311,25 @@ Rollback: each checkpoint is one commit; `git revert` restores the previous acce
   - The assist controllers were already saturated on all six axes after CP-A and CP-B, so CP-C added no controller change.
 - 2026-10-12: Balance note (CP-C). Rotating now burns propellant: full yaw reads 0.2 demand, so 0.2 kg/s at the default 1 kg/s rate. Decision 2 still holds; there is no capacity or rate re-tune. Phase 4 calibrates.
 - 2026-10-12: Correction to the CP-B report. CP-B added **12** `Eden.Unit.Flight.Rotation.*` tests, not 13. With the two removed kinematic tests the net is +10 (354 → 364); the run diff shows no other test removed.
+- 2026-10-13: Checkpoint D implemented:
+  - `IEdenPropellantSupply`, implemented by `UEdenFuelSystemComponent` with a `double` ledger and `DrawPropellantKilograms`.
+  - `IEdenPropulsionPowerSource`, implemented by `UEdenPowerSystemComponent`.
+  - `IEdenPropulsionDemandSource::MetersPropellantDirectly`, which stops the fuel 10 Hz step from subtracting twice.
+  - The model step is split into `PlanFlightStep` / `ExecuteFlightStep` around the single draw.
+  - `FEdenFlightPropulsionSettings` gains `SpecificImpulseSeconds` (≈10 197 s placeholder = 1 kg/s at 100 kN), `CriticalPowerThrustFraction` 0.4 and `DepletedPowerThrustFraction` 0.
+  - The dynamics snapshot gains requested and delivered force, torque and output; power fraction; burn fraction; flow; limit flags; metered flag; dry and propellant mass. A `ShowDebug` propulsion line is added.
+  - The harness meters propellant.
+  - Tests: `Eden.Unit.Flight.Propellant.*` and `Eden.Integration.Flight.{FuelSystemIsSinglePropellantOwner, EmptyTankStopsPropulsion, PowerLimitsDeliveredPropulsion}`. The Blueprint guard now checks Isp against `DA_EdenFuelConfig`.
+- 2026-10-13: Deviation (CP-D). The plan sketched resource limits as a pawn-written multiplier and an `IEdenFlightMassSource`. They became one `IEdenPropellantSupply` (mass plus the draw transaction, discovered by flight) and `IEdenPropulsionPowerSource` (state, discovered by flight). There is no pawn wiring, and the dependency direction stays flight → interfaces ← resources.
+- 2026-10-13: Deviation (CP-D). `FEdenFlightStepInput::MassKilograms` became `DryMassKilograms`, and `Dynamics.ThrusterOutputNewtons` became `DeliveredThrusterOutputNewtons` (in-process only; no wire impact).
+- 2026-10-13: Approximation (CP-D). Power limits are discrete state tiers, and thrusters do not draw battery power. Inertia scales with total mass (propellant distributed like the hull). Euler's equations omit the `İω` term. Thermal limits on propulsion are not modelled.
 - 2026-10-12: Feel change (CP-B), to tune in PIE. With the default inertia and torque, angular acceleration is about 27–44 deg/s² (the kinematic shell used 180 deg/s²), and assist tops out at 60 deg/s (was 90).
 
 ## Decision log
+
+- 2026-10-13 (CP-D, approved Decision 1): `PropulsionDemandNormalized` is total **delivered** thruster demand (translation and RCS), 0–1 for compatibility. Requested, delivered and propellant flow are exposed separately in-process.
+- 2026-10-13 (CP-D): The fuel system remains the single authoritative owner of stored propellant. Flight computes the physical requirement and makes one deterministic draw per flight step. Partial grants burn for `f·dt` and then coast.
+- 2026-10-13 (CP-D): With no simulated supply, propellant is unconstrained and massless (`bPropellantMetered = false`), which keeps bare-C++-pawn tests and the harness bit-identical to CP-C.
 
 - 2026-10-12 (CP-B): Rotation uses the same layering as translation. The attitude request (`Torque` | `BodyRate` | `Orientation`) resolves to torque inside `FEdenFlightTorqueEnvelope`, then `IntegrateRotation` (RK4 on Euler's equations and the quaternion kinematics). The `Orientation` mode is the autopilot/EDEN seam and has no caller in 0008, so EDEN gains no control privileges.
 - 2026-10-12 (CP-B): Operator effective thrust authority now scales attitude torque as well as thrust (RCS is propulsion). This extends ADR-0002, where authority scaled translation only.

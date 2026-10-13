@@ -6,6 +6,7 @@
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "Engine/World.h"
+#include "GameFramework/Actor.h"
 
 UEdenFlightMovementComponent::UEdenFlightMovementComponent()
 {
@@ -17,6 +18,12 @@ void UEdenFlightMovementComponent::InitializeComponent()
 {
 	Super::InitializeComponent();
 	ResetFlightMovement();
+}
+
+void UEdenFlightMovementComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	RefreshResourceSources();
 }
 
 void UEdenFlightMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdatedComponent)
@@ -40,11 +47,7 @@ void UEdenFlightMovementComponent::StopMovementImmediately()
 	Super::StopMovementImmediately();
 	AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
 	PropulsionDemandNormalized = 0.0f;
-	AppliedBodyForceNewtons = FVector::ZeroVector;
-	AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
-	ThrusterOutputNewtons = 0.0f;
-	LastAccelerationWorldMetersPerSecondSquared = FVector::ZeroVector;
-	LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
+	LastStep = FEdenFlightStepOutput();
 	bWasBlockedLastMove = false;
 }
 
@@ -68,6 +71,11 @@ int32 UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputComman
 	if (!FEdenFlightMovementModel::IsValidDeltaTime(DeltaTimeSeconds) || IsFlightTimePaused())
 	{
 		return 0;
+	}
+
+	if (!bResourceSourcesDiscovered)
+	{
+		RefreshResourceSources();
 	}
 
 	const FEdenFlightStepSettings ActiveStep = ResolveStepSettings();
@@ -108,22 +116,27 @@ void UEdenFlightMovementComponent::RunFlightStep(
 	StepInput.Translation.VelocityWorldMetersPerSecond = EdenFlightUnits::CentimetersToMeters(Velocity);
 	StepInput.Rotation.Orientation = UpdatedComponent->GetComponentQuat();
 	StepInput.Rotation.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
-	StepInput.MassKilograms = ActivePropulsion.DryMassKilograms;
-	StepInput.ThrustAuthority = GetEffectiveThrustAuthority();
+	StepInput.DryMassKilograms = ActivePropulsion.DryMassKilograms;
+	IEdenPropellantSupply* Supply = IsPropellantMetered() ? GetPropellantSupply() : nullptr;
+	StepInput.bPropellantMetered = Supply != nullptr;
+	StepInput.PropellantMassKilograms = Supply ? Supply->GetPropellantMassKilograms() : 0.0;
+	StepInput.ThrustAuthority = GetThrustAuthority();
+	StepInput.PowerThrustFraction = GetPowerThrustFraction();
 	StepInput.bAssistAvailable = bStabilizationAssistAvailable;
 
+	// 1. Plan (pure)  2. one propellant transaction with the fuel system  3. Execute (pure).
+	const FEdenFlightStepPlan Plan = FEdenFlightMovementModel::PlanFlightStep(StepInput, ActivePropulsion, ActiveAttitude, FixedStepSeconds);
+	const double GrantedPropellant = Supply && Plan.RequiredPropellantKilograms > 0.0
+		? Supply->DrawPropellantKilograms(Plan.RequiredPropellantKilograms)
+		: 0.0;
 	const FEdenFlightStepOutput StepOutput =
-		FEdenFlightMovementModel::StepFlight(StepInput, ActivePropulsion, ActiveAttitude, FixedStepSeconds);
+		FEdenFlightMovementModel::ExecuteFlightStep(StepInput, Plan, GrantedPropellant, ActivePropulsion, ActiveAttitude, FixedStepSeconds);
 
 	LogInvalidInputState(StepOutput.bInputWasSanitized);
 
 	bFlightAssistRequested = Command.bStabilizationEnabled;
 	bFlightAssistActive = StepOutput.bAssistActive;
-	AppliedBodyForceNewtons = StepOutput.AppliedBodyForceNewtons;
-	AppliedBodyTorqueNewtonMeters = StepOutput.AppliedBodyTorqueNewtonMeters;
-	ThrusterOutputNewtons = static_cast<float>(StepOutput.ThrusterOutputNewtons);
-	LastAngularAccelerationBodyRadiansPerSecondSquared = StepOutput.Rotation.AngularAccelerationBodyRadiansPerSecondSquared;
-	LastAccelerationWorldMetersPerSecondSquared = StepOutput.Translation.AccelerationWorldMetersPerSecondSquared;
+	LastStep = StepOutput;
 	PropulsionDemandNormalized = StepOutput.PropulsionDemandNormalized;
 	Velocity = EdenFlightUnits::MetersToCentimeters(StepOutput.Translation.State.VelocityWorldMetersPerSecond);
 	AngularVelocityBodyRadiansPerSecond = StepOutput.Rotation.State.AngularVelocityBodyRadiansPerSecond;
@@ -177,6 +190,104 @@ void UEdenFlightMovementComponent::ResetFlightSimulationState()
 	DroppedFlightStepCount = 0;
 	bFlightAssistRequested = true;
 	bFlightAssistActive = true;
+	LastStep = FEdenFlightStepOutput();
+}
+
+bool UEdenFlightMovementComponent::RefreshResourceSources()
+{
+	bResourceSourcesDiscovered = true;
+	PropellantSupplyComponent.Reset();
+	PowerSourceComponent.Reset();
+
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return false;
+	}
+
+	TInlineComponentArray<UActorComponent*> Components(OwnerActor);
+	int32 SupplyCount = 0;
+	int32 PowerCount = 0;
+	for (UActorComponent* Component : Components)
+	{
+		if (!IsValid(Component))
+		{
+			continue;
+		}
+
+		if (Cast<IEdenPropellantSupply>(Component))
+		{
+			PropellantSupplyComponent = Component;
+			++SupplyCount;
+		}
+
+		if (Cast<IEdenPropulsionPowerSource>(Component))
+		{
+			PowerSourceComponent = Component;
+			++PowerCount;
+		}
+	}
+
+	if (SupplyCount > 1 || PowerCount > 1)
+	{
+		UE_LOG(
+			LogEdenFlight,
+			Error,
+			TEXT("%s found %d propellant supplies and %d power sources on '%s'; exactly one of each is allowed. Ignoring the ambiguous set."),
+			*GetNameSafe(this),
+			SupplyCount,
+			PowerCount,
+			*GetNameSafe(OwnerActor));
+		if (SupplyCount > 1)
+		{
+			PropellantSupplyComponent.Reset();
+		}
+		if (PowerCount > 1)
+		{
+			PowerSourceComponent.Reset();
+		}
+	}
+
+	return PropellantSupplyComponent.IsValid() || PowerSourceComponent.IsValid();
+}
+
+IEdenPropellantSupply* UEdenFlightMovementComponent::GetPropellantSupply() const
+{
+	return Cast<IEdenPropellantSupply>(PropellantSupplyComponent.Get());
+}
+
+const IEdenPropulsionPowerSource* UEdenFlightMovementComponent::GetPowerSource() const
+{
+	return Cast<IEdenPropulsionPowerSource>(PowerSourceComponent.Get());
+}
+
+bool UEdenFlightMovementComponent::IsPropellantMetered() const
+{
+	const IEdenPropellantSupply* Supply = GetPropellantSupply();
+	return Supply && Supply->IsPropellantSupplyAvailable();
+}
+
+bool UEdenFlightMovementComponent::MetersPropellantDirectly() const
+{
+	return IsPropellantMetered();
+}
+
+float UEdenFlightMovementComponent::GetPowerThrustFraction() const
+{
+	const IEdenPropulsionPowerSource* Power = GetPowerSource();
+	if (!Power || !Power->IsPropulsionPowerSourceAvailable())
+	{
+		return 1.0f;
+	}
+
+	return static_cast<float>(
+		FEdenFlightMovementModel::CalculatePowerThrustFraction(Power->GetPropulsionPowerState(), GetActivePropulsionSettings()));
+}
+
+float UEdenFlightMovementComponent::GetPropellantMassKilograms() const
+{
+	const IEdenPropellantSupply* Supply = IsPropellantMetered() ? GetPropellantSupply() : nullptr;
+	return Supply ? static_cast<float>(Supply->GetPropellantMassKilograms()) : 0.0f;
 }
 
 bool UEdenFlightMovementComponent::IsFlightTimePaused() const
@@ -287,13 +398,12 @@ FEdenFlightStepSettings UEdenFlightMovementComponent::ResolveStepSettings()
 
 float UEdenFlightMovementComponent::GetEffectiveThrustAuthority() const
 {
-	// Checkpoint D multiplies in fuel and power limits here; operator authority is the only limit today.
-	return GetThrustAuthority();
+	return GetThrustAuthority() * GetPowerThrustFraction();
 }
 
 float UEdenFlightMovementComponent::GetMassKilograms() const
 {
-	return GetActivePropulsionSettings().DryMassKilograms;
+	return GetActivePropulsionSettings().DryMassKilograms + GetPropellantMassKilograms();
 }
 
 float UEdenFlightMovementComponent::GetSpeedMetersPerSecond() const
@@ -306,13 +416,30 @@ FEdenFlightDynamicsSnapshot UEdenFlightMovementComponent::GetFlightDynamicsSnaps
 	FEdenFlightDynamicsSnapshot Snapshot;
 	Snapshot.VelocityWorldMetersPerSecond = EdenFlightUnits::CentimetersToMeters(Velocity);
 	Snapshot.SpeedMetersPerSecond = GetSpeedMetersPerSecond();
-	Snapshot.AccelerationWorldMetersPerSecondSquared = LastAccelerationWorldMetersPerSecondSquared;
-	Snapshot.AppliedBodyForceNewtons = AppliedBodyForceNewtons;
-	Snapshot.ThrusterOutputNewtons = ThrusterOutputNewtons;
+	Snapshot.AccelerationWorldMetersPerSecondSquared = LastStep.Translation.AccelerationWorldMetersPerSecondSquared;
+	Snapshot.RequestedBodyForceNewtons = LastStep.RequestedBodyForceNewtons;
+	Snapshot.AppliedBodyForceNewtons = LastStep.AppliedBodyForceNewtons;
+	Snapshot.RequestedThrusterOutputNewtons = static_cast<float>(LastStep.RequestedThrusterOutputNewtons);
+	Snapshot.DeliveredThrusterOutputNewtons = static_cast<float>(LastStep.DeliveredThrusterOutputNewtons);
+	Snapshot.PropellantBurnFraction = static_cast<float>(LastStep.PropellantBurnFraction);
+	Snapshot.bPowerLimited = LastStep.bPowerLimited;
+	Snapshot.bPropellantMetered = IsPropellantMetered();
 
-	// Report what the thrusters can deliver now, even before the first step has run.
-	const FEdenFlightThrustEnvelope Envelope =
-		FEdenFlightMovementModel::MakeThrustEnvelope(GetActivePropulsionSettings(), GetEffectiveThrustAuthority());
+	const FEdenFlightPropulsionSettings ActivePropulsion = GetActivePropulsionSettings();
+	Snapshot.PropellantFlowKilogramsPerSecond = Snapshot.bPropellantMetered
+		? static_cast<float>(FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(
+			  LastStep.DeliveredThrusterOutputNewtons,
+			  ActivePropulsion))
+		: 0.0f;
+	Snapshot.PowerThrustFraction = GetPowerThrustFraction();
+	Snapshot.DryMassKilograms = ActivePropulsion.DryMassKilograms;
+	Snapshot.PropellantMassKilograms = GetPropellantMassKilograms();
+
+	// Available now, even before the first step: operator x power, and nothing at all from an empty tank.
+	const bool bTankEmpty = Snapshot.bPropellantMetered && Snapshot.PropellantMassKilograms <= 0.0f;
+	Snapshot.bPropellantLimited = LastStep.bPropellantLimited || bTankEmpty;
+	const double AvailableAuthority = bTankEmpty ? 0.0 : static_cast<double>(GetEffectiveThrustAuthority());
+	const FEdenFlightThrustEnvelope Envelope = FEdenFlightMovementModel::MakeThrustEnvelope(ActivePropulsion, AvailableAuthority);
 	Snapshot.AvailablePositiveThrustNewtons = Envelope.PositiveNewtons;
 	Snapshot.AvailableNegativeThrustNewtons = Envelope.NegativeNewtons;
 
@@ -320,13 +447,14 @@ FEdenFlightDynamicsSnapshot UEdenFlightMovementComponent::GetFlightDynamicsSnaps
 	FEdenFlightRotationState RotationState;
 	RotationState.Orientation = UpdatedComponent ? UpdatedComponent->GetComponentQuat() : FQuat::Identity;
 	RotationState.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
-	const FVector& Inertia = ActiveAttitude.PrincipalMomentsOfInertiaKilogramMetersSquared;
+	const FVector Inertia = ActiveAttitude.PrincipalMomentsOfInertiaKilogramMetersSquared
+		* FEdenFlightMovementModel::CalculateInertiaScale(GetMassKilograms(), ActivePropulsion.DryMassKilograms);
 	Snapshot.OrientationWorld = RotationState.Orientation;
 	Snapshot.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
-	Snapshot.AngularAccelerationBodyRadiansPerSecondSquared = LastAngularAccelerationBodyRadiansPerSecondSquared;
-	Snapshot.AppliedBodyTorqueNewtonMeters = AppliedBodyTorqueNewtonMeters;
-	Snapshot.AvailableTorqueNewtonMeters =
-		FEdenFlightMovementModel::MakeTorqueEnvelope(ActiveAttitude, GetEffectiveThrustAuthority()).MaxNewtonMeters;
+	Snapshot.AngularAccelerationBodyRadiansPerSecondSquared = LastStep.Rotation.AngularAccelerationBodyRadiansPerSecondSquared;
+	Snapshot.RequestedBodyTorqueNewtonMeters = LastStep.RequestedBodyTorqueNewtonMeters;
+	Snapshot.AppliedBodyTorqueNewtonMeters = LastStep.AppliedBodyTorqueNewtonMeters;
+	Snapshot.AvailableTorqueNewtonMeters = FEdenFlightMovementModel::MakeTorqueEnvelope(ActiveAttitude, AvailableAuthority).MaxNewtonMeters;
 	Snapshot.AngularMomentumWorld = FEdenFlightMovementModel::CalculateAngularMomentumWorld(RotationState, Inertia);
 	Snapshot.RotationalKineticEnergyJoules =
 		static_cast<float>(FEdenFlightMovementModel::CalculateRotationalKineticEnergy(RotationState, Inertia));

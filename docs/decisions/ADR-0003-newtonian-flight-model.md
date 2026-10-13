@@ -65,24 +65,39 @@ Flight advances in fixed steps (`FEdenFlightStepSettings::FixedStepHz`, default 
 
 ### Telemetry contract preserved
 
-`GetThrustAuthority()` keeps operator semantics. `GetEffectiveThrustAuthority()` reports the product of all limits. Thruster output = Σ|applied force| + Σ|applied torqueᵢ| / leverArmᵢ, in newtons (Checkpoint C). `PropulsionDemandNormalized` = thruster output / forward thrust, clamped to [0, 1]. A full forward burn reads 1.0 as before. Attitude control (pilot, assist or autopilot) now pays for its RCS thrust through the same measure. The unclamped total is `Dynamics.ThrusterOutputNewtons`. The field name and range on the wire are unchanged; its meaning widens from "translation thrust" to "all thruster output", which is the truthful reading of propulsion demand.
+`GetThrustAuthority()` keeps operator semantics. `GetEffectiveThrustAuthority()` reports operator authority × power fraction (Checkpoint D). Thruster output = Σ|force| + Σ|torqueᵢ| / leverArmᵢ, in newtons (Checkpoint C). `PropulsionDemandNormalized` = **delivered** thruster output / forward thrust, clamped to [0, 1]. A full forward burn reads 1.0 as before. Attitude control (pilot, assist or autopilot) pays for its RCS thrust through the same measure. The field name and range on the wire are unchanged; its meaning widens from "translation thrust" to "all delivered thruster output" (approved 2026-10-13).
 
 Richer dynamics live in `FEdenFlightStateSnapshot::Dynamics`, in-process only:
 
-- translation: velocity, acceleration, applied and available thrust, mass
+- propulsion (Checkpoint D): requested and delivered force, torque and thruster output; power fraction; propellant burn fraction; propellant flow; power-limited and propellant-limited flags; metered flag
+- mass: total, dry and propellant
+- translation: velocity, acceleration, delivered and available thrust
 - rotation: orientation, body rates, angular acceleration, applied and available torque, world angular momentum, rotational energy
 - assist state and step counters
 
 The EDEN OS wire format and Telemetry Export v1 are unchanged.
 
-### Fuel: demand versus availability
+### Propellant mass and delivered propulsion (Checkpoint D)
 
-Until ExecPlan 0008 Phase 4:
+**Ownership.**
 
-- Propulsion demand **drives fuel consumption** (`UEdenFuelSystemComponent` reads it through `IEdenPropulsionDemandSource`).
-- Fuel **availability does not yet constrain thrust or torque**. An empty tank still produces full thrust.
+- `UEdenFuelSystemComponent` is the sole owner and subtractor of stored propellant. It keeps a `double` ledger; the `float` snapshot is derived from it. It exposes `IEdenPropellantSupply` (mass, availability, `DrawPropellantKilograms`).
+- `UEdenPowerSystemComponent` exposes read-only `IEdenPropulsionPowerSource` (power state).
+- Flight discovers both on its owner and never writes either.
 
-Phase 4 adds fuel- and power-derived limits to `GetEffectiveThrustAuthority()`, propellant mass, and Isp-based mass flow.
+**One transaction per 120 Hz flight step:**
+
+1. `PlanFlightStep` (pure): controllers produce the requested force and torque, inside the operator-limited envelopes and using the current mass and inertia. Powered = requested × power fraction. Required propellant = powered output × dt / (Isp g₀).
+2. `DrawPropellantKilograms(required)`: the fuel system grants `min(required, stored)` and subtracts it. Stored propellant never goes negative.
+3. `ExecuteFlightStep` (pure): burn fraction `f = granted / required`. Burn at powered force and torque for `f·dt` at midpoint mass `m₀ − granted/2`, then coast for `(1 − f)·dt` with zero force and torque at `m₀ − granted`. Delivered = powered × `f`. Demand and propellant flow follow delivery, never the request.
+
+**No double billing.** `IEdenPropulsionDemandSource::MetersPropellantDirectly()` returns true for flight while a supply is simulated, and the fuel 10 Hz step then skips its legacy demand × rate subtraction. Other demand sources keep the legacy path.
+
+**Equations.** `m = m_dry + m_propellant`; `ṁ = F_delivered / (Isp·g₀)` with `g₀ = 9.80665 m/s²` (a unit conversion, not gravity on the ship); `a = R(q) F_delivered / m`; `I(m) = I_dry · m / m_dry`, used in Euler's equations with no `İω` term (exhaust leaves with the body's rotation). Power fraction: Normal and Warning 1; Critical `CriticalPowerThrustFraction` (0.4); Depleted `DepletedPowerThrustFraction` (0). It scales thrust and torque alike.
+
+**Unmetered.** With no simulated supply (for example a bare C++ pawn with no fuel Data Asset), propellant is unconstrained and massless. The step then reduces bit for bit to Checkpoint C. `Dynamics.bPropellantMetered` reports which mode is active.
+
+**Balance (Decision 2).** The `SpecificImpulseSeconds` default of ≈10 197 s reproduces the pre-0008 1 kg/s at 100 kN. It is a calibration placeholder, not a realistic engine, and the Blueprint guard test asserts that it matches `DA_EdenFuelConfig`'s legacy rate.
 
 ## Alternatives considered
 
@@ -115,10 +130,11 @@ Rejected. It violates momentum conservation, costs nothing, and can't be reasone
 - Assist braking now consumes propellant, which slightly changes resource balance during manual flight.
 - Collision response is still inelastic slide (normal momentum is removed). There is no angular response to impact.
 - Input is still sampled once per render frame, so a command can take effect up to one frame late.
-- Fuel samples demand at 10 Hz from the latest flight step. Averaging over flight steps arrives in 0008 Checkpoint D.
-- Empty tanks do not yet disable thrust or torque (Phase 4). Attitude control is billed to propellant from Checkpoint C.
+- Propellant is drawn per 120 Hz step from delivered thrust (Checkpoint D). The fuel system's 10 Hz demand × rate path now applies only to non-flight demand sources.
+- Power limits are discrete state tiers (Normal/Warning/Critical/Depleted). Thrusters do not yet draw electrical power, so firing does not drain the battery. Thermal limits on propulsion are not modelled.
+- Propellant is assumed to be distributed like the hull: inertia scales with mass, and the centre of mass does not move.
+- The default Isp is a balance placeholder (≈10 197 s), not a physical engine. A later rebalance calibrates Isp, tank size and thrust together.
 - Translation and attitude thrusters are separate lumped budgets. A combined manoeuvre can use the full thrust envelope and the full torque envelope at once, as if the RCS were not shared.
-- The inertia tensor is constant and the centre of mass is fixed. Propellant depletion does not shift either.
 - Torque is lumped per body axis. There are no individual thruster positions, and torque produces no translation coupling.
 - Per-axis decoupled orientation control is a seam, not a time-optimal autopilot. Large multi-axis slews converge but do not follow the shortest-time path.
 - RK4 conserves angular momentum and energy to integration accuracy, not exactly. The tests bound the drift at under 1e-6 relative over 60 s.
@@ -127,7 +143,8 @@ Rejected. It violates momentum conservation, costs nothing, and can't be reasone
 
 - `Eden.Unit.Flight.Dynamics.*`: analytic results, conservation, envelope, assist, accumulator, frame-rate independence, frame-sampled bounds.
 - `Eden.Unit.Flight.Rotation.*`: constant torque, input signs, torque-free spin, asymmetric angular-momentum and energy conservation, release, assist stabilization and rate tracking, authority saturation, orientation request, thrust redirection, 60 s tumble frame-rate independence, invalid inputs.
-- `Eden.Integration.Flight.*`: pause gating for translation and rotation, in-world fixed step, Blueprint guard, and operator load shed / reduced priority constraining physical thrust, torque and propellant use (Checkpoint C).
+- `Eden.Unit.Flight.Propellant.*` (Checkpoint D): power-limited delivery (100 kN requested, 40 kN delivered and billed), Isp mass flow, Tsiolkovsky Δv, mid-step depletion, empty tank (no thrust or torque, momentum conserved), RCS propellant, zero-input conservation, unmetered regression to Checkpoint C, depletion frame-rate independence, power tiers and settings.
+- `Eden.Integration.Flight.*`: pause gating for translation and rotation, in-world fixed step, and the Blueprint guard (including Isp versus the Data Asset legacy rate). Operator load shed and reduced priority constrain physical thrust, torque and propellant use (Checkpoint C). The fuel system is the single propellant owner with no double billing; an empty tank stops propulsion in-world; power limits delivered propulsion in-world (Checkpoint D).
 - Migrated `Eden.Unit.Flight.*` and the full `Eden.` regression.
 
 ## Supersedes / Superseded by

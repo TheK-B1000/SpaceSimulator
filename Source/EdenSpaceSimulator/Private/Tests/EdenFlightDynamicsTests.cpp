@@ -57,7 +57,7 @@ FEdenFlightStepOutput SingleStep(
 	Input.Command = Command;
 	Input.Translation.VelocityWorldMetersPerSecond = VelocityWorld;
 	Input.Rotation.Orientation = Rotation;
-	Input.MassKilograms = FEdenFlightPropulsionSettings().DryMassKilograms;
+	Input.DryMassKilograms = FEdenFlightPropulsionSettings().DryMassKilograms;
 	Input.ThrustAuthority = Authority;
 	Input.bAssistAvailable = bAssistAvailable;
 	return FEdenFlightMovementModel::StepFlight(
@@ -266,7 +266,7 @@ bool FEdenFlightDynamicsAssistTracksCommandedVelocityTest::RunTest(const FString
 	// Monotone approach: run step by step and confirm the target is never overshot.
 	FEdenFlightStepInput Input;
 	Input.Command = EdenFlightDynamicsTests::MakeCommand(FVector(1.0, 0.0, 0.0), true);
-	Input.MassKilograms = Config.Propulsion.DryMassKilograms;
+	Input.DryMassKilograms = Config.Propulsion.DryMassKilograms;
 	bool bOvershot = false;
 	for (int32 Step = 0; Step < 3600; ++Step)
 	{
@@ -300,7 +300,7 @@ bool FEdenFlightDynamicsAssistBrakingIsThrustLimitedTest::RunTest(const FString&
 	FEdenFlightStepInput Input;
 	Input.Command = EdenFlightDynamicsTests::MakeCommand(FVector::ZeroVector, true);
 	Input.Translation.VelocityWorldMetersPerSecond = FVector(300.0, 0.0, 0.0);
-	Input.MassKilograms = Propulsion.DryMassKilograms;
+	Input.DryMassKilograms = Propulsion.DryMassKilograms;
 
 	double SaturationExitSeconds = -1.0;
 	bool bExceededReverseThrust = false;

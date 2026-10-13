@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
+#include "Flight/EdenPropulsionPowerSource.h"
 #include "Systems/EdenPowerModel.h"
 #include "Systems/EdenResourceDebugTypes.h"
 
@@ -23,7 +24,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FEdenPowerDepletedSignature);
 
 UCLASS(ClassGroup = (Eden), meta = (BlueprintSpawnableComponent))
-class EDENSPACESIMULATOR_API UEdenPowerSystemComponent : public UActorComponent, public IEdenSimulationTickable
+class EDENSPACESIMULATOR_API UEdenPowerSystemComponent
+	: public UActorComponent
+	, public IEdenSimulationTickable
+	, public IEdenPropulsionPowerSource
 {
 	GENERATED_BODY()
 
@@ -31,6 +35,10 @@ public:
 	UEdenPowerSystemComponent();
 
 	virtual void AdvanceSimulation(float FixedDeltaSeconds) override;
+
+	// IEdenPropulsionPowerSource (read-only; power state stays owned here).
+	virtual bool IsPropulsionPowerSourceAvailable() const override;
+	virtual EEdenPowerState GetPropulsionPowerState() const override;
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Power")
 	bool InitializePowerSimulation(const FEdenPowerConfig& PowerConfig);

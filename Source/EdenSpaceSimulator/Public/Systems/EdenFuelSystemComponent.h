@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "Core/EdenSimulationTickable.h"
+#include "Flight/EdenPropellantSupply.h"
 #include "Systems/EdenFuelModel.h"
 #include "Systems/EdenResourceDebugTypes.h"
 
@@ -23,7 +24,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FEdenFuelDepletedSignature);
 
 UCLASS(ClassGroup = (Eden), meta = (BlueprintSpawnableComponent))
-class EDENSPACESIMULATOR_API UEdenFuelSystemComponent : public UActorComponent, public IEdenSimulationTickable
+class EDENSPACESIMULATOR_API UEdenFuelSystemComponent
+	: public UActorComponent
+	, public IEdenSimulationTickable
+	, public IEdenPropellantSupply
 {
 	GENERATED_BODY()
 
@@ -31,6 +35,11 @@ public:
 	UEdenFuelSystemComponent();
 
 	virtual void AdvanceSimulation(float FixedDeltaSeconds) override;
+
+	// IEdenPropellantSupply: this component is the only owner and subtractor of stored propellant.
+	virtual bool IsPropellantSupplyAvailable() const override;
+	virtual double GetPropellantMassKilograms() const override;
+	virtual double DrawPropellantKilograms(double RequestedKilograms) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Eden|Fuel")
 	bool InitializeFuelSimulation(const FEdenFuelConfig& FuelConfig);
@@ -83,7 +92,9 @@ private:
 	bool ValidateAndLogConfig(const FEdenFuelConfig& FuelConfig) const;
 	float ResolveConsumptionDemandNormalized();
 	float GetDebugPropulsionDemandNormalized() const;
-	void ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents);
+	/** PreciseKilograms, when given, becomes the ledger value; otherwise the ledger follows the snapshot. */
+	void ApplySnapshot(const FEdenFuelStateSnapshot& NewSnapshot, bool bBroadcastEvents, const double* PreciseKilograms = nullptr);
+	bool IsDemandSourceMeteringPropellant() const;
 	FString MakeLogContext() const;
 
 	UPROPERTY(EditAnywhere, Category = "Eden|Fuel")
@@ -94,6 +105,12 @@ private:
 
 	UPROPERTY(Transient)
 	FEdenFuelStateSnapshot CurrentSnapshot;
+
+	/**
+	 * Authoritative stored propellant in double precision. Per-step flight draws (~0.008 kg at 120 Hz)
+	 * are below float resolution on a 100 kg tank; CurrentSnapshot's float is derived for display.
+	 */
+	double PropellantLedgerKilograms = 0.0;
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UEdenSimulationClockSubsystem> RegisteredSimulationClock;

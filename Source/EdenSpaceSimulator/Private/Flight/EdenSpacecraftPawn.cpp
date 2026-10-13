@@ -127,7 +127,7 @@ void DrawFlightDynamics(UCanvas* Canvas, const FEdenFlightDynamicsSnapshot& Flig
 			*BoolText(Flight.bFlightAssistRequested),
 			*BoolText(Flight.bFlightAssistActive),
 			Flight.EffectiveThrustAuthority,
-			Flight.ThrusterOutputNewtons / 1000.0,
+			Flight.DeliveredThrusterOutputNewtons / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.X / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.Y / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.Z / 1000.0,
@@ -157,6 +157,21 @@ void DrawFlightDynamics(UCanvas* Canvas, const FEdenFlightDynamicsSnapshot& Flig
 			Flight.AvailableTorqueNewtonMeters.Y / 1000.0,
 			Flight.AvailableTorqueNewtonMeters.Z / 1000.0,
 			Flight.AngularMomentumWorld.Size()),
+		FColor::Magenta);
+	DrawLine(
+		Canvas,
+		FString::Printf(
+			TEXT("Propulsion: Requested=%.1f kN Delivered=%.1f kN Power=%.2f Burn=%.2f Flow=%.4f kg/s Propellant=%.3f kg Mass=%.1f kg Metered=%s Limited(power=%s propellant=%s)"),
+			Flight.RequestedThrusterOutputNewtons / 1000.0,
+			Flight.DeliveredThrusterOutputNewtons / 1000.0,
+			Flight.PowerThrustFraction,
+			Flight.PropellantBurnFraction,
+			Flight.PropellantFlowKilogramsPerSecond,
+			Flight.PropellantMassKilograms,
+			Flight.MassKilograms,
+			*BoolText(Flight.bPropellantMetered),
+			*BoolText(Flight.bPowerLimited),
+			*BoolText(Flight.bPropellantLimited)),
 		FColor::Magenta);
 }
 }

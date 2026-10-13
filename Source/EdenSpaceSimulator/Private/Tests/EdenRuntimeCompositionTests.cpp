@@ -533,7 +533,7 @@ bool FEdenRuntimeCompositionOperatorControlConstrainsPhysicalFlightTest::RunTest
 	TestFalse(TEXT("Snapshot shows assist inactive under load shed"), Shed.bFlightAssistActive);
 	TestTrue(TEXT("Shed ship drifts at constant velocity"), Flight->Velocity.Equals(Drift, 1.0e-9));
 	TestTrue(TEXT("Shed ship keeps spinning (principal-axis spin, no torque)"), Flight->GetAngularVelocityBodyRadiansPerSecond() == Spin);
-	TestEqual(TEXT("Shed ship fires no thrusters"), Shed.ThrusterOutputNewtons, 0.0f);
+	TestEqual(TEXT("Shed ship fires no thrusters"), Shed.DeliveredThrusterOutputNewtons, 0.0f);
 	Clock->Tick(1.0f);
 	EdenRuntimeCompositionTests::TestFloatNearlyEqual(
 		*this,
@@ -544,13 +544,13 @@ bool FEdenRuntimeCompositionOperatorControlConstrainsPhysicalFlightTest::RunTest
 	// Restore power: assist brakes translation and rotation on real thrusters and pays for it.
 	TestTrue(TEXT("Operator restores normal load"), Operator->SetLoadShedMode(EEdenLoadShedMode::Normal));
 	TestTrue(TEXT("Normal load restores flight assist"), Flight->IsStabilizationAssistAvailable());
+	// Checkpoint D: flight draws propellant during its own steps (not on the 10 Hz fuel tick).
+	const double FuelBeforeBrakingKilograms = Fuel->GetPropellantMassKilograms();
 	Advance(AssistRequested, 1);
 	TestTrue(TEXT("Assist braking reports propulsion demand"), Flight->GetPropulsionDemandNormalized() > 0.0f);
 	TestTrue(TEXT("Assist slows the drift"), Flight->GetSpeedMetersPerSecond() < 10.0f);
 	TestTrue(TEXT("Assist slows the spin"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z < Spin.Z);
-	const float FuelBeforeBrakingKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
-	Clock->Tick(1.0f);
-	TestTrue(TEXT("Assist braking burns propellant"), Fuel->GetFuelStateSnapshot().FuelQuantityKilograms < FuelBeforeBrakingKilograms);
+	TestTrue(TEXT("Assist braking burns propellant"), Fuel->GetPropellantMassKilograms() < FuelBeforeBrakingKilograms);
 
 	// Reduced propulsion priority: the operator limit scales physical thrust and torque.
 	TestTrue(TEXT("Operator reduces propulsion priority"), Operator->SetPropulsionPriorityMode(EEdenPropulsionPriorityMode::Reduced));
@@ -573,15 +573,218 @@ bool FEdenRuntimeCompositionOperatorControlConstrainsPhysicalFlightTest::RunTest
 	BurnAndYaw.TranslationInput = FVector(1.0, 0.0, 0.0);
 	BurnAndYaw.RotationInput = FVector(0.0, 1.0, 0.0);
 	BurnAndYaw.bStabilizationEnabled = false;
+	// Checkpoint D: the Blueprint pawn carries propellant, so mass and inertia include it (a ~1% effect).
+	const double MassBeforeBurn = Flight->GetMassKilograms();
+	const double InertiaScale = MassBeforeBurn / Propulsion.DryMassKilograms;
 	Advance(BurnAndYaw, 1);
-	const double ExpectedYawRate = Attitude.YawTorqueNewtonMeters * Authority / Attitude.PrincipalMomentsOfInertiaKilogramMetersSquared.Z * 0.1;
+	const double ExpectedYawRate =
+		Attitude.YawTorqueNewtonMeters * Authority / (Attitude.PrincipalMomentsOfInertiaKilogramMetersSquared.Z * InertiaScale) * 0.1;
 	TestTrue(
-		FString::Printf(TEXT("Reduced yaw torque gives w = (A tau / I) t (%.9f vs %.9f)"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate),
-		FMath::IsNearlyEqual(Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate, 1.0e-9));
-	const double ExpectedSpeed = Propulsion.ForwardThrustNewtons * Authority / Propulsion.DryMassKilograms * 0.1;
+		FString::Printf(TEXT("Reduced yaw torque gives w = (A tau / I(m)) t (%.9f vs %.9f)"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate),
+		FMath::IsNearlyEqual(Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate, ExpectedYawRate * 1.0e-4));
+	const double ExpectedSpeed = Propulsion.ForwardThrustNewtons * Authority / MassBeforeBurn * 0.1;
 	TestTrue(
 		FString::Printf(TEXT("Reduced thrust gives v = (A F / m) t (%.6f vs %.6f)"), Flight->GetSpeedMetersPerSecond(), ExpectedSpeed),
-		FMath::IsNearlyEqual(Flight->GetSpeedMetersPerSecond(), ExpectedSpeed, 1.0e-5));
+		FMath::IsNearlyEqual(Flight->GetSpeedMetersPerSecond(), ExpectedSpeed, ExpectedSpeed * 1.0e-4));
+
+	return true;
+}
+
+namespace EdenRuntimeCompositionTests
+{
+struct FFlightPropellantFixture
+{
+	FScopedRuntimeWorld RuntimeWorld;
+	AEdenSpacecraftPawn* Pawn = nullptr;
+	UEdenFlightMovementComponent* Flight = nullptr;
+	UEdenFuelSystemComponent* Fuel = nullptr;
+	UEdenPowerSystemComponent* Power = nullptr;
+	UEdenSimulationClockSubsystem* Clock = nullptr;
+
+	bool Setup(FAutomationTestBase& Test)
+	{
+		UClass* PawnClass = StaticLoadClass(AEdenSpacecraftPawn::StaticClass(), nullptr, PawnBlueprintClassPath);
+		UWorld* World = RuntimeWorld.Get();
+		Clock = World ? World->GetSubsystem<UEdenSimulationClockSubsystem>() : nullptr;
+		if (!Test.TestNotNull(TEXT("BP_EdenSpacecraftPawn class loads"), PawnClass) || !World || !Clock)
+		{
+			return false;
+		}
+		Clock->SetMaxCatchUpSteps(200);
+		Pawn = World->SpawnActor<AEdenSpacecraftPawn>(PawnClass, FTransform::Identity);
+		if (!Test.TestNotNull(TEXT("Blueprint spacecraft spawns"), Pawn))
+		{
+			return false;
+		}
+		World->BeginPlay();
+		EnsureBeginPlay(Pawn);
+		Flight = Pawn->GetFlightMovementComponent();
+		Fuel = Pawn->GetFuelSystemComponent();
+		Power = Pawn->GetPowerSystemComponent();
+		return Flight && Fuel && Power && Fuel->IsFuelSimulationEnabled() && Power->IsPowerSimulationEnabled();
+	}
+
+	void Advance(const FEdenFlightInputCommand& Command, int32 Updates)
+	{
+		for (int32 Update = 0; Update < Updates; ++Update)
+		{
+			Pawn->ApplyFlightInputCommand(Command, 0.1f);
+		}
+	}
+
+	static FEdenFlightInputCommand FullBurn()
+	{
+		FEdenFlightInputCommand Burn;
+		Burn.TranslationInput = FVector(1.0, 0.0, 0.0);
+		Burn.bStabilizationEnabled = false;
+		return Burn;
+	}
+};
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionFuelSystemIsSinglePropellantOwnerTest,
+	"Eden.Integration.Flight.FuelSystemIsSinglePropellantOwner",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionFuelSystemIsSinglePropellantOwnerTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	const FEdenFlightPropulsionSettings Propulsion;
+	TestTrue(TEXT("Flight meters propellant directly"), Fixture.Flight->MetersPropellantDirectly());
+	const double InitialPropellant = Fixture.Fuel->GetPropellantMassKilograms();
+	TestTrue(TEXT("The Blueprint pawn carries propellant"), InitialPropellant > 1.0);
+	TestTrue(
+		TEXT("Total mass is dry mass plus stored propellant"),
+		FMath::IsNearlyEqual(static_cast<double>(Fixture.Flight->GetMassKilograms()), Propulsion.DryMassKilograms + InitialPropellant, 1.0e-3));
+
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 10);
+	const double MassFlow = FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(Propulsion.ForwardThrustNewtons, Propulsion);
+	const double Consumed = InitialPropellant - Fixture.Fuel->GetPropellantMassKilograms();
+	TestTrue(
+		FString::Printf(TEXT("One second of full burn draws mdot x 1 s from the fuel system (%.9f vs %.9f kg)"), Consumed, MassFlow),
+		FMath::IsNearlyEqual(Consumed, MassFlow, MassFlow * 1.0e-9));
+	TestTrue(
+		TEXT("Flight reports the propellant flow it drew"),
+		FMath::IsNearlyEqual(static_cast<double>(Fixture.Flight->GetFlightDynamicsSnapshot().PropellantFlowKilogramsPerSecond), MassFlow, MassFlow * 1.0e-5));
+	TestTrue(
+		TEXT("The fuel snapshot follows the ledger"),
+		FMath::IsNearlyEqual(
+			static_cast<double>(Fixture.Fuel->GetFuelStateSnapshot().FuelQuantityKilograms),
+			Fixture.Fuel->GetPropellantMassKilograms(),
+			1.0e-4));
+
+	// The fuel clock step must not bill demand x rate on top of what flight already drew.
+	const double BeforeClockTick = Fixture.Fuel->GetPropellantMassKilograms();
+	TestTrue(TEXT("Demand is still nonzero from the last burn step"), Fixture.Flight->GetPropulsionDemandNormalized() > 0.0f);
+	Fixture.Clock->Tick(1.0f);
+	TestEqual(TEXT("A 10 Hz fuel tick does not subtract the same propellant again"), Fixture.Fuel->GetPropellantMassKilograms(), BeforeClockTick);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionEmptyTankStopsPropulsionTest,
+	"Eden.Integration.Flight.EmptyTankStopsPropulsion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionEmptyTankStopsPropulsionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	// 0.05 kg lasts ~0.05 s at 1 kg/s: the 0.1 s burn runs dry mid-update, then the ship coasts.
+	const FEdenFlightPropulsionSettings Propulsion;
+	TestTrue(TEXT("Fuel can be set to a few grams"), Fixture.Fuel->SetFuelQuantityKilograms(0.05f));
+	const double Loaded = Fixture.Fuel->GetPropellantMassKilograms();
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 1);
+
+	const double MassFlow = FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(Propulsion.ForwardThrustNewtons, Propulsion);
+	const double BurnSeconds = Loaded / MassFlow;
+	const double ExpectedSpeed = Propulsion.ForwardThrustNewtons * BurnSeconds / (Propulsion.DryMassKilograms + 0.5 * Loaded);
+	TestEqual(TEXT("Tank is exactly empty"), Fixture.Fuel->GetPropellantMassKilograms(), 0.0);
+	TestTrue(TEXT("Tank reports Depleted"), Fixture.Fuel->GetFuelStateSnapshot().FuelState == EEdenFuelState::Depleted);
+	TestTrue(
+		FString::Printf(TEXT("Speed comes only from the propellant that existed (%.6f vs %.6f m/s)"), Fixture.Flight->GetSpeedMetersPerSecond(), ExpectedSpeed),
+		FMath::IsNearlyEqual(static_cast<double>(Fixture.Flight->GetSpeedMetersPerSecond()), ExpectedSpeed, ExpectedSpeed * 1.0e-5));
+
+	const FEdenFlightDynamicsSnapshot Empty = Fixture.Flight->GetFlightDynamicsSnapshot();
+	TestTrue(TEXT("Snapshot is propellant-limited"), Empty.bPropellantLimited);
+	TestTrue(TEXT("Empty tank: no thrust available"), Empty.AvailablePositiveThrustNewtons.IsZero());
+	TestTrue(TEXT("Empty tank: no torque available"), Empty.AvailableTorqueNewtonMeters.IsZero());
+	TestTrue(TEXT("Mass is back to dry mass"), FMath::IsNearlyEqual(Empty.MassKilograms, Propulsion.DryMassKilograms, 1.0e-3f));
+
+	const FVector VelocityAfterDepletion = Fixture.Flight->Velocity;
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 3);
+	TestTrue(TEXT("Burning on an empty tank does not accelerate"), Fixture.Flight->Velocity.Equals(VelocityAfterDepletion, 1.0e-9));
+	TestEqual(TEXT("Burning on an empty tank reads zero demand"), Fixture.Flight->GetPropulsionDemandNormalized(), 0.0f);
+	TestEqual(TEXT("Propellant never goes negative"), Fixture.Fuel->GetPropellantMassKilograms(), 0.0);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionPowerLimitsDeliveredPropulsionTest,
+	"Eden.Integration.Flight.PowerLimitsDeliveredPropulsion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionPowerLimitsDeliveredPropulsionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	const FEdenFlightPropulsionSettings Propulsion;
+	const FEdenPowerConfig PowerConfig = Fixture.Power->GetActivePowerConfig();
+	Fixture.Power->SetBatteryChargeKilowattHours(PowerConfig.BatteryCapacityKilowattHours * PowerConfig.CriticalThresholdFraction * 0.5f);
+	TestTrue(TEXT("Battery is Critical"), Fixture.Power->GetPowerStateSnapshot().PowerState == EEdenPowerState::Critical);
+	TestTrue(
+		TEXT("Critical power limits thrust to CriticalPowerThrustFraction"),
+		FMath::IsNearlyEqual(Fixture.Flight->GetPowerThrustFraction(), Propulsion.CriticalPowerThrustFraction));
+
+	const double MassBefore = Fixture.Flight->GetMassKilograms();
+	const double PropellantBefore = Fixture.Fuel->GetPropellantMassKilograms();
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 1);
+
+	// In double, as the model computes it (a float product would round 0.4f x 100 kN to exactly 40 kN).
+	const double Delivered =
+		static_cast<double>(Propulsion.ForwardThrustNewtons) * static_cast<double>(Propulsion.CriticalPowerThrustFraction);
+	const double ExpectedSpeed = Delivered * 0.1 / MassBefore;
+	const double ExpectedConsumed = FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(Delivered, Propulsion) * 0.1;
+	const FEdenFlightDynamicsSnapshot Limited = Fixture.Flight->GetFlightDynamicsSnapshot();
+	TestTrue(TEXT("Requested is the full 100 kN"), FMath::IsNearlyEqual(Limited.RequestedThrusterOutputNewtons, Propulsion.ForwardThrustNewtons, 1.0f));
+	TestTrue(TEXT("Delivered is the power-limited 40 kN"), FMath::IsNearlyEqual(Limited.DeliveredThrusterOutputNewtons, static_cast<float>(Delivered), 1.0f));
+	TestTrue(TEXT("Snapshot is power-limited"), Limited.bPowerLimited);
+	TestTrue(
+		FString::Printf(TEXT("Acceleration uses delivered thrust (%.6f vs %.6f m/s)"), Fixture.Flight->GetSpeedMetersPerSecond(), ExpectedSpeed),
+		FMath::IsNearlyEqual(static_cast<double>(Fixture.Flight->GetSpeedMetersPerSecond()), ExpectedSpeed, ExpectedSpeed * 1.0e-4));
+	TestTrue(
+		FString::Printf(TEXT("Propellant use follows delivered thrust (%.9f vs %.9f kg)"), PropellantBefore - Fixture.Fuel->GetPropellantMassKilograms(), ExpectedConsumed),
+		FMath::IsNearlyEqual(PropellantBefore - Fixture.Fuel->GetPropellantMassKilograms(), ExpectedConsumed, ExpectedConsumed * 1.0e-9));
+
+	Fixture.Power->SetBatteryChargeKilowattHours(0.0f);
+	TestTrue(TEXT("Battery is Depleted"), Fixture.Power->GetPowerStateSnapshot().PowerState == EEdenPowerState::Depleted);
+	const FVector VelocityUnpowered = Fixture.Flight->Velocity;
+	const double PropellantUnpowered = Fixture.Fuel->GetPropellantMassKilograms();
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 2);
+	TestTrue(TEXT("Unpowered thrusters deliver nothing"), Fixture.Flight->Velocity.Equals(VelocityUnpowered, 1.0e-9));
+	TestEqual(TEXT("Unpowered thrusters burn no propellant"), Fixture.Fuel->GetPropellantMassKilograms(), PropellantUnpowered);
 
 	return true;
 }
@@ -627,6 +830,36 @@ bool FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest::RunTest
 	TestEqual(TEXT("Reverse thrust not overridden"), Flight->PropulsionSettings.ReverseThrustNewtons, DefaultPropulsion.ReverseThrustNewtons);
 	TestEqual(TEXT("Lateral thrust not overridden"), Flight->PropulsionSettings.LateralThrustNewtons, DefaultPropulsion.LateralThrustNewtons);
 	TestEqual(TEXT("Vertical thrust not overridden"), Flight->PropulsionSettings.VerticalThrustNewtons, DefaultPropulsion.VerticalThrustNewtons);
+	TestEqual(TEXT("Specific impulse not overridden"), Flight->PropulsionSettings.SpecificImpulseSeconds, DefaultPropulsion.SpecificImpulseSeconds);
+	TestEqual(
+		TEXT("Critical power fraction not overridden"),
+		Flight->PropulsionSettings.CriticalPowerThrustFraction,
+		DefaultPropulsion.CriticalPowerThrustFraction);
+	TestEqual(
+		TEXT("Depleted power fraction not overridden"),
+		Flight->PropulsionSettings.DepletedPowerThrustFraction,
+		DefaultPropulsion.DepletedPowerThrustFraction);
+
+	// Decision 2 (no rebalance yet): the Isp placeholder must reproduce the Data Asset's legacy rate at full forward thrust.
+	const UEdenFuelConfigDataAsset* FuelConfigAsset =
+		EdenRuntimeCompositionTests::LoadAsset<UEdenFuelConfigDataAsset>(EdenRuntimeCompositionTests::FuelConfigPath);
+	TestNotNull(TEXT("DA_EdenFuelConfig loads"), FuelConfigAsset);
+	if (FuelConfigAsset)
+	{
+		const double LegacyRate = FuelConfigAsset->FuelConfig.ConsumptionRateKilogramsPerSecond;
+		const double IspRate =
+			FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(Flight->PropulsionSettings.ForwardThrustNewtons, Flight->PropulsionSettings);
+		AddInfo(FString::Printf(
+			TEXT("DA_EdenFuelConfig: capacity %.3f kg, legacy rate %.6f kg/s; Isp %.3f s gives %.6f kg/s at %.0f N"),
+			FuelConfigAsset->FuelConfig.CapacityKilograms,
+			LegacyRate,
+			Flight->PropulsionSettings.SpecificImpulseSeconds,
+			IspRate,
+			Flight->PropulsionSettings.ForwardThrustNewtons));
+		TestTrue(
+			FString::Printf(TEXT("Isp reproduces the legacy full-thrust rate (%.6f vs %.6f kg/s)"), IspRate, LegacyRate),
+			FMath::IsNearlyEqual(IspRate, LegacyRate, LegacyRate * 1.0e-5));
+	}
 	TestEqual(
 		TEXT("Assist speed not overridden"),
 		Flight->PropulsionSettings.AssistMaxSpeedMetersPerSecond,

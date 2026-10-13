@@ -204,6 +204,20 @@ bool FEdenFlightMovementModel::ValidatePropulsionSettings(
 		bValid,
 		OutErrors);
 	EdenFlightMovementModel::ValidatePositive(TEXT("AssistResponseTimeSeconds"), Settings.AssistResponseTimeSeconds, bValid, OutErrors);
+	EdenFlightMovementModel::ValidatePositive(TEXT("SpecificImpulseSeconds"), Settings.SpecificImpulseSeconds, bValid, OutErrors);
+	for (const TPair<const TCHAR*, float>& Fraction : {
+			 TPair<const TCHAR*, float>(TEXT("CriticalPowerThrustFraction"), Settings.CriticalPowerThrustFraction),
+			 TPair<const TCHAR*, float>(TEXT("DepletedPowerThrustFraction"), Settings.DepletedPowerThrustFraction)})
+	{
+		if (!FMath::IsFinite(Fraction.Value) || Fraction.Value < 0.0f || Fraction.Value > 1.0f)
+		{
+			bValid = false;
+			if (OutErrors)
+			{
+				OutErrors->Add(FString::Printf(TEXT("%s must be within [0, 1]. Value=%f"), Fraction.Key, Fraction.Value));
+			}
+		}
+	}
 	if (bValid)
 	{
 		EdenFlightMovementModel::ValidateResponseTime(
@@ -630,8 +644,114 @@ double FEdenFlightMovementModel::CalculateRotationalKineticEnergy(
 	return 0.5 * FVector::DotProduct(W, PrincipalMomentsOfInertia * W);
 }
 
-FEdenFlightStepOutput FEdenFlightMovementModel::StepFlight(
+double FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(
+	double ThrusterOutputNewtons,
+	const FEdenFlightPropulsionSettings& Settings)
+{
+	if (!FMath::IsFinite(ThrusterOutputNewtons) || ThrusterOutputNewtons <= 0.0
+		|| !FMath::IsFinite(Settings.SpecificImpulseSeconds) || Settings.SpecificImpulseSeconds <= 0.0f)
+	{
+		return 0.0;
+	}
+
+	return ThrusterOutputNewtons / (static_cast<double>(Settings.SpecificImpulseSeconds) * StandardGravityMetersPerSecondSquared);
+}
+
+double FEdenFlightMovementModel::CalculatePowerThrustFraction(EEdenPowerState PowerState, const FEdenFlightPropulsionSettings& Settings)
+{
+	switch (PowerState)
+	{
+	case EEdenPowerState::Critical:
+		return EdenFlightMovementModel::SanitizeAuthority(Settings.CriticalPowerThrustFraction);
+	case EEdenPowerState::Depleted:
+		return EdenFlightMovementModel::SanitizeAuthority(Settings.DepletedPowerThrustFraction);
+	case EEdenPowerState::Normal:
+	case EEdenPowerState::Warning:
+	default:
+		return 1.0;
+	}
+}
+
+double FEdenFlightMovementModel::CalculateInertiaScale(double MassKilograms, double DryMassKilograms)
+{
+	if (!FMath::IsFinite(MassKilograms) || !FMath::IsFinite(DryMassKilograms) || MassKilograms <= 0.0 || DryMassKilograms <= 0.0)
+	{
+		return 1.0;
+	}
+
+	return MassKilograms / DryMassKilograms;
+}
+
+FEdenFlightStepPlan FEdenFlightMovementModel::PlanFlightStep(
 	const FEdenFlightStepInput& Input,
+	const FEdenFlightPropulsionSettings& PropulsionSettings,
+	const FEdenFlightAttitudeSettings& AttitudeSettings,
+	double DeltaTimeSeconds)
+{
+	FEdenFlightStepPlan Plan;
+	Plan.bPlanWasValid = IsValidDeltaTime(DeltaTimeSeconds) && FMath::IsFinite(Input.DryMassKilograms) && Input.DryMassKilograms > 0.0;
+	if (!Plan.bPlanWasValid)
+	{
+		return Plan;
+	}
+
+	Plan.Command = SanitizeCommand(Input.Command, &Plan.bInputWasSanitized);
+	Plan.bAssistActive = Plan.Command.bStabilizationEnabled && Input.bAssistAvailable;
+
+	const double StoredPropellant = Input.bPropellantMetered && FMath::IsFinite(Input.PropellantMassKilograms)
+		? FMath::Max(0.0, Input.PropellantMassKilograms)
+		: 0.0;
+	Plan.MassAtStartKilograms = Input.DryMassKilograms + StoredPropellant;
+
+	const FQuat BodyRotation = Input.Rotation.Orientation.GetNormalized();
+	FEdenFlightRotationState RotationState = Input.Rotation;
+	RotationState.Orientation = BodyRotation;
+
+	// Requests: controllers work inside the operator-limited envelopes, with the current total mass.
+	Plan.Envelope = MakeThrustEnvelope(PropulsionSettings, Input.ThrustAuthority);
+	if (Plan.bAssistActive)
+	{
+		const FVector VelocityBody = BodyRotation.UnrotateVector(Input.Translation.VelocityWorldMetersPerSecond);
+		Plan.RequestedBodyForceNewtons = ResolveAssistThrust(
+			Plan.Command.TranslationInput,
+			VelocityBody,
+			Plan.MassAtStartKilograms,
+			PropulsionSettings,
+			Plan.Envelope);
+	}
+	else
+	{
+		Plan.RequestedBodyForceNewtons = ResolveDirectThrust(Plan.Command.TranslationInput, Plan.Envelope);
+	}
+
+	Plan.TorqueEnvelope = MakeTorqueEnvelope(AttitudeSettings, Input.ThrustAuthority);
+	FEdenFlightAttitudeSettings ControllerAttitude = AttitudeSettings;
+	ControllerAttitude.PrincipalMomentsOfInertiaKilogramMetersSquared *=
+		CalculateInertiaScale(Plan.MassAtStartKilograms, Input.DryMassKilograms);
+	const FEdenFlightAttitudeRequest AttitudeRequest =
+		MakePilotAttitudeRequest(Plan.Command.RotationInput, Plan.bAssistActive, AttitudeSettings);
+	Plan.RequestedBodyTorqueNewtonMeters = ResolveAttitudeTorque(AttitudeRequest, RotationState, ControllerAttitude, Plan.TorqueEnvelope);
+
+	// Delivery: power limits what the thrusters can actually produce.
+	Plan.PowerThrustFraction = EdenFlightMovementModel::SanitizeAuthority(Input.PowerThrustFraction);
+	Plan.PoweredBodyForceNewtons = Plan.RequestedBodyForceNewtons * Plan.PowerThrustFraction;
+	Plan.PoweredBodyTorqueNewtonMeters = Plan.RequestedBodyTorqueNewtonMeters * Plan.PowerThrustFraction;
+	Plan.RequestedThrusterOutputNewtons =
+		CalculateThrusterOutputNewtons(Plan.RequestedBodyForceNewtons, Plan.RequestedBodyTorqueNewtonMeters, AttitudeSettings);
+	Plan.PoweredThrusterOutputNewtons =
+		CalculateThrusterOutputNewtons(Plan.PoweredBodyForceNewtons, Plan.PoweredBodyTorqueNewtonMeters, AttitudeSettings);
+
+	// Propellant: what the powered thrust needs for the whole step (mdot = F / (Isp g0)).
+	Plan.RequiredPropellantKilograms = Input.bPropellantMetered
+		? CalculatePropellantMassFlowKilogramsPerSecond(Plan.PoweredThrusterOutputNewtons, PropulsionSettings) * DeltaTimeSeconds
+		: 0.0;
+	return Plan;
+}
+
+FEdenFlightStepOutput FEdenFlightMovementModel::ExecuteFlightStep(
+	const FEdenFlightStepInput& Input,
+	const FEdenFlightStepPlan& Plan,
+	double GrantedPropellantKilograms,
 	const FEdenFlightPropulsionSettings& PropulsionSettings,
 	const FEdenFlightAttitudeSettings& AttitudeSettings,
 	double DeltaTimeSeconds)
@@ -639,66 +759,123 @@ FEdenFlightStepOutput FEdenFlightMovementModel::StepFlight(
 	FEdenFlightStepOutput Output;
 	Output.Translation.State = Input.Translation;
 	Output.Rotation.State = Input.Rotation;
+	Output.bInputWasSanitized = Plan.bInputWasSanitized;
+	Output.bAssistActive = Plan.bAssistActive;
+	Output.Envelope = Plan.Envelope;
+	Output.TorqueEnvelope = Plan.TorqueEnvelope;
+	Output.RequestedBodyForceNewtons = Plan.RequestedBodyForceNewtons;
+	Output.RequestedBodyTorqueNewtonMeters = Plan.RequestedBodyTorqueNewtonMeters;
+	Output.RequestedThrusterOutputNewtons = Plan.RequestedThrusterOutputNewtons;
+	Output.PowerThrustFraction = Plan.PowerThrustFraction;
+	Output.PropellantRequiredKilograms = Plan.RequiredPropellantKilograms;
+	Output.MassAtEndKilograms = Plan.MassAtStartKilograms;
 
-	if (!IsValidDeltaTime(DeltaTimeSeconds))
+	if (!Plan.bPlanWasValid || !IsValidDeltaTime(DeltaTimeSeconds))
 	{
 		Output.bStepWasValid = false;
 		return Output;
 	}
 
-	FEdenFlightInputCommand Command = SanitizeCommand(Input.Command, &Output.bInputWasSanitized);
-	Output.bAssistActive = Command.bStabilizationEnabled && Input.bAssistAvailable;
-
-	const FQuat BodyRotation = Input.Rotation.Orientation.GetNormalized();
-	FEdenFlightRotationState RotationState = Input.Rotation;
-	RotationState.Orientation = BodyRotation;
-
-	// Translation: integrated with the orientation at the start of the step (Checkpoint A, unchanged).
-	Output.Envelope = MakeThrustEnvelope(PropulsionSettings, Input.ThrustAuthority);
-	if (Output.bAssistActive)
+	// Burn fraction from the single propellant transaction.
+	double Granted = 0.0;
+	double BurnFraction = 1.0;
+	if (Input.bPropellantMetered && Plan.RequiredPropellantKilograms > 0.0)
 	{
-		const FVector VelocityBody = BodyRotation.UnrotateVector(Input.Translation.VelocityWorldMetersPerSecond);
-		Output.AppliedBodyForceNewtons =
-			ResolveAssistThrust(Command.TranslationInput, VelocityBody, Input.MassKilograms, PropulsionSettings, Output.Envelope);
+		Granted = FMath::IsFinite(GrantedPropellantKilograms)
+			? FMath::Clamp(GrantedPropellantKilograms, 0.0, Plan.RequiredPropellantKilograms)
+			: 0.0;
+		BurnFraction = Granted >= Plan.RequiredPropellantKilograms ? 1.0 : Granted / Plan.RequiredPropellantKilograms;
+	}
+
+	const double BurnSeconds = BurnFraction * DeltaTimeSeconds;
+	const double CoastSeconds = BurnFraction >= 1.0 ? 0.0 : DeltaTimeSeconds - BurnSeconds;
+	const double MassAtStart = Plan.MassAtStartKilograms;
+	const double MassDuringBurn = MassAtStart - 0.5 * Granted;
+	const double MassAtEnd = MassAtStart - Granted;
+	const FQuat BodyRotation = Input.Rotation.Orientation.GetNormalized();
+	const FVector& DryInertia = AttitudeSettings.PrincipalMomentsOfInertiaKilogramMetersSquared;
+
+	// Translation: powered thrust while propellant lasts (orientation at step start, Checkpoint A), then coast.
+	FEdenFlightTranslationStepResult Burn;
+	Burn.State = Input.Translation;
+	if (BurnSeconds > 0.0)
+	{
+		Burn = IntegrateTranslation(Input.Translation, Plan.PoweredBodyForceNewtons, MassDuringBurn, BodyRotation, BurnSeconds);
+	}
+
+	if (CoastSeconds > 0.0 && Burn.bStepWasValid)
+	{
+		const FEdenFlightTranslationStepResult Coast =
+			IntegrateTranslation(Burn.State, FVector::ZeroVector, MassAtEnd, BodyRotation, CoastSeconds);
+		Output.Translation = Coast;
+		Output.Translation.DisplacementWorldMeters = Burn.DisplacementWorldMeters + Coast.DisplacementWorldMeters;
+		Output.Translation.AccelerationWorldMetersPerSecondSquared =
+			(Coast.State.VelocityWorldMetersPerSecond - Input.Translation.VelocityWorldMetersPerSecond) / DeltaTimeSeconds;
 	}
 	else
 	{
-		Output.AppliedBodyForceNewtons = ResolveDirectThrust(Command.TranslationInput, Output.Envelope);
+		Output.Translation = Burn;
 	}
 
-	Output.Translation =
-		IntegrateTranslation(Input.Translation, Output.AppliedBodyForceNewtons, Input.MassKilograms, BodyRotation, DeltaTimeSeconds);
-	if (!Output.Translation.bStepWasValid)
+	// Rotation: powered torque while propellant lasts, then torque-free (Checkpoint B dynamics, current inertia).
+	FEdenFlightRotationStepResult BurnRotation;
+	BurnRotation.State = Input.Rotation;
+	if (BurnSeconds > 0.0)
 	{
-		Output.AppliedBodyForceNewtons = FVector::ZeroVector;
-		Output.bStepWasValid = false;
+		BurnRotation = IntegrateRotation(
+			Input.Rotation,
+			Plan.PoweredBodyTorqueNewtonMeters,
+			DryInertia * CalculateInertiaScale(MassDuringBurn, Input.DryMassKilograms),
+			BurnSeconds);
 	}
 
-	// Rotation: torque from the attitude controller, inside the torque envelope, then rigid-body dynamics.
-	Output.TorqueEnvelope = MakeTorqueEnvelope(AttitudeSettings, Input.ThrustAuthority);
-	const FEdenFlightAttitudeRequest AttitudeRequest =
-		MakePilotAttitudeRequest(Command.RotationInput, Output.bAssistActive, AttitudeSettings);
-	Output.AppliedBodyTorqueNewtonMeters = ResolveAttitudeTorque(AttitudeRequest, RotationState, AttitudeSettings, Output.TorqueEnvelope);
-
-	// Integrate from the caller's state (IntegrateRotation normalizes once) so a step is exactly
-	// "pure rigid-body dynamics under the applied torque" — the controller never touches w or q.
-	Output.Rotation = IntegrateRotation(
-		Input.Rotation,
-		Output.AppliedBodyTorqueNewtonMeters,
-		AttitudeSettings.PrincipalMomentsOfInertiaKilogramMetersSquared,
-		DeltaTimeSeconds);
-	if (!Output.Rotation.bStepWasValid)
+	if (CoastSeconds > 0.0 && BurnRotation.bStepWasValid)
 	{
-		Output.AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
-		Output.bStepWasValid = false;
+		const FEdenFlightRotationStepResult CoastRotation = IntegrateRotation(
+			BurnRotation.State,
+			FVector::ZeroVector,
+			DryInertia * CalculateInertiaScale(MassAtEnd, Input.DryMassKilograms),
+			CoastSeconds);
+		Output.Rotation = CoastRotation;
+		Output.Rotation.AngularAccelerationBodyRadiansPerSecondSquared =
+			(CoastRotation.State.AngularVelocityBodyRadiansPerSecond - Input.Rotation.AngularVelocityBodyRadiansPerSecond) / DeltaTimeSeconds;
+	}
+	else
+	{
+		Output.Rotation = BurnRotation;
 	}
 
-	// Translation thrust and attitude torque draw on the same propellant, whichever controller asked.
-	Output.ThrusterOutputNewtons =
-		CalculateThrusterOutputNewtons(Output.AppliedBodyForceNewtons, Output.AppliedBodyTorqueNewtonMeters, AttitudeSettings);
-	Output.PropulsionDemandNormalized = CalculatePropulsionDemandNormalized(Output.ThrusterOutputNewtons, PropulsionSettings);
+	Output.bStepWasValid = Output.Translation.bStepWasValid && Output.Rotation.bStepWasValid;
+	if (!Output.bStepWasValid)
+	{
+		Output.Translation.State = Input.Translation;
+		Output.Rotation.State = Input.Rotation;
+		return Output;
+	}
 
+	// Delivered = powered x burn fraction; propellant and demand follow delivery, never the request.
+	Output.AppliedBodyForceNewtons = Plan.PoweredBodyForceNewtons * BurnFraction;
+	Output.AppliedBodyTorqueNewtonMeters = Plan.PoweredBodyTorqueNewtonMeters * BurnFraction;
+	Output.DeliveredThrusterOutputNewtons = Plan.PoweredThrusterOutputNewtons * BurnFraction;
+	Output.PropulsionDemandNormalized = CalculatePropulsionDemandNormalized(Output.DeliveredThrusterOutputNewtons, PropulsionSettings);
+	Output.PropellantBurnFraction = BurnFraction;
+	Output.PropellantConsumedKilograms = Granted;
+	Output.MassAtEndKilograms = MassAtEnd;
+	Output.bPowerLimited = Plan.PowerThrustFraction < 1.0 && Plan.RequestedThrusterOutputNewtons > 0.0;
+	Output.bPropellantLimited = Input.bPropellantMetered && Plan.PoweredThrusterOutputNewtons > 0.0 && BurnFraction < 1.0;
 	return Output;
+}
+
+FEdenFlightStepOutput FEdenFlightMovementModel::StepFlight(
+	const FEdenFlightStepInput& Input,
+	const FEdenFlightPropulsionSettings& PropulsionSettings,
+	const FEdenFlightAttitudeSettings& AttitudeSettings,
+	double DeltaTimeSeconds)
+{
+	const FEdenFlightStepPlan Plan = PlanFlightStep(Input, PropulsionSettings, AttitudeSettings, DeltaTimeSeconds);
+	const double Stored = FMath::IsFinite(Input.PropellantMassKilograms) ? FMath::Max(0.0, Input.PropellantMassKilograms) : 0.0;
+	const double Granted = Input.bPropellantMetered ? FMath::Min(Plan.RequiredPropellantKilograms, Stored) : 0.0;
+	return ExecuteFlightStep(Input, Plan, Granted, PropulsionSettings, AttitudeSettings, DeltaTimeSeconds);
 }
 
 int32 FEdenFlightMovementModel::CalculateFixedSteps(
