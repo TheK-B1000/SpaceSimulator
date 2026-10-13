@@ -55,6 +55,40 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Telemetry")
 	void ShowAfterAction();
 
+	/** X: toggle Flight Assist. Shows the confirmed resulting state (or why assist is unavailable) on the HUD. */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|Controls")
+	void EdenToggleFlightAssist();
+
+	/** T: cycle thermal mode through operator control; HUD shows the confirmed mode or the rejection reason. */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|Controls")
+	void EdenCycleThermalMode();
+
+	/** L: toggle load shedding through operator control; HUD shows the confirmed state or the rejection reason. */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|Controls")
+	void EdenToggleLoadShed();
+
+	/** P: toggle propulsion priority through operator control; HUD shows the confirmed authority or the rejection reason. */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|Controls")
+	void EdenTogglePropulsionPriority();
+
+	/** Re-reads authoritative state into the HUD now (the HUD otherwise refreshes at OperatorHudRefreshHz). Read-only. */
+	UFUNCTION(BlueprintCallable, Category = "Eden|HUD")
+	void RefreshOperatorHudNow();
+
+	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
+	UEdenOperatorHudWidget* GetOperatorHudWidget() const;
+
+	/** Last control-feedback message shown for X/T/L/P (confirmed state or rejection reason). */
+	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
+	FString GetLastControlFeedback() const;
+
+	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
+	bool WasLastControlFeedbackSuccessful() const;
+
+	/** PIE/dev: log the operator HUD's widget tree, viewport attachment, visibility and geometry. */
+	UFUNCTION(Exec, Category = "Eden|Debug")
+	void EdenHudDiagnostics();
+
 	/** PIE/dev: set stored propellant (kg) through the fuel system, its only owner. For empty-tank / depletion checks. */
 	UFUNCTION(Exec, Category = "Eden|Debug")
 	void EdenSetFuelKilograms(float Kilograms);
@@ -118,8 +152,17 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight|Input")
 	FEdenFlightInputIntent FlightInputIntent;
 
+	UPROPERTY(Transient)
+	FString LastControlFeedback;
+
+	UPROPERTY(Transient)
+	bool bLastControlFeedbackSucceeded = false;
+
 private:
 	void EnsureFlightInputAssetsLoaded();
+	/** Shows confirmed control feedback on the HUD and refreshes it immediately (outside the 10 Hz cadence). */
+	void ReportControlFeedback(const FString& Message, bool bSucceeded);
+	FString DescribeOperatorRejection(const class UEdenOperatorControlComponent* Operator) const;
 	void ApplyFlightInputMode();
 	void AddFlightInputMappingContext();
 	void BindFlightInputActions();

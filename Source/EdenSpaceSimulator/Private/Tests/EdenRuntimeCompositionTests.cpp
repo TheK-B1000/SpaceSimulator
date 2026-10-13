@@ -9,6 +9,8 @@
 #include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Missions/EdenMissionSubsystem.h"
 #include "Operations/EdenOperatorControlComponent.h"
+#include "Operations/EdenOperatorHudWidget.h"
+#include "Blueprint/UserWidget.h"
 #include "Systems/EdenFuelConfigDataAsset.h"
 #include "Systems/EdenFuelSystemComponent.h"
 #include "Systems/EdenPowerConfigDataAsset.h"
@@ -938,6 +940,320 @@ bool FEdenRuntimeCompositionResourceTransitionsStayConsistentTest::RunTest(const
 	TestTrue(
 		TEXT("After fuel reset, draws come from the restored ledger"),
 		FMath::IsNearlyEqual(Restored - Propellant(), FullFlow * 0.1, FullFlow * 0.1 * 1.0e-9));
+
+	return true;
+}
+
+namespace EdenRuntimeCompositionTests
+{
+const TCHAR* HudWidgetClassPath = TEXT("/Game/Eden/UI/WBP_EdenOperatorHud.WBP_EdenOperatorHud_C");
+
+AEdenFlightPlayerController* PossessWithController(FFlightPropellantFixture& Fixture)
+{
+	AEdenFlightPlayerController* Controller = Fixture.Pawn->GetWorld()->SpawnActor<AEdenFlightPlayerController>(
+		AEdenFlightPlayerController::StaticClass(),
+		FTransform::Identity);
+	if (Controller)
+	{
+		EnsureBeginPlay(Controller);
+		Controller->Possess(Fixture.Pawn);
+	}
+	return Controller;
+}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudPanelsExistInFirstSlateBuildTest,
+	"Eden.Integration.Hud.PanelsExistInFirstSlateBuild",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudPanelsExistInFirstSlateBuildTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld RuntimeWorld;
+	UWorld* World = RuntimeWorld.Get();
+	UClass* HudClass = StaticLoadClass(UEdenOperatorHudWidget::StaticClass(), nullptr, EdenRuntimeCompositionTests::HudWidgetClassPath);
+	if (!TestNotNull(TEXT("WBP_EdenOperatorHud loads"), HudClass) || !World)
+	{
+		return false;
+	}
+
+	// Root cause: WBP_EdenOperatorHud has no designer tree. The panels must already be in the tree when
+	// Slate builds the widget the first time; otherwise the HUD exists but renders nothing.
+	UEdenOperatorHudWidget* Hud = CreateWidget<UEdenOperatorHudWidget>(World, HudClass);
+	if (!TestNotNull(TEXT("HUD widget is created"), Hud))
+	{
+		return false;
+	}
+	TestEqual(TEXT("No Slate widget before the first build"), Hud->GetBuiltPanelCount(), 0);
+	// Hold the Slate widget: UWidget keeps only a weak reference, as a viewport or parent would hold it in game.
+	const TSharedRef<SWidget> SlateHolder = Hud->TakeWidget();
+	TestEqual(TEXT("All five panels exist in the very first Slate build"), Hud->GetBuiltPanelCount(), 5);
+	const FString Layout = Hud->DescribeLayoutForDiagnostics();
+	AddInfo(FString::Printf(TEXT("HUD layout after first build: %s"), *Layout));
+	TestTrue(TEXT("Root is the HUD canvas"), Layout.Contains(TEXT("rootIsHudCanvas=true")));
+	TestTrue(TEXT("Slate widget is built"), Layout.Contains(TEXT("slateBuilt=true")));
+
+	// Feedback banner shows immediately and expires on its own.
+	const double Now = World->GetRealTimeSeconds();
+	Hud->ShowControlFeedback(FText::FromString(TEXT("[L] LOAD SHED ON")), true, Now);
+	TestEqual(TEXT("Feedback is visible immediately"), Hud->GetControlFeedbackText().ToString(), FString(TEXT("[L] LOAD SHED ON")));
+	Hud->ShowControlFeedback(FText::FromString(TEXT("stale")), true, Now - 60.0);
+	Hud->ApplyHudSnapshot(FEdenOperatorHudSnapshot());
+	TestTrue(TEXT("Expired feedback hides on the next refresh"), Hud->GetControlFeedbackText().IsEmpty());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudFormattersDistinguishUnavailableFromZeroTest,
+	"Eden.Unit.Hud.FormattersDistinguishUnavailableFromZero",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudFormattersDistinguishUnavailableFromZeroTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	// No sources at all: every panel says so; nothing reads as a real zero.
+	const FEdenOperatorHudSnapshot Empty;
+	TestTrue(TEXT("Flight unavailable"), UEdenOperatorHudWidget::FormatFlightPanel(Empty).StartsWith(TEXT("--")));
+	TestTrue(TEXT("Propellant unavailable"), UEdenOperatorHudWidget::FormatSystemsPanel(Empty).Contains(TEXT("PROPELLANT  --")));
+	TestTrue(TEXT("Battery unavailable"), UEdenOperatorHudWidget::FormatSystemsPanel(Empty).Contains(TEXT("BATTERY     --")));
+	TestTrue(TEXT("Thrust unavailable"), UEdenOperatorHudWidget::FormatSystemsPanel(Empty).Contains(TEXT("THRUST      --")));
+	TestTrue(TEXT("Operator unavailable"), UEdenOperatorHudWidget::FormatOperatorPanel(Empty).Contains(TEXT("operator control disabled")));
+	TestTrue(TEXT("Mission unavailable"), UEdenOperatorHudWidget::FormatMissionPanel(Empty).StartsWith(TEXT("--")));
+	TestTrue(TEXT("EDEN unavailable"), UEdenOperatorHudWidget::FormatEdenPanel(Empty).StartsWith(TEXT("--")));
+
+	// Real values, including genuine zeros, are shown as values.
+	FEdenOperatorHudSnapshot Live;
+	Live.bHasFlight = true;
+	Live.bHasFuel = true;
+	Live.bHasPower = true;
+	Live.bHasThermal = true;
+	Live.bHasOperator = true;
+	Live.bHasMission = true;
+	Live.bHasEdenAdapter = true;
+	Live.Flight.VelocityWorldMetersPerSecond = FVector(125.4, 0.0, 0.0);
+	Live.Flight.AngularVelocityBodyRadiansPerSecond = FVector(0.0, 0.0, FMath::DegreesToRadians(4.2));
+	Live.Flight.RequestedThrusterOutputNewtons = 100000.0f;
+	Live.Flight.DeliveredThrusterOutputNewtons = 40000.0f;
+	Live.Flight.PowerThrustFraction = 0.4f;
+	Live.Flight.bPowerLimited = true;
+	Live.Flight.bPropellantMetered = true;
+	Live.Flight.PropellantFlowKilogramsPerSecond = 0.4f;
+	Live.Flight.bFlightAssistRequested = true;
+	Live.Flight.bFlightAssistActive = true;
+	Live.Fuel.FuelQuantityKilograms = 0.0f;
+	Live.Fuel.FuelFraction = 0.0f;
+	Live.Fuel.FuelState = EEdenFuelState::Depleted;
+	Live.FuelCapacityKilograms = 100.0f;
+
+	const FString Flight = UEdenOperatorHudWidget::FormatFlightPanel(Live);
+	const FString Systems = UEdenOperatorHudWidget::FormatSystemsPanel(Live);
+	TestTrue(TEXT("Speed is shown"), Flight.Contains(TEXT("125.40 m/s")));
+	TestTrue(TEXT("Yaw rate is shown in the pilot convention"), Flight.Contains(TEXT("yaw   +4.2")));
+	TestTrue(TEXT("Assist active is shown"), Flight.Contains(TEXT("ASSIST    ON")));
+	TestTrue(TEXT("Delivered vs requested thrust"), Systems.Contains(TEXT("delivered 40.0 kN / requested 100.0 kN")));
+	TestTrue(TEXT("Power limit is flagged"), Systems.Contains(TEXT("POWER-LIMITED")));
+	TestTrue(TEXT("An empty tank is a real zero, not unavailable"), Systems.Contains(TEXT("PROPELLANT  0.00 / 100 kg (0%)  DEPLETED")));
+	TestTrue(TEXT("Flow is shown"), Systems.Contains(TEXT("0.400 kg/s")));
+	TestTrue(TEXT("Inactive mission says how to start one"), UEdenOperatorHudWidget::FormatMissionPanel(Live).Contains(TEXT("StartMission")));
+	TestTrue(TEXT("EDEN offline is shown truthfully"), UEdenOperatorHudWidget::FormatEdenPanel(Live).Contains(TEXT("OFFLINE")));
+	TestTrue(TEXT("No advisory is invented"), UEdenOperatorHudWidget::FormatEdenPanel(Live).Contains(TEXT("none received")));
+	TestTrue(TEXT("Command execution off is shown"), UEdenOperatorHudWidget::FormatEdenPanel(Live).Contains(TEXT("command execution OFF")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudControlsShowConfirmedStateTest,
+	"Eden.Integration.Hud.ControlsShowConfirmedState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudControlsShowConfirmedStateTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+	AEdenFlightPlayerController* Controller = EdenRuntimeCompositionTests::PossessWithController(Fixture);
+	UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+	if (!TestNotNull(TEXT("Controller possesses the pawn"), Controller) || !Operator)
+	{
+		return false;
+	}
+
+	// L: confirmed shed state, and the gameplay effect actually happened.
+	Controller->EdenToggleLoadShed();
+	TestTrue(TEXT("L sheds load in the operator component"), Operator->GetOperatorIntent().LoadShedMode == EEdenLoadShedMode::Shed);
+	TestTrue(TEXT("L feedback confirms LOAD SHED ON"), Controller->GetLastControlFeedback().Contains(TEXT("LOAD SHED ON")));
+	TestTrue(TEXT("L feedback is a success"), Controller->WasLastControlFeedbackSuccessful());
+	TestFalse(TEXT("Shed removes assist in flight"), Fixture.Flight->IsStabilizationAssistAvailable());
+
+	// X: off, then on-but-unavailable (with the real reason).
+	Controller->EdenToggleFlightAssist();
+	TestTrue(TEXT("X confirms FLIGHT ASSIST OFF"), Controller->GetLastControlFeedback().Contains(TEXT("FLIGHT ASSIST OFF")));
+	Controller->EdenToggleFlightAssist();
+	TestTrue(TEXT("X while shed explains why assist is unavailable"), Controller->GetLastControlFeedback().Contains(TEXT("UNAVAILABLE: load shed")));
+	TestFalse(TEXT("Unavailable assist is not reported as success"), Controller->WasLastControlFeedbackSuccessful());
+
+	Controller->EdenToggleLoadShed();
+	TestTrue(TEXT("L confirms LOAD SHED OFF"), Controller->GetLastControlFeedback().Contains(TEXT("LOAD SHED OFF")));
+
+	// T: the reported mode is the operator component's resulting mode.
+	Controller->EdenCycleThermalMode();
+	const FString ThermalName = UEnum::GetDisplayValueAsText(Operator->GetOperatorIntent().ThermalMode).ToString();
+	TestTrue(
+		FString::Printf(TEXT("T feedback names the resulting mode (%s)"), *ThermalName),
+		Controller->GetLastControlFeedback().Contains(FString::Printf(TEXT("THERMAL MODE: %s"), *ThermalName)));
+
+	// P: authority in the feedback is the authority the flight model now has.
+	Controller->EdenTogglePropulsionPriority();
+	TestTrue(TEXT("P reduces propulsion priority"), Operator->GetOperatorIntent().PropulsionPriority == EEdenPropulsionPriorityMode::Reduced);
+	TestTrue(
+		TEXT("P feedback reports the real operator authority"),
+		Controller->GetLastControlFeedback().Contains(FString::Printf(TEXT("operator authority %.0f%%"), Fixture.Flight->GetThrustAuthority() * 100.0f)));
+
+	// The HUD snapshot was refreshed immediately with the confirmed state.
+	TestTrue(
+		TEXT("HUD snapshot refreshed immediately after P"),
+		Controller->GetOperatorHudSnapshot().Operator.PropulsionPriority == EEdenPropulsionPriorityMode::Reduced);
+
+	// A ship whose systems are not configured (bare C++ pawn: no power/thermal Data Assets) reports the actual reason.
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld BareWorld;
+	AEdenSpacecraftPawn* BarePawn = BareWorld.Get()->SpawnActor<AEdenSpacecraftPawn>(AEdenSpacecraftPawn::StaticClass(), FTransform::Identity);
+	AEdenFlightPlayerController* BareController =
+		BareWorld.Get()->SpawnActor<AEdenFlightPlayerController>(AEdenFlightPlayerController::StaticClass(), FTransform::Identity);
+	BareWorld.Get()->BeginPlay();
+	EdenRuntimeCompositionTests::EnsureBeginPlay(BarePawn);
+	EdenRuntimeCompositionTests::EnsureBeginPlay(BareController);
+	BareController->Possess(BarePawn);
+	BareController->EdenToggleLoadShed();
+	TestFalse(TEXT("Unconfigured systems: not reported as success"), BareController->WasLastControlFeedbackSuccessful());
+	TestTrue(
+		FString::Printf(TEXT("Unconfigured systems: the real reason is shown (got: %s)"), *BareController->GetLastControlFeedback()),
+		BareController->GetLastControlFeedback().Contains(TEXT("power system is not simulating")));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudSnapshotTracksResourceChangesTest,
+	"Eden.Integration.Hud.SnapshotTracksResourceChanges",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudSnapshotTracksResourceChangesTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+	AEdenFlightPlayerController* Controller = EdenRuntimeCompositionTests::PossessWithController(Fixture);
+	if (!TestNotNull(TEXT("Controller possesses the pawn"), Controller))
+	{
+		return false;
+	}
+
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 10);
+	Controller->RefreshOperatorHudNow();
+	FEdenOperatorHudSnapshot Hud = Controller->GetOperatorHudSnapshot();
+	TestTrue(TEXT("HUD has flight data"), Hud.bHasFlight && Hud.bHasFuel && Hud.bHasPower && Hud.bHasThermal && Hud.bHasOperator);
+	TestTrue(
+		TEXT("HUD speed is the movement component's speed"),
+		FMath::IsNearlyEqual(Hud.Flight.SpeedMetersPerSecond, Fixture.Flight->GetSpeedMetersPerSecond()));
+	TestTrue(
+		TEXT("HUD propellant is the fuel system's propellant"),
+		FMath::IsNearlyEqual(Hud.Fuel.FuelQuantityKilograms, static_cast<float>(Fixture.Fuel->GetPropellantMassKilograms()), 1.0e-3f));
+	TestTrue(TEXT("HUD shows delivered thrust during the burn"), Hud.Flight.DeliveredThrusterOutputNewtons > 0.0f);
+
+	// Fuel exhaustion.
+	Controller->EdenSetFuelKilograms(0.0f);
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 1);
+	Controller->RefreshOperatorHudNow();
+	const FString EmptyTank = UEdenOperatorHudWidget::FormatSystemsPanel(Controller->GetOperatorHudSnapshot());
+	TestTrue(TEXT("Empty tank: HUD flags NO PROPELLANT"), EmptyTank.Contains(TEXT("NO PROPELLANT")));
+	TestTrue(TEXT("Empty tank: HUD shows zero delivered with a real request"), EmptyTank.Contains(TEXT("delivered 0.0 kN / requested 100.0 kN")));
+
+	// Power tier.
+	Controller->EdenSetFuelKilograms(100.0f);
+	const FEdenPowerConfig PowerConfig = Fixture.Power->GetActivePowerConfig();
+	Controller->EdenSetBatteryFraction(PowerConfig.CriticalThresholdFraction * 0.5f);
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 1);
+	Controller->RefreshOperatorHudNow();
+	const FString Critical = UEdenOperatorHudWidget::FormatSystemsPanel(Controller->GetOperatorHudSnapshot());
+	TestTrue(TEXT("Critical power: HUD shows CRITICAL"), Critical.Contains(TEXT("CRITICAL")));
+	TestTrue(TEXT("Critical power: HUD flags POWER-LIMITED"), Critical.Contains(TEXT("POWER-LIMITED")));
+
+	// Mission start and reset.
+	UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+	UEdenMissionDefinitionDataAsset* SolarEvent =
+		Cast<UEdenMissionDefinitionDataAsset>(FSoftObjectPath(EdenRuntimeCompositionTests::SolarEventMissionPath).TryLoad());
+	if (Mission && SolarEvent)
+	{
+		Mission->SetMissionResourceTargets(Fixture.Pawn->GetThermalSystemComponent(), Fixture.Power, Fixture.Fuel);
+		Mission->LoadMissionFromDefinitionAsset(SolarEvent);
+		Mission->StartMission();
+		Controller->RefreshOperatorHudNow();
+		const FString Running = UEdenOperatorHudWidget::FormatMissionPanel(Controller->GetOperatorHudSnapshot());
+		TestTrue(TEXT("HUD shows the running mission"), Running.Contains(TEXT("SolarCrisis")) && Running.Contains(TEXT("RUNNING")));
+		Mission->AbortMission();
+		Mission->ResetMission();
+		Controller->RefreshOperatorHudNow();
+		TestTrue(
+			TEXT("HUD shows no active mission after reset"),
+			UEdenOperatorHudWidget::FormatMissionPanel(Controller->GetOperatorHudSnapshot()).Contains(TEXT("NO ACTIVE MISSION")));
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudNeverAltersFlightPhysicsTest,
+	"Eden.Integration.Hud.NeverAltersFlightPhysics",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudNeverAltersFlightPhysicsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	FEdenFlightInputCommand Manoeuvre;
+	Manoeuvre.TranslationInput = FVector(1.0, 0.3, 0.0);
+	Manoeuvre.RotationInput = FVector(0.2, 1.0, -0.4);
+	Manoeuvre.bStabilizationEnabled = true;
+
+	// Same ship, same commands; one has a controller refreshing the HUD every update, one has none.
+	EdenRuntimeCompositionTests::FFlightPropellantFixture WithHud;
+	EdenRuntimeCompositionTests::FFlightPropellantFixture WithoutHud;
+	if (!WithHud.Setup(*this) || !WithoutHud.Setup(*this))
+	{
+		return false;
+	}
+	AEdenFlightPlayerController* Controller = EdenRuntimeCompositionTests::PossessWithController(WithHud);
+	if (!TestNotNull(TEXT("Controller possesses the HUD ship"), Controller))
+	{
+		return false;
+	}
+
+	for (int32 Update = 0; Update < 30; ++Update)
+	{
+		WithHud.Advance(Manoeuvre, 1);
+		Controller->RefreshOperatorHudNow();
+		WithoutHud.Advance(Manoeuvre, 1);
+	}
+
+	TestTrue(TEXT("Velocity identical with and without HUD"), WithHud.Flight->Velocity == WithoutHud.Flight->Velocity);
+	TestTrue(TEXT("Orientation identical with and without HUD"), WithHud.Pawn->GetActorQuat() == WithoutHud.Pawn->GetActorQuat());
+	TestTrue(
+		TEXT("Angular velocity identical with and without HUD"),
+		WithHud.Flight->GetAngularVelocityBodyRadiansPerSecond() == WithoutHud.Flight->GetAngularVelocityBodyRadiansPerSecond());
+	TestEqual(TEXT("Propellant identical with and without HUD"), WithHud.Fuel->GetPropellantMassKilograms(), WithoutHud.Fuel->GetPropellantMassKilograms());
 
 	return true;
 }

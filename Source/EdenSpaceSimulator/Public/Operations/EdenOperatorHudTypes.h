@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "EdenOs/EdenOsAdvisoryTypes.h"
+#include "EdenOs/EdenOsTypes.h"
+#include "Flight/EdenFlightTypes.h"
 #include "Missions/EdenMissionTypes.h"
 #include "Operations/EdenAlertTypes.h"
 #include "Operations/EdenOperatorTypes.h"
@@ -66,6 +68,40 @@ struct EDENSPACESIMULATOR_API FEdenOperatorHudSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD")
 	float AssembledAtSimTimeSeconds = 0.0f;
+
+	// --- Availability: false means "no authoritative source", which the HUD shows as unavailable, never as 0. ---
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Availability")
+	bool bHasMission = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Availability")
+	bool bHasFuel = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Availability")
+	bool bHasPower = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Availability")
+	bool bHasThermal = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Availability")
+	bool bHasOperator = false;
+
+	/** Flight dynamics from UEdenFlightMovementComponent (velocity, rates, requested/delivered thrust, mass). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
+	bool bHasFlight = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
+	FEdenFlightDynamicsSnapshot Flight;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
+	float FuelCapacityKilograms = 0.0f;
+
+	/** EDEN OS adapter state as reported by UEdenOsAdapterSubsystem (never inferred). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	bool bHasEdenAdapter = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
+	FEdenOsConnectionSnapshot EdenConnection;
 };
 
 struct EDENSPACESIMULATOR_API FEdenOperatorHudModel

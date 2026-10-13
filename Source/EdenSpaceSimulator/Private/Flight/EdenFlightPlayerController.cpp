@@ -7,6 +7,7 @@
 #include "EdenOs/EdenOsAdapterSubsystem.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenSpacecraftPawn.h"
 #include "HAL/PlatformMisc.h"
@@ -307,6 +308,11 @@ void AEdenFlightPlayerController::HandleRotateReleased(const FInputActionValue& 
 void AEdenFlightPlayerController::HandleStabilizeStarted(const FInputActionValue& Value)
 {
 	(void)Value;
+	EdenToggleFlightAssist();
+}
+
+void AEdenFlightPlayerController::EdenToggleFlightAssist()
+{
 
 	FEdenFlightInputCommand Command = FlightInputIntent.CurrentCommand;
 	Command.bStabilizationEnabled = !Command.bStabilizationEnabled;
@@ -318,42 +324,178 @@ void AEdenFlightPlayerController::HandleStabilizeStarted(const FInputActionValue
 		TEXT("%s set flight stabilization to %s."),
 		*GetNameSafe(this),
 		FlightInputIntent.CurrentCommand.bStabilizationEnabled ? TEXT("enabled") : TEXT("disabled"));
+
+	const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
+	const UEdenFlightMovementComponent* Flight = SpacecraftPawn ? SpacecraftPawn->GetFlightMovementComponent() : nullptr;
+	if (!Flight)
+	{
+		ReportControlFeedback(TEXT("[X] FLIGHT ASSIST: no spacecraft possessed"), false);
+		return;
+	}
+
+	if (!FlightInputIntent.CurrentCommand.bStabilizationEnabled)
+	{
+		ReportControlFeedback(TEXT("[X] FLIGHT ASSIST OFF  -  momentum is conserved, no automatic braking"), true);
+	}
+	else if (Flight->IsStabilizationAssistAvailable())
+	{
+		ReportControlFeedback(TEXT("[X] FLIGHT ASSIST ON  -  thrusters hold commanded velocity and rate"), true);
+	}
+	else
+	{
+		ReportControlFeedback(TEXT("[X] FLIGHT ASSIST REQUESTED  -  UNAVAILABLE: load shed has removed assist power (press L)"), false);
+	}
 }
 
 void AEdenFlightPlayerController::HandleThermalModeStarted(const FInputActionValue& Value)
 {
 	(void)Value;
+	EdenCycleThermalMode();
+}
+
+void AEdenFlightPlayerController::EdenCycleThermalMode()
+{
 	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
 	{
 		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
 		{
-			Operator->CycleThermalControlMode();
+			if (!Operator->CycleThermalControlMode())
+			{
+				ReportControlFeedback(FString::Printf(TEXT("[T] THERMAL MODE unchanged  -  %s"), *DescribeOperatorRejection(Operator)), false);
+				return;
+			}
+			const FEdenOperatorStateSnapshot State = Operator->GetOperatorStateSnapshot();
+			ReportControlFeedback(
+				FString::Printf(
+					TEXT("[T] THERMAL MODE: %s  -  cooling %+.2f C/s, power %+.2f kW"),
+					*UEnum::GetDisplayValueAsText(State.ThermalMode).ToString(),
+					State.OperatorDissipationDegreesCelsiusPerSecond,
+					State.OperatorDemandKilowatts),
+				true);
+			return;
 		}
 	}
+	ReportControlFeedback(TEXT("[T] THERMAL MODE: no spacecraft operator control"), false);
 }
 
 void AEdenFlightPlayerController::HandleLoadShedStarted(const FInputActionValue& Value)
 {
 	(void)Value;
+	EdenToggleLoadShed();
+}
+
+void AEdenFlightPlayerController::EdenToggleLoadShed()
+{
 	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
 	{
 		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
 		{
-			Operator->ToggleLoadShedMode();
+			if (!Operator->ToggleLoadShedMode())
+			{
+				ReportControlFeedback(FString::Printf(TEXT("[L] LOAD SHED unchanged  -  %s"), *DescribeOperatorRejection(Operator)), false);
+				return;
+			}
+			const FEdenOperatorStateSnapshot State = Operator->GetOperatorStateSnapshot();
+			const bool bShed = State.LoadShedMode == EEdenLoadShedMode::Shed;
+			ReportControlFeedback(
+				bShed
+					? FString::Printf(
+						  TEXT("[L] LOAD SHED ON  -  power %+.2f kW, cooling %+.2f C/s, flight assist UNAVAILABLE"),
+						  State.OperatorDemandKilowatts,
+						  State.OperatorDissipationDegreesCelsiusPerSecond)
+					: TEXT("[L] LOAD SHED OFF  -  normal loads restored, flight assist available"),
+				true);
+			return;
 		}
 	}
+	ReportControlFeedback(TEXT("[L] LOAD SHED: no spacecraft operator control"), false);
 }
 
 void AEdenFlightPlayerController::HandlePropulsionPriorityStarted(const FInputActionValue& Value)
 {
 	(void)Value;
+	EdenTogglePropulsionPriority();
+}
+
+void AEdenFlightPlayerController::EdenTogglePropulsionPriority()
+{
 	if (AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
 	{
 		if (UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
 		{
-			Operator->TogglePropulsionPriorityMode();
+			if (!Operator->TogglePropulsionPriorityMode())
+			{
+				ReportControlFeedback(FString::Printf(TEXT("[P] PROPULSION PRIORITY unchanged  -  %s"), *DescribeOperatorRejection(Operator)), false);
+				return;
+			}
+			const FEdenOperatorStateSnapshot State = Operator->GetOperatorStateSnapshot();
+			const UEdenFlightMovementComponent* Flight = SpacecraftPawn->GetFlightMovementComponent();
+			ReportControlFeedback(
+				FString::Printf(
+					TEXT("[P] PROPULSION PRIORITY: %s  -  operator authority %.0f%%, deliverable %.0f%%"),
+					*UEnum::GetDisplayValueAsText(State.PropulsionPriority).ToString(),
+					State.ThrustAuthority * 100.0f,
+					Flight ? Flight->GetEffectiveThrustAuthority() * 100.0f : 0.0f),
+				true);
+			return;
 		}
 	}
+	ReportControlFeedback(TEXT("[P] PROPULSION PRIORITY: no spacecraft operator control"), false);
+}
+
+void AEdenFlightPlayerController::ReportControlFeedback(const FString& Message, bool bSucceeded)
+{
+	UE_LOG(LogEdenFlight, Log, TEXT("%s control feedback: %s"), *GetNameSafe(this), *Message);
+	LastControlFeedback = Message;
+	bLastControlFeedbackSucceeded = bSucceeded;
+	EnsureOperatorHudCreated();
+	if (OperatorHudWidget)
+	{
+		const UWorld* World = GetWorld();
+		OperatorHudWidget->ShowControlFeedback(FText::FromString(Message), bSucceeded, World ? World->GetRealTimeSeconds() : 0.0);
+	}
+	RefreshOperatorHudSnapshot();
+}
+
+FString AEdenFlightPlayerController::DescribeOperatorRejection(const UEdenOperatorControlComponent* Operator) const
+{
+	if (!Operator)
+	{
+		return TEXT("no operator control component");
+	}
+	if (!Operator->IsOperatorControlEnabled())
+	{
+		return TEXT("operator control is disabled (missing or invalid DA_EdenOperatorControlConfig)");
+	}
+
+	const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
+	const UEdenPowerSystemComponent* Power = SpacecraftPawn ? SpacecraftPawn->GetPowerSystemComponent() : nullptr;
+	const UEdenThermalSystemComponent* Thermal = SpacecraftPawn ? SpacecraftPawn->GetThermalSystemComponent() : nullptr;
+	if (!Power || !Power->IsPowerSimulationEnabled())
+	{
+		return TEXT("power system is not simulating, so it cannot accept the change");
+	}
+	if (!Thermal || !Thermal->IsThermalSimulationEnabled())
+	{
+		return TEXT("thermal system is not simulating, so it cannot accept the change");
+	}
+	return TEXT("the change was rejected by a spacecraft system (see Output Log)");
+}
+
+void AEdenFlightPlayerController::EdenHudDiagnostics()
+{
+	EnsureOperatorHudCreated();
+	if (!OperatorHudWidgetClass)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s EdenHudDiagnostics: OperatorHudWidgetClass is not assigned."), *GetNameSafe(this));
+		return;
+	}
+	if (!OperatorHudWidget)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s EdenHudDiagnostics: HUD widget was not created."), *GetNameSafe(this));
+		return;
+	}
+	UE_LOG(LogEdenFlight, Log, TEXT("%s EdenHudDiagnostics: %s"), *GetNameSafe(this), *OperatorHudWidget->DescribeLayoutForDiagnostics());
 }
 
 FEdenOperatorHudSnapshot AEdenFlightPlayerController::GetOperatorHudSnapshot() const
@@ -396,11 +538,15 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 	float SimTimeSeconds = 0.0f;
 
 	FEdenOsAcceptedAdvisory AcceptedAdvisory;
+	bool bHasMission = false;
+	bool bHasEdenAdapter = false;
+	FEdenOsConnectionSnapshot EdenConnection;
 	if (const UWorld* World = GetWorld())
 	{
 		if (const UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>())
 		{
 			MissionSnapshot = Mission->GetMissionStateSnapshot();
+			bHasMission = true;
 		}
 		if (const UEdenAlertSubsystem* AlertsSubsystem = World->GetSubsystem<UEdenAlertSubsystem>())
 		{
@@ -413,30 +559,53 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 		if (const UEdenOsAdapterSubsystem* Adapter = World->GetSubsystem<UEdenOsAdapterSubsystem>())
 		{
 			AcceptedAdvisory = Adapter->GetLatestAcceptedAdvisory();
+			EdenConnection = Adapter->GetConnectionSnapshot();
+			bHasEdenAdapter = true;
 		}
 	}
+
+	bool bHasFuel = false;
+	bool bHasPower = false;
+	bool bHasThermal = false;
+	bool bHasOperator = false;
+	bool bHasFlight = false;
+	float FuelCapacityKilograms = 0.0f;
+	FEdenFlightDynamicsSnapshot FlightSnapshot;
 
 	if (const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>())
 	{
 		if (const UEdenFuelSystemComponent* Fuel = SpacecraftPawn->GetFuelSystemComponent())
 		{
 			FuelSnapshot = Fuel->GetFuelStateSnapshot();
+			bHasFuel = Fuel->IsFuelSimulationEnabled();
+			FuelCapacityKilograms = Fuel->GetActiveFuelConfig().CapacityKilograms;
 		}
 		if (const UEdenPowerSystemComponent* Power = SpacecraftPawn->GetPowerSystemComponent())
 		{
 			PowerSnapshot = Power->GetPowerStateSnapshot();
+			bHasPower = Power->IsPowerSimulationEnabled();
 		}
 		if (const UEdenThermalSystemComponent* Thermal = SpacecraftPawn->GetThermalSystemComponent())
 		{
 			ThermalSnapshot = Thermal->GetThermalStateSnapshot();
+			bHasThermal = Thermal->IsThermalSimulationEnabled();
 		}
 		if (const UEdenOperatorControlComponent* Operator = SpacecraftPawn->GetOperatorControlComponent())
 		{
 			OperatorSnapshot = Operator->GetOperatorStateSnapshot();
+			bHasOperator = Operator->IsOperatorControlEnabled();
+		}
+		if (const UEdenFlightMovementComponent* Flight = SpacecraftPawn->GetFlightMovementComponent())
+		{
+			FlightSnapshot = Flight->GetFlightDynamicsSnapshot();
+			// The pilot's assist request lives in the controller until the next flight step consumes it.
+			FlightSnapshot.bFlightAssistRequested = FlightInputIntent.CurrentCommand.bStabilizationEnabled;
+			FlightSnapshot.bFlightAssistActive = FlightSnapshot.bFlightAssistRequested && Flight->IsStabilizationAssistAvailable();
+			bHasFlight = true;
 		}
 	}
 
-	return FEdenOperatorHudModel::Assemble(
+	FEdenOperatorHudSnapshot Snapshot = FEdenOperatorHudModel::Assemble(
 		MissionSnapshot,
 		FuelSnapshot,
 		PowerSnapshot,
@@ -445,6 +614,17 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 		Alerts,
 		SimTimeSeconds,
 		AcceptedAdvisory);
+	Snapshot.bHasMission = bHasMission;
+	Snapshot.bHasFuel = bHasFuel;
+	Snapshot.bHasPower = bHasPower;
+	Snapshot.bHasThermal = bHasThermal;
+	Snapshot.bHasOperator = bHasOperator;
+	Snapshot.bHasFlight = bHasFlight;
+	Snapshot.Flight = FlightSnapshot;
+	Snapshot.FuelCapacityKilograms = FuelCapacityKilograms;
+	Snapshot.bHasEdenAdapter = bHasEdenAdapter;
+	Snapshot.EdenConnection = EdenConnection;
+	return Snapshot;
 }
 
 void AEdenFlightPlayerController::LogMissingInputAssetState()
@@ -760,4 +940,24 @@ void AEdenFlightPlayerController::EnsureAfterActionReviewCreated()
 	}
 
 	AfterActionReviewWidget = CreateWidget<UEdenAfterActionReviewWidget>(this, AfterActionReviewWidgetClass);
+}
+
+UEdenOperatorHudWidget* AEdenFlightPlayerController::GetOperatorHudWidget() const
+{
+	return OperatorHudWidget;
+}
+
+FString AEdenFlightPlayerController::GetLastControlFeedback() const
+{
+	return LastControlFeedback;
+}
+
+bool AEdenFlightPlayerController::WasLastControlFeedbackSuccessful() const
+{
+	return bLastControlFeedbackSucceeded;
+}
+
+void AEdenFlightPlayerController::RefreshOperatorHudNow()
+{
+	RefreshOperatorHudSnapshot();
 }
