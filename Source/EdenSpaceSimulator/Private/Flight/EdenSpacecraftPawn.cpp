@@ -6,6 +6,13 @@
 #include "Components/StaticMeshComponent.h"
 #include "Core/EdenLogCategories.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/StaticMeshActor.h"
+#include "Camera/CameraComponent.h"
+#include "Engine/Texture.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "Engine/CollisionProfile.h"
 #include "Flight/EdenFlightMovementComponent.h"
@@ -242,6 +249,13 @@ void AEdenSpacecraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyPresentationHull();
+	// BP instances may have serialized bEnableSpaceBackdrop=false from the crash-hardening pass.
+	// Always apply the light sky path so PIE is not a black void.
+	ApplySpaceBackdrop();
+	if (bEnableThrusterEffects)
+	{
+		ApplyThrusterPresentation();
+	}
 }
 
 void AEdenSpacecraftPawn::ApplyPresentationHull()
@@ -296,6 +310,174 @@ void AEdenSpacecraftPawn::ApplyPresentationHull()
 		Scale);
 }
 
+void AEdenSpacecraftPawn::ApplySpaceBackdrop()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	UStaticMesh* DomeMesh = LoadObject<UStaticMesh>(
+		nullptr, TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/SM_Dome.SM_Dome"));
+	// Parent material defaults to tiny black/white cubes. MI_Star_Nebula_01 swaps in a
+	// 15359x8640 RGBA16F skybox (~4 GB decode) that OOMs D3D12 PSO creation on this machine.
+	UMaterialInterface* SkyBaseMaterial = LoadObject<UMaterialInterface>(
+		nullptr,
+		TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Star_Dome/M_Star_Nebula.M_Star_Nebula"));
+	UTexture* FarStars = LoadObject<UTexture>(
+		nullptr,
+		TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Stars_Far_Blue.TC_Stars_Far_Blue"));
+	UTexture* NearStars = LoadObject<UTexture>(
+		nullptr,
+		TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Stars_Near_Small.TC_Stars_Near_Small"));
+	UTexture* NebulaColor = LoadObject<UTexture>(
+		nullptr, TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Nebula.TC_Nebula"));
+	UTexture* NebulaAlpha = LoadObject<UTexture>(
+		nullptr,
+		TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Nebula_Alpha.TC_Nebula_Alpha"));
+	UStaticMesh* PlanetMesh = LoadObject<UStaticMesh>(
+		nullptr, TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/SM_Planet_Face.SM_Planet_Face"));
+	UMaterialInterface* PlanetMaterial = LoadObject<UMaterialInterface>(
+		nullptr,
+		TEXT("/Game/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Planet_Face/MI_Planet_Face.MI_Planet_Face"));
+
+	if (!DomeMesh || !SkyBaseMaterial)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s could not load the nebula sky dome."), *GetNameSafe(this));
+		return;
+	}
+
+	UMaterialInstanceDynamic* SkyMaterial = UMaterialInstanceDynamic::Create(SkyBaseMaterial, this);
+	if (FarStars)
+	{
+		SkyMaterial->SetTextureParameterValue(TEXT("T_Stars_Far"), FarStars);
+	}
+	if (NearStars)
+	{
+		SkyMaterial->SetTextureParameterValue(TEXT("T_Stars_Near"), NearStars);
+	}
+	if (NebulaColor)
+	{
+		SkyMaterial->SetTextureParameterValue(TEXT("T_Texture"), NebulaColor);
+	}
+	if (NebulaAlpha)
+	{
+		SkyMaterial->SetTextureParameterValue(TEXT("T_Alpha_Extra_Cubemap"), NebulaAlpha);
+	}
+	SkyMaterial->SetScalarParameterValue(TEXT("Near_Stars_intensity"), 2.5f);
+	SkyMaterial->SetScalarParameterValue(TEXT("Far_Stars_intensity"), 1.8f);
+
+	const FVector ShipLocation = GetActorLocation();
+
+	// Sky follows the ship in translation only. Absolute rotation keeps the starfield
+	// from spinning with the hull. A StaticMeshActor cannot attach to a movable root.
+	UStaticMeshComponent* SkyMesh = NewObject<UStaticMeshComponent>(this, TEXT("NebulaSkyDome"));
+	SkyMesh->SetMobility(EComponentMobility::Movable);
+	SkyMesh->SetupAttachment(RequiredCollisionRoot);
+	SkyMesh->SetAbsolute(/*bNewAbsoluteLocation=*/false, /*bNewAbsoluteRotation=*/true, /*bNewAbsoluteScale=*/true);
+	SkyMesh->SetStaticMesh(DomeMesh);
+	SkyMesh->SetMaterial(0, SkyMaterial);
+	SkyMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SkyMesh->SetGenerateOverlapEvents(false);
+	SkyMesh->SetCastShadow(false);
+	SkyMesh->SetRelativeLocation(FVector::ZeroVector);
+	SkyMesh->SetWorldRotation(FRotator::ZeroRotator);
+	{
+		const float Extent = DomeMesh->GetBounds().BoxExtent.GetMax();
+		constexpr float SkyRadiusCentimeters = 2000000.0f;
+		const float SkyScale = Extent > KINDA_SMALL_NUMBER ? SkyRadiusCentimeters / Extent : 1.0f;
+		SkyMesh->SetWorldScale3D(FVector(SkyScale));
+	}
+	SkyMesh->RegisterComponent();
+
+	if (PlanetMesh && PlanetMaterial)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		Params.ObjectFlags |= RF_Transient;
+
+		const FVector PlanetLocation = ShipLocation + FVector(800000.0f, 0.0f, 0.0f);
+		AStaticMeshActor* Planet = World->SpawnActor<AStaticMeshActor>(
+			PlanetLocation, (ShipLocation - PlanetLocation).Rotation(), Params);
+		if (Planet && Planet->GetStaticMeshComponent())
+		{
+			UStaticMeshComponent* PlanetComponent = Planet->GetStaticMeshComponent();
+			PlanetComponent->SetMobility(EComponentMobility::Movable);
+			PlanetComponent->SetStaticMesh(PlanetMesh);
+			PlanetComponent->SetMaterial(0, PlanetMaterial);
+			PlanetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			PlanetComponent->SetGenerateOverlapEvents(false);
+
+			const float Extent = PlanetMesh->GetBounds().BoxExtent.GetMax();
+			constexpr float PlanetRadiusCentimeters = 120000.0f;
+			const float PlanetScale = Extent > KINDA_SMALL_NUMBER ? PlanetRadiusCentimeters / Extent : 1.0f;
+			Planet->SetActorScale3D(FVector(PlanetScale));
+			Planet->SetActorEnableCollision(false);
+		}
+	}
+}
+
+void AEdenSpacecraftPawn::ApplyThrusterPresentation()
+{
+	UNiagaraSystem* ThrusterSystem = LoadObject<UNiagaraSystem>(
+		nullptr,
+		TEXT("/Game/Arghanion_Flight_System/VFX/Thruster/NiagaraSystems/NS_Thruster.NS_Thruster"));
+	if (!ThrusterSystem)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s could not load NS_Thruster."), *GetNameSafe(this));
+		return;
+	}
+
+	MainThrusterEffect = NewObject<UNiagaraComponent>(this, TEXT("MainThrusterEffect"));
+	MainThrusterEffect->SetAsset(ThrusterSystem);
+	MainThrusterEffect->SetupAttachment(RequiredCollisionRoot);
+	MainThrusterEffect->SetRelativeLocation(FVector(-750.0f, 0.0f, 0.0f));
+	MainThrusterEffect->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
+	MainThrusterEffect->SetRelativeScale3D(FVector(3.0f));
+	MainThrusterEffect->SetAutoActivate(false);
+	MainThrusterEffect->RegisterComponent();
+
+	PresentationCamera = FindComponentByClass<UCameraComponent>();
+	if (PresentationCamera)
+	{
+		PresentationBaseFieldOfView = PresentationCamera->FieldOfView;
+	}
+}
+
+void AEdenSpacecraftPawn::UpdateThrusterPresentation()
+{
+	const float Demand = FlightMovementComponent ? FlightMovementComponent->GetPropulsionDemandNormalized() : 0.0f;
+	const bool bFiring = Demand > 0.02f;
+
+	if (MainThrusterEffect)
+	{
+		MainThrusterEffect->SetVariableFloat(TEXT("User.Thrust"), Demand);
+		MainThrusterEffect->SetVariableFloat(TEXT("User.Thruster_Power"), Demand);
+		MainThrusterEffect->SetVariableFloat(TEXT("User.Thruster_Heat"), Demand);
+		MainThrusterEffect->SetVariableFloat(TEXT("User.Thruster_Emissive"), Demand);
+		MainThrusterEffect->SetVariableFloat(TEXT("User.Thruster_Spawn_Rate"), bFiring ? Demand * 80.0f : 0.0f);
+		MainThrusterEffect->SetVariableFloat(TEXT("User.GroundProximity"), 0.0f);
+
+		if (bFiring)
+		{
+			if (!MainThrusterEffect->IsActive())
+			{
+				MainThrusterEffect->Activate(true);
+			}
+		}
+		else if (MainThrusterEffect->IsActive())
+		{
+			MainThrusterEffect->DeactivateImmediate();
+		}
+	}
+
+	if (PresentationCamera)
+	{
+		PresentationCamera->SetFieldOfView(PresentationBaseFieldOfView + Demand * 8.0f);
+	}
+}
+
 void AEdenSpacecraftPawn::ApplyFlightInputCommand(const FEdenFlightInputCommand& Command, float DeltaTimeSeconds)
 {
 	if (!FlightMovementComponent)
@@ -306,6 +488,7 @@ void AEdenSpacecraftPawn::ApplyFlightInputCommand(const FEdenFlightInputCommand&
 
 	RestoreRequiredCollisionRoot();
 	FlightMovementComponent->MoveWithCommand(Command, DeltaTimeSeconds);
+	UpdateThrusterPresentation();
 }
 
 void AEdenSpacecraftPawn::ResetFlightState()

@@ -19,7 +19,8 @@ public class EdenSpaceSimulator : ModuleRules
 			"HTTP",
 			"UMG",
 			"Slate",
-			"SlateCore"
+			"SlateCore",
+			"Niagara"
 		});
 
 		// Json is used to parse EDEN OS advisory responses. Responses come from an external service,

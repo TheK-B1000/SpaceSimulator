@@ -14,4 +14,10 @@ class EDENSPACESIMULATOR_API AEdenFlightGameMode : public AGameModeBase
 
 public:
 	AEdenFlightGameMode();
+
+	virtual void BeginPlay() override;
+
+private:
+	/** Reloads or spawns the sandbox station if the editor world lost the mesh during a content deferral. */
+	void EnsureFlightSandboxStation();
 };

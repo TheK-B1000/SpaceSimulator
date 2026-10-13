@@ -119,6 +119,8 @@ protected:
 	FEdenFlightInputIntent FlightInputIntent;
 
 private:
+	void EnsureFlightInputAssetsLoaded();
+	void ApplyFlightInputMode();
 	void AddFlightInputMappingContext();
 	void BindFlightInputActions();
 	void SetTranslationIntent(FVector NewTranslationInput);

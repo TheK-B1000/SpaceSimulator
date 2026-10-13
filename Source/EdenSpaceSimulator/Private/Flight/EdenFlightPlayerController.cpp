@@ -12,6 +12,7 @@
 #include "HAL/PlatformMisc.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
+#include "InputMappingContext.h"
 #include "Missions/EdenMissionDefinitionDataAsset.h"
 #include "Missions/EdenMissionSubsystem.h"
 #include "Operations/EdenAlertSubsystem.h"
@@ -63,7 +64,9 @@ void AEdenFlightPlayerController::BeginPlay()
 	Super::BeginPlay();
 
 	ClearFlightInputIntent();
+	EnsureFlightInputAssetsLoaded();
 	AddFlightInputMappingContext();
+	ApplyFlightInputMode();
 	LogMissingInputAssetState();
 }
 
@@ -102,7 +105,10 @@ void AEdenFlightPlayerController::PlayerTick(float DeltaTime)
 void AEdenFlightPlayerController::SetupInputComponent()
 {
 	Super::SetupInputComponent();
+	EnsureFlightInputAssetsLoaded();
 	BindFlightInputActions();
+	// BP Event BeginPlay sometimes omits the parent call; map keys here too.
+	AddFlightInputMappingContext();
 }
 
 void AEdenFlightPlayerController::OnPossess(APawn* InPawn)
@@ -115,6 +121,9 @@ void AEdenFlightPlayerController::OnPossess(APawn* InPawn)
 		SpacecraftPawn->ResetFlightState();
 	}
 
+	EnsureFlightInputAssetsLoaded();
+	AddFlightInputMappingContext();
+	ApplyFlightInputMode();
 	EnsureOperatorHudCreated();
 	RefreshOperatorHudSnapshot();
 }
@@ -147,8 +156,42 @@ FEdenFlightInputCommand AEdenFlightPlayerController::GetCurrentFlightInputComman
 	return FEdenFlightMovementModel::SanitizeCommand(FlightInputIntent.CurrentCommand);
 }
 
+void AEdenFlightPlayerController::EnsureFlightInputAssetsLoaded()
+{
+	if (!FlightInputMappingContext)
+	{
+		FlightInputMappingContext = LoadObject<UInputMappingContext>(
+			nullptr, TEXT("/Game/Eden/Input/IMC_Flight.IMC_Flight"));
+	}
+	if (!FlightTranslateAction)
+	{
+		FlightTranslateAction =
+			LoadObject<UInputAction>(nullptr, TEXT("/Game/Eden/Input/IA_FlightTranslate.IA_FlightTranslate"));
+	}
+	if (!FlightRotateAction)
+	{
+		FlightRotateAction =
+			LoadObject<UInputAction>(nullptr, TEXT("/Game/Eden/Input/IA_FlightRotate.IA_FlightRotate"));
+	}
+	if (!FlightStabilizeAction)
+	{
+		FlightStabilizeAction =
+			LoadObject<UInputAction>(nullptr, TEXT("/Game/Eden/Input/IA_FlightStabilize.IA_FlightStabilize"));
+	}
+}
+
+void AEdenFlightPlayerController::ApplyFlightInputMode()
+{
+	FInputModeGameOnly InputMode;
+	SetInputMode(InputMode);
+	bShowMouseCursor = false;
+	SetIgnoreLookInput(false);
+	SetIgnoreMoveInput(false);
+}
+
 void AEdenFlightPlayerController::AddFlightInputMappingContext()
 {
+	EnsureFlightInputAssetsLoaded();
 	if (!FlightInputMappingContext)
 	{
 		return;
@@ -168,7 +211,11 @@ void AEdenFlightPlayerController::AddFlightInputMappingContext()
 		return;
 	}
 
-	InputSubsystem->AddMappingContext(FlightInputMappingContext, FlightInputMappingPriority);
+	if (!InputSubsystem->HasMappingContext(FlightInputMappingContext))
+	{
+		InputSubsystem->AddMappingContext(FlightInputMappingContext, FlightInputMappingPriority);
+		UE_LOG(LogEdenFlight, Log, TEXT("%s added IMC_Flight (priority %d)."), *GetNameSafe(this), FlightInputMappingPriority);
+	}
 }
 
 void AEdenFlightPlayerController::BindFlightInputActions()

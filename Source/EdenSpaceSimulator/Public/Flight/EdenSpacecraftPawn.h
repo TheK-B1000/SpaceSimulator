@@ -14,7 +14,9 @@ class UEdenFuelSystemComponent;
 class UEdenOperatorControlComponent;
 class UEdenPowerSystemComponent;
 class UEdenThermalSystemComponent;
+class UCameraComponent;
 class UCanvas;
+class UNiagaraComponent;
 class USphereComponent;
 
 UCLASS(BlueprintType, Blueprintable)
@@ -61,6 +63,9 @@ public:
 private:
 	void RestoreRequiredCollisionRoot();
 	void ApplyPresentationHull();
+	void ApplySpaceBackdrop();
+	void ApplyThrusterPresentation();
+	void UpdateThrusterPresentation();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USphereComponent> RequiredCollisionRoot;
@@ -79,4 +84,20 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Operations", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEdenOperatorControlComponent> OperatorControlComponent;
+
+	/** Spawns the nebula sky dome and planet (light M_Star_Nebula path, not the 4GB MI cubemap). */
+	UPROPERTY(EditAnywhere, Category = "Eden|Presentation")
+	bool bEnableSpaceBackdrop = true;
+
+	/** Spawns Arghanion NS_Thruster. Keep off until Niagara + thruster load is validated in PIE. */
+	UPROPERTY(EditAnywhere, Category = "Eden|Presentation")
+	bool bEnableThrusterEffects = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraComponent> MainThrusterEffect;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCameraComponent> PresentationCamera;
+
+	float PresentationBaseFieldOfView = 90.0f;
 };

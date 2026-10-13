@@ -105,6 +105,53 @@ Content/StarSparrow/Meshes/Examples/*
 Content/StarSparrow/Materials/MI_StarSparrow_*.uasset
 !Content/StarSparrow/Materials/MI_StarSparrow_Red.uasset
 
-# Animated Nebulas Starter Pack: local Fab import only until we pick
-# specific sky/star/planet assets for the flight sandbox.
-Content/Animated_Nebulas_Starter_Pack/
+# Animated Nebulas Starter Pack: keep the sky dome and one planet used in flight.
+# Demo maps, cameras, black hole, and the other nebula variants stay local.
+Content/Animated_Nebulas_Starter_Pack/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Star_Dome/
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Planet_Face/
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Star_Dome/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Star_Dome/M_Star_Nebula.uasset
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Planet_Face/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Planet_Face/M_Planet_Face.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Materials/Planet_Face/MI_Planet_Face.uasset
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/SM_Dome.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Static_Mesh/SM_Planet_Face.uasset
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Black.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_White.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Nebula.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Nebula_Alpha.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Stars_Far_Blue.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_HDRIs/TC_Stars_Near_Small.uasset
+
+Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/*
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/T_Planet_Surface_AOR.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/T_Planet_Surface_Base_Color.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/T_Planet_Surface_Height_Map.uasset
+!Content/Animated_Nebulas_Starter_Pack/Planet_System/Textures/T_Planets/T_Planet_Surface_Normal.uasset
+
+# Arghanion's Flight System: keep the Niagara thruster only.
+# Its pawns, input, cameras, HUD, ships, and demo maps are a separate flight model.
+Content/Arghanion_Flight_System/*
+!Content/Arghanion_Flight_System/VFX/
+
+Content/Arghanion_Flight_System/VFX/*
+!Content/Arghanion_Flight_System/VFX/Thruster/
