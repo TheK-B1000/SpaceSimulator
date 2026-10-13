@@ -104,3 +104,7 @@ Content/StarSparrow/Meshes/Examples/*
 !Content/StarSparrow/Meshes/Examples/SM_StarSparrow01.uasset
 Content/StarSparrow/Materials/MI_StarSparrow_*.uasset
 !Content/StarSparrow/Materials/MI_StarSparrow_Red.uasset
+
+# Animated Nebulas Starter Pack: local Fab import only until we pick
+# specific sky/star/planet assets for the flight sandbox.
+Content/Animated_Nebulas_Starter_Pack/
