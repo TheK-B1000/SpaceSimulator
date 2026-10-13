@@ -943,6 +943,78 @@ bool FEdenRuntimeCompositionResourceTransitionsStayConsistentTest::RunTest(const
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionOperatorModifiersDeferredUntilResourcesReadyTest,
+	"Eden.Integration.Operations.OperatorModifiersDeferredUntilResourcesReady",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionOperatorModifiersDeferredUntilResourcesReadyTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld RuntimeWorld;
+	UWorld* World = RuntimeWorld.Get();
+	if (!World)
+	{
+		return false;
+	}
+
+	FEdenOperatorControlConfig OperatorConfig;
+	OperatorConfig.LoadShedDemandReductionKilowatts = 3.0f;
+	FEdenPowerConfig PowerConfig;
+	FEdenThermalConfig ThermalConfig;
+
+	auto MakeShip = [World]()
+	{
+		AActor* Ship = World->SpawnActor<AActor>();
+		USceneComponent* Root = NewObject<USceneComponent>(Ship, TEXT("Root"));
+		Ship->SetRootComponent(Root);
+		Root->RegisterComponent();
+		for (UClass* ComponentClass : {
+				 UEdenPowerSystemComponent::StaticClass(),
+				 UEdenThermalSystemComponent::StaticClass(),
+				 UEdenFlightMovementComponent::StaticClass(),
+				 UEdenOperatorControlComponent::StaticClass()})
+		{
+			UActorComponent* Component = NewObject<UActorComponent>(Ship, ComponentClass);
+			Component->RegisterComponent();
+		}
+		return Ship;
+	};
+
+	// 1. Startup ordering: power and thermal have not begun play when the operator applies its intent.
+	AActor* Ship = MakeShip();
+	UEdenPowerSystemComponent* Power = Ship->FindComponentByClass<UEdenPowerSystemComponent>();
+	UEdenThermalSystemComponent* Thermal = Ship->FindComponentByClass<UEdenThermalSystemComponent>();
+	UEdenOperatorControlComponent* Operator = Ship->FindComponentByClass<UEdenOperatorControlComponent>();
+	TestTrue(TEXT("Operator initializes while resources are not ready (no failure)"), Operator->InitializeOperatorControl(OperatorConfig));
+	TestTrue(TEXT("Modifiers are pending, not dropped"), Operator->IsIntentApplyPending());
+	TestTrue(TEXT("Load shed is accepted while pending"), Operator->SetLoadShedMode(EEdenLoadShedMode::Shed));
+	TestTrue(TEXT("Still pending until resources are ready"), Operator->IsIntentApplyPending());
+
+	TestTrue(TEXT("Power becomes ready"), Power->InitializePowerSimulation(PowerConfig));
+	TestTrue(TEXT("Thermal becomes ready"), Thermal->InitializeThermalSimulation(ThermalConfig));
+	TestTrue(TEXT("Deferred modifiers apply once resources are ready"), Operator->ApplyPendingIntent());
+	TestFalse(TEXT("Nothing pending after apply"), Operator->IsIntentApplyPending());
+	TestTrue(
+		TEXT("Power received the deferred load-shed reduction"),
+		FMath::IsNearlyEqual(Power->GetPowerStateSnapshot().OperatorDemandKilowatts, -OperatorConfig.LoadShedDemandReductionKilowatts));
+
+	// 2. Genuine failure: power began play but stayed disabled (no config). Not pending; reported as failure.
+	AActor* BrokenShip = MakeShip();
+	UEdenPowerSystemComponent* BrokenPower = BrokenShip->FindComponentByClass<UEdenPowerSystemComponent>();
+	UEdenThermalSystemComponent* BrokenThermal = BrokenShip->FindComponentByClass<UEdenThermalSystemComponent>();
+	UEdenOperatorControlComponent* BrokenOperator = BrokenShip->FindComponentByClass<UEdenOperatorControlComponent>();
+	EdenRuntimeCompositionTests::EnsureBeginPlay(BrokenShip);
+	TestTrue(TEXT("Broken power has begun play"), BrokenPower->HasBegunPlay());
+	TestFalse(TEXT("Broken power is disabled"), BrokenPower->IsPowerSimulationEnabled());
+	TestTrue(TEXT("Thermal is ready on the broken ship"), BrokenThermal->InitializeThermalSimulation(ThermalConfig));
+	TestFalse(TEXT("A genuinely disabled resource still fails operator apply"), BrokenOperator->InitializeOperatorControl(OperatorConfig));
+	TestFalse(TEXT("A genuine failure is never marked pending"), BrokenOperator->IsIntentApplyPending());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenRuntimeCompositionDeveloperResourceCommandsTest,
 	"Eden.Integration.Flight.DeveloperResourceCommands",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

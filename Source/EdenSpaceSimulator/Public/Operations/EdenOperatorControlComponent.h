@@ -61,6 +61,20 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
 	bool IsOperatorControlEnabled() const;
 
+	/**
+	 * True while operator modifiers are waiting for a power or thermal system that has not begun
+	 * play yet (component startup ordering). Never set for a system that began play but is disabled.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
+	bool IsIntentApplyPending() const;
+
+	/**
+	 * Applies modifiers deferred during startup. The owning pawn calls this once every component has
+	 * begun play; a genuinely disabled system then reports its failure as before.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Operations")
+	bool ApplyPendingIntent();
+
 	UFUNCTION(BlueprintPure, Category = "Eden|Operations")
 	FEdenOperatorIntent GetOperatorIntent() const;
 
@@ -105,6 +119,9 @@ private:
 
 	UPROPERTY(Transient)
 	bool bOperatorControlEnabled = false;
+
+	UPROPERTY(Transient)
+	bool bIntentApplyPending = false;
 
 	UPROPERTY(Transient)
 	EEdenOperatorCommandSource LastCommandSource = EEdenOperatorCommandSource::HumanOperator;

@@ -162,6 +162,21 @@ bool UEdenOperatorControlComponent::IsOperatorControlEnabled() const
 	return bOperatorControlEnabled;
 }
 
+bool UEdenOperatorControlComponent::IsIntentApplyPending() const
+{
+	return bIntentApplyPending;
+}
+
+bool UEdenOperatorControlComponent::ApplyPendingIntent()
+{
+	if (!bOperatorControlEnabled || !bIntentApplyPending)
+	{
+		return true;
+	}
+
+	return ApplyCurrentIntent(CurrentIntent, false);
+}
+
 FEdenOperatorIntent UEdenOperatorControlComponent::GetOperatorIntent() const
 {
 	return CurrentIntent;
@@ -208,9 +223,26 @@ bool UEdenOperatorControlComponent::ApplyCurrentIntent(const FEdenOperatorIntent
 	UEdenThermalSystemComponent* Thermal = CachedThermal.Get();
 	UEdenFlightMovementComponent* Movement = CachedMovement.Get();
 
-	const bool bPowerOk = Power->SetOperatorDemandKilowatts(CurrentModifiers.OperatorDemandKilowatts);
-	const bool bThermalOk =
-		Thermal->SetOperatorDissipationDegreesCelsiusPerSecond(CurrentModifiers.OperatorDissipationDegreesCelsiusPerSecond);
+	// Startup ordering: a resource that has not begun play yet cannot accept modifiers. Defer it (the
+	// owning pawn calls ApplyPendingIntent after all components begin play). A resource that began
+	// play but is disabled is a genuine failure and goes through the setter, which reports it.
+	const bool bWaitingForPower = !Power->IsPowerSimulationEnabled() && !Power->HasBegunPlay();
+	const bool bWaitingForThermal = !Thermal->IsThermalSimulationEnabled() && !Thermal->HasBegunPlay();
+	bIntentApplyPending = bWaitingForPower || bWaitingForThermal;
+	if (bIntentApplyPending)
+	{
+		UE_LOG(
+			LogEdenOperations,
+			Verbose,
+			TEXT("%s deferring operator modifiers until %s begin play."),
+			*MakeLogContext(),
+			bWaitingForPower && bWaitingForThermal ? TEXT("power and thermal") : (bWaitingForPower ? TEXT("power") : TEXT("thermal")));
+	}
+
+	const bool bPowerOk =
+		bWaitingForPower || Power->SetOperatorDemandKilowatts(CurrentModifiers.OperatorDemandKilowatts);
+	const bool bThermalOk = bWaitingForThermal
+		|| Thermal->SetOperatorDissipationDegreesCelsiusPerSecond(CurrentModifiers.OperatorDissipationDegreesCelsiusPerSecond);
 	const bool bThrustOk = Movement->SetThrustAuthority(CurrentModifiers.ThrustAuthority);
 	Movement->SetStabilizationAssistAvailable(CurrentModifiers.bStabilizationAssistAvailable);
 

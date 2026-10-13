@@ -248,6 +248,14 @@ void AEdenSpacecraftPawn::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 void AEdenSpacecraftPawn::BeginPlay()
 {
 	Super::BeginPlay();
+
+	// Every component has begun play now: apply operator modifiers deferred by startup ordering
+	// (possession can reset operator control before power/thermal initialize).
+	if (OperatorControlComponent)
+	{
+		OperatorControlComponent->ApplyPendingIntent();
+	}
+
 	ApplyPresentationHull();
 	// BP instances may have serialized bEnableSpaceBackdrop=false from the crash-hardening pass.
 	// Always apply the light sky path so PIE is not a black void.
