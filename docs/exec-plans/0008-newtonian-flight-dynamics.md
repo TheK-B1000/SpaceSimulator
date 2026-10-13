@@ -281,6 +281,17 @@ Rollback: each checkpoint is one commit; `git revert` restores the previous acce
 ## Progress log
 
 - 2026-10-12: Audited flight, clock, fuel, power, operator, telemetry, and tests on `main` @ `9738130`. Created branch `feature/0008-newtonian-flight`. Drafted this plan. No production code changed.
+- 2026-10-12: Plan approved and committed (`d2aa929`). Checkpoint A implemented:
+  - `FEdenFlightPropulsionSettings`, `FEdenFlightStepSettings` (`FixedStepHz`, stored as a rate so the step is exact in double), and `FEdenFlightDynamicsSnapshot`.
+  - Model layers: thrust envelope, direct/assist controllers, `IntegrateTranslation`, `CalculateFixedSteps`, and `StepFlight`, shared by the component and the harness.
+  - Component: 120 Hz loop with pause gating and counted drops, SI↔cm conversion, and the dynamics snapshot.
+  - Telemetry: in-process `Flight.Dynamics`.
+  - Debug: `ShowDebug EdenSystems` flight lines.
+  - Tests: harness `Private/Tests/EdenFlightSimulationHarness.h`, `Eden.Unit.Flight.Dynamics.*`, `Eden.Integration.Flight.*`, and migrated `Eden.Unit.Flight.*`.
+  - Docs: ADR-0003 (Proposed).
+- 2026-10-12: Deviation — the linear fields of `FEdenFlightMovementSettings` were removed immediately rather than kept deprecated for one checkpoint. Only tests referenced them, and the Blueprint does not override them.
+- 2026-10-12: Deviation — `AssistResponseTimeSeconds` default 0.2 s (the plan draft said 0.5 s), for crisper settling. The controller saturates at full thrust, then settles exponentially.
+- 2026-10-12: Test migration. `Eden.Unit.Flight.LinearVelocityAcceleratesAndClamps` was removed (superseded by `Dynamics.AssistTracksCommandedVelocity` / `MomentumConservedAssistOff`). `StabilizationDampsReleasedAxes` became `AngularStabilizationDampsReleasedAxes` (linear parts moved to Dynamics). `Eden.Integration.Runtime.BlueprintPawnUsesRuntimeSystems` now releases controls with assist off to prove zero demand and zero fuel use, and separately asserts that assist braking bills demand.
 
 ## Decision log
 

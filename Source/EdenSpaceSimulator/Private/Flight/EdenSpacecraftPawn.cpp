@@ -103,6 +103,38 @@ void DrawEdenSystems(UCanvas* Canvas, const FEdenSpacecraftSystemsDebugSnapshot&
 			*BoolText(Snapshot.Thermal.bRegisteredWithClock)),
 		FColor::Orange);
 }
+
+void DrawFlightDynamics(UCanvas* Canvas, const FEdenFlightDynamicsSnapshot& Flight)
+{
+	DrawLine(
+		Canvas,
+		FString::Printf(
+			TEXT("Flight: Speed=%.2f m/s Vel=(%.2f, %.2f, %.2f) m/s Accel=%.2f m/s2 Force=(%.1f, %.1f, %.1f) kN Mass=%.0f kg"),
+			Flight.SpeedMetersPerSecond,
+			Flight.VelocityWorldMetersPerSecond.X,
+			Flight.VelocityWorldMetersPerSecond.Y,
+			Flight.VelocityWorldMetersPerSecond.Z,
+			Flight.AccelerationWorldMetersPerSecondSquared.Size(),
+			Flight.AppliedBodyForceNewtons.X / 1000.0,
+			Flight.AppliedBodyForceNewtons.Y / 1000.0,
+			Flight.AppliedBodyForceNewtons.Z / 1000.0,
+			Flight.MassKilograms),
+		FColor::Magenta);
+	DrawLine(
+		Canvas,
+		FString::Printf(
+			TEXT("Flight: Assist Requested=%s Active=%s Authority=%.2f Available+=(%.0f, %.0f, %.0f) kN SimTime=%.2fs Steps=%lld Dropped=%lld"),
+			*BoolText(Flight.bFlightAssistRequested),
+			*BoolText(Flight.bFlightAssistActive),
+			Flight.EffectiveThrustAuthority,
+			Flight.AvailablePositiveThrustNewtons.X / 1000.0,
+			Flight.AvailablePositiveThrustNewtons.Y / 1000.0,
+			Flight.AvailablePositiveThrustNewtons.Z / 1000.0,
+			Flight.FlightSimulationTimeSeconds,
+			Flight.FlightStepCount,
+			Flight.DroppedFlightStepCount),
+		FColor::Magenta);
+}
 }
 #endif
 
@@ -156,6 +188,10 @@ void AEdenSpacecraftPawn::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 	}
 
 	EdenSpacecraftPawnDebug::DrawEdenSystems(Canvas, GetEdenSystemsDebugSnapshot());
+	if (FlightMovementComponent)
+	{
+		EdenSpacecraftPawnDebug::DrawFlightDynamics(Canvas, FlightMovementComponent->GetFlightDynamicsSnapshot());
+	}
 	YL = Canvas->DisplayDebugManager.GetMaxCharHeight();
 	YPos = Canvas->DisplayDebugManager.GetYPos();
 }

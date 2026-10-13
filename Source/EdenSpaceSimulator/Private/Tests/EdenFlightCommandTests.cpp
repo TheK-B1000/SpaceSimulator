@@ -16,9 +16,6 @@ constexpr double Tolerance = 0.01;
 FEdenFlightMovementSettings MakeTestSettings()
 {
 	FEdenFlightMovementSettings Settings;
-	Settings.MaxLinearSpeedCmPerSecond = 100.0f;
-	Settings.LinearAccelerationCmPerSecondSquared = 50.0f;
-	Settings.LinearDecelerationCmPerSecondSquared = 25.0f;
 	Settings.MaxAngularSpeedDegreesPerSecond = 60.0f;
 	Settings.AngularAccelerationDegreesPerSecondSquared = 30.0f;
 	Settings.AngularDecelerationDegreesPerSecondSquared = 15.0f;
@@ -131,29 +128,6 @@ bool FEdenFlightCommandRejectsOrSanitizesNaNAndInfinityTest::RunTest(const FStri
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FEdenFlightLinearVelocityAcceleratesAndClampsTest,
-	"Eden.Unit.Flight.LinearVelocityAcceleratesAndClamps",
-	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
-
-bool FEdenFlightLinearVelocityAcceleratesAndClampsTest::RunTest(const FString& Parameters)
-{
-	(void)Parameters;
-
-	FEdenFlightInputCommand Command;
-	Command.TranslationInput = FVector(1.0, 0.0, 0.0);
-
-	FEdenFlightVelocityState State;
-	const FEdenFlightMovementSettings Settings = EdenFlightCommandTests::MakeTestSettings();
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 1.0f).VelocityState;
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Linear velocity accelerates"), State.LinearVelocityWorldCmPerSecond, FVector(50.0, 0.0, 0.0));
-
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 2.0f).VelocityState;
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Linear velocity clamps to max speed"), State.LinearVelocityWorldCmPerSecond, FVector(100.0, 0.0, 0.0));
-
-	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenFlightAngularVelocityAcceleratesAndClampsTest,
 	"Eden.Unit.Flight.AngularVelocityAcceleratesAndClamps",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -165,44 +139,38 @@ bool FEdenFlightAngularVelocityAcceleratesAndClampsTest::RunTest(const FString& 
 	FEdenFlightInputCommand Command;
 	Command.RotationInput = FVector(0.0, 0.0, -1.0);
 
-	FEdenFlightVelocityState State;
+	FVector AngularVelocity = FVector::ZeroVector;
 	const FEdenFlightMovementSettings Settings = EdenFlightCommandTests::MakeTestSettings();
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 1.0f).VelocityState;
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity accelerates"), State.AngularVelocityLocalDegreesPerSecond, FVector(0.0, 0.0, -30.0));
+	AngularVelocity = FEdenFlightMovementModel::IntegrateAngularVelocity(AngularVelocity, Command, Settings, 1.0f).AngularVelocityLocalDegreesPerSecond;
+	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity accelerates"), AngularVelocity, FVector(0.0, 0.0, -30.0));
 
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 2.0f).VelocityState;
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity clamps to max speed"), State.AngularVelocityLocalDegreesPerSecond, FVector(0.0, 0.0, -60.0));
+	AngularVelocity = FEdenFlightMovementModel::IntegrateAngularVelocity(AngularVelocity, Command, Settings, 2.0f).AngularVelocityLocalDegreesPerSecond;
+	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity clamps to max speed"), AngularVelocity, FVector(0.0, 0.0, -60.0));
 
 	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
-	FEdenFlightStabilizationDampsReleasedAxesTest,
-	"Eden.Unit.Flight.StabilizationDampsReleasedAxes",
+	FEdenFlightAngularStabilizationDampsReleasedAxesTest,
+	"Eden.Unit.Flight.AngularStabilizationDampsReleasedAxes",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FEdenFlightStabilizationDampsReleasedAxesTest::RunTest(const FString& Parameters)
+bool FEdenFlightAngularStabilizationDampsReleasedAxesTest::RunTest(const FString& Parameters)
 {
 	(void)Parameters;
 
+	// Linear assist and drift are Newtonian now; see Eden.Unit.Flight.Dynamics.*.
 	FEdenFlightInputCommand Command;
 	Command.bStabilizationEnabled = true;
 
-	FEdenFlightVelocityState State;
-	State.LinearVelocityWorldCmPerSecond = FVector(80.0, -40.0, 0.0);
-	State.AngularVelocityLocalDegreesPerSecond = FVector(30.0, 0.0, -30.0);
-
+	FVector AngularVelocity(30.0, 0.0, -30.0);
 	const FEdenFlightMovementSettings Settings = EdenFlightCommandTests::MakeTestSettings();
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 1.0f).VelocityState;
-
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Linear velocity damps toward zero"), State.LinearVelocityWorldCmPerSecond, FVector(55.0, -15.0, 0.0));
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity damps toward zero"), State.AngularVelocityLocalDegreesPerSecond, FVector(15.0, 0.0, -15.0));
+	AngularVelocity = FEdenFlightMovementModel::IntegrateAngularVelocity(AngularVelocity, Command, Settings, 1.0f).AngularVelocityLocalDegreesPerSecond;
+	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity damps toward zero"), AngularVelocity, FVector(15.0, 0.0, -15.0));
 
 	Command.bStabilizationEnabled = false;
-	State = FEdenFlightMovementModel::IntegrateVelocity(State, Command, Settings, FQuat::Identity, 1.0f).VelocityState;
-
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Linear velocity coasts when stabilization is disabled"), State.LinearVelocityWorldCmPerSecond, FVector(55.0, -15.0, 0.0));
-	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity coasts when stabilization is disabled"), State.AngularVelocityLocalDegreesPerSecond, FVector(15.0, 0.0, -15.0));
+	AngularVelocity = FEdenFlightMovementModel::IntegrateAngularVelocity(AngularVelocity, Command, Settings, 1.0f).AngularVelocityLocalDegreesPerSecond;
+	EdenFlightCommandTests::TestVectorNearlyEqual(*this, TEXT("Angular velocity coasts when stabilization is disabled"), AngularVelocity, FVector(15.0, 0.0, -15.0));
 
 	return true;
 }
@@ -220,9 +188,7 @@ bool FEdenFlightInvalidDeltaTimeDoesNotMutateVelocityTest::RunTest(const FString
 	Command.TranslationInput = FVector(1.0, 0.0, 0.0);
 	Command.RotationInput = FVector(0.0, 1.0, 0.0);
 
-	FEdenFlightVelocityState InitialState;
-	InitialState.LinearVelocityWorldCmPerSecond = FVector(10.0, -20.0, 30.0);
-	InitialState.AngularVelocityLocalDegreesPerSecond = FVector(-5.0, 15.0, -25.0);
+	const FVector InitialAngularVelocity(-5.0, 15.0, -25.0);
 
 	const FEdenFlightMovementSettings Settings = EdenFlightCommandTests::MakeTestSettings();
 	const float InvalidDeltaTimes[] = {
@@ -234,20 +200,29 @@ bool FEdenFlightInvalidDeltaTimeDoesNotMutateVelocityTest::RunTest(const FString
 
 	for (const float DeltaTimeSeconds : InvalidDeltaTimes)
 	{
-		const FEdenFlightIntegrationResult Result =
-			FEdenFlightMovementModel::IntegrateVelocity(InitialState, Command, Settings, FQuat::Identity, DeltaTimeSeconds);
+		const FEdenFlightAngularStepResult Result =
+			FEdenFlightMovementModel::IntegrateAngularVelocity(InitialAngularVelocity, Command, Settings, DeltaTimeSeconds);
 
 		TestFalse(TEXT("Invalid DeltaTime is reported"), Result.bDeltaTimeWasValid);
 		EdenFlightCommandTests::TestVectorNearlyEqual(
 			*this,
-			TEXT("Invalid DeltaTime does not mutate linear velocity"),
-			Result.VelocityState.LinearVelocityWorldCmPerSecond,
-			InitialState.LinearVelocityWorldCmPerSecond);
+			TEXT("Invalid DeltaTime does not mutate angular velocity"),
+			Result.AngularVelocityLocalDegreesPerSecond,
+			InitialAngularVelocity);
+
+		FEdenFlightStepInput StepInput;
+		StepInput.Command = Command;
+		StepInput.Translation.VelocityWorldMetersPerSecond = FVector(10.0, -20.0, 30.0);
+		StepInput.AngularVelocityLocalDegreesPerSecond = InitialAngularVelocity;
+		StepInput.MassKilograms = 10000.0;
+		const FEdenFlightStepOutput StepOutput =
+			FEdenFlightMovementModel::StepFlight(StepInput, FEdenFlightPropulsionSettings(), Settings, DeltaTimeSeconds);
+		TestFalse(TEXT("Invalid DeltaTime flight step is reported"), StepOutput.bStepWasValid);
 		EdenFlightCommandTests::TestVectorNearlyEqual(
 			*this,
-			TEXT("Invalid DeltaTime does not mutate angular velocity"),
-			Result.VelocityState.AngularVelocityLocalDegreesPerSecond,
-			InitialState.AngularVelocityLocalDegreesPerSecond);
+			TEXT("Invalid DeltaTime does not mutate linear velocity"),
+			StepOutput.Translation.State.VelocityWorldMetersPerSecond,
+			StepInput.Translation.VelocityWorldMetersPerSecond);
 	}
 
 	return true;
@@ -346,25 +321,41 @@ bool FEdenFlightEquivalentSimulatedTimeMatchesAcrossDeltaTimePartitionsTest::Run
 
 	const FEdenFlightMovementSettings Settings = EdenFlightCommandTests::MakeTestSettings();
 
-	FEdenFlightVelocityState SingleStepState;
-	SingleStepState = FEdenFlightMovementModel::IntegrateVelocity(SingleStepState, Command, Settings, FQuat::Identity, 1.0f).VelocityState;
-
-	FEdenFlightVelocityState PartitionedState;
+	const FVector SingleStepAngular =
+		FEdenFlightMovementModel::IntegrateAngularVelocity(FVector::ZeroVector, Command, Settings, 1.0f).AngularVelocityLocalDegreesPerSecond;
+	FVector PartitionedAngular = FVector::ZeroVector;
 	for (int32 StepIndex = 0; StepIndex < 10; ++StepIndex)
 	{
-		PartitionedState = FEdenFlightMovementModel::IntegrateVelocity(PartitionedState, Command, Settings, FQuat::Identity, 0.1f).VelocityState;
+		PartitionedAngular =
+			FEdenFlightMovementModel::IntegrateAngularVelocity(PartitionedAngular, Command, Settings, 0.1f).AngularVelocityLocalDegreesPerSecond;
 	}
-
-	EdenFlightCommandTests::TestVectorNearlyEqual(
-		*this,
-		TEXT("Linear velocity is equivalent across DeltaTime partitions"),
-		PartitionedState.LinearVelocityWorldCmPerSecond,
-		SingleStepState.LinearVelocityWorldCmPerSecond);
 	EdenFlightCommandTests::TestVectorNearlyEqual(
 		*this,
 		TEXT("Angular velocity is equivalent across DeltaTime partitions"),
-		PartitionedState.AngularVelocityLocalDegreesPerSecond,
-		SingleStepState.AngularVelocityLocalDegreesPerSecond);
+		PartitionedAngular,
+		SingleStepAngular);
+
+	// Constant-force translation is exact, so any partition of the same time gives the same state.
+	const FVector Force(100000.0, -20000.0, 5000.0);
+	const FEdenFlightTranslationState SingleStep =
+		FEdenFlightMovementModel::IntegrateTranslation(FEdenFlightTranslationState(), Force, 10000.0, FQuat::Identity, 1.0).State;
+	FEdenFlightTranslationState Partitioned;
+	for (int32 StepIndex = 0; StepIndex < 10; ++StepIndex)
+	{
+		Partitioned = FEdenFlightMovementModel::IntegrateTranslation(Partitioned, Force, 10000.0, FQuat::Identity, 0.1).State;
+	}
+	EdenFlightCommandTests::TestVectorNearlyEqual(
+		*this,
+		TEXT("Linear velocity is equivalent across DeltaTime partitions"),
+		Partitioned.VelocityWorldMetersPerSecond,
+		SingleStep.VelocityWorldMetersPerSecond,
+		1.0e-9);
+	EdenFlightCommandTests::TestVectorNearlyEqual(
+		*this,
+		TEXT("Position is equivalent across DeltaTime partitions"),
+		Partitioned.PositionWorldMeters,
+		SingleStep.PositionWorldMeters,
+		1.0e-9);
 
 	return true;
 }

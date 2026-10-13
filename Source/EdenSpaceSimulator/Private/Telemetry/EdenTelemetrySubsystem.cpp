@@ -503,6 +503,7 @@ FEdenTelemetrySnapshot UEdenTelemetrySubsystem::AssembleSnapshot() const
 		Snapshot.Flight.ThrustAuthority = Movement->GetThrustAuthority();
 		Snapshot.Flight.bStabilizationAssistAvailable = Movement->IsStabilizationAssistAvailable();
 		Snapshot.Flight.PropulsionDemandNormalized = Movement->GetPropulsionDemandNormalized();
+		Snapshot.Flight.Dynamics = Movement->GetFlightDynamicsSnapshot();
 	}
 
 	return Snapshot;

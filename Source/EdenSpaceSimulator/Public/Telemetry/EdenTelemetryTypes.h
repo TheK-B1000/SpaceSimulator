@@ -81,6 +81,13 @@ struct EDENSPACESIMULATOR_API FEdenFlightStateSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
 	float PropulsionDemandNormalized = 0.0f;
+
+	/**
+	 * In-process flight dynamics (velocity, acceleration, available thrust, mass, assist).
+	 * Not part of Telemetry Export Schema v1 or the EDEN OS wire contract.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	FEdenFlightDynamicsSnapshot Dynamics;
 };
 
 USTRUCT(BlueprintType)

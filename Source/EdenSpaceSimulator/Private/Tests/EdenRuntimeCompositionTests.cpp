@@ -16,6 +16,7 @@
 #include "Systems/EdenThermalConfigDataAsset.h"
 #include "Systems/EdenThermalSystemComponent.h"
 
+#include "Components/SphereComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -271,16 +272,26 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 	ThrustCommand.TranslationInput = FVector(1.0f, 0.0f, 0.0f);
 	Pawn->ApplyFlightInputCommand(ThrustCommand, 0.1f);
 	TestTrue(TEXT("Flight movement exposes nonzero propulsion demand"), Flight->GetPropulsionDemandNormalized() > 0.0f);
+	TestEqual(TEXT("0.1 s of world time runs twelve 120 Hz flight steps"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(12));
+	TestTrue(TEXT("Thrust accelerated the spacecraft"), Flight->GetSpeedMetersPerSecond() > 0.0f);
 
 	Clock->Tick(1.0f);
 	TestTrue(TEXT("Simulation time advances"), Clock->GetElapsedSimulationTimeSeconds() > InitialElapsedSeconds);
 	TestTrue(TEXT("Sustained runtime propulsion demand reduces fuel"), Fuel->GetFuelStateSnapshot().FuelQuantityKilograms < InitialFuelKilograms);
 	TestTrue(TEXT("Thermal model advances in runtime wiring"), Thermal->GetThermalStateSnapshot().TemperatureCelsius > InitialTemperatureCelsius);
 
+	// Newtonian flight (ExecPlan 0008): with Flight Assist off, released controls fire no thrusters and the ship drifts.
 	const float FuelAfterThrustKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
-	FEdenFlightInputCommand ZeroCommand;
-	Pawn->ApplyFlightInputCommand(ZeroCommand, 0.1f);
-	TestEqual(TEXT("Zero command clears propulsion demand"), Flight->GetPropulsionDemandNormalized(), 0.0f);
+	const float SpeedBeforeCoastMetersPerSecond = Flight->GetSpeedMetersPerSecond();
+	FEdenFlightInputCommand CoastCommand;
+	CoastCommand.bStabilizationEnabled = false;
+	Pawn->ApplyFlightInputCommand(CoastCommand, 0.1f);
+	TestEqual(TEXT("Assist-off zero command clears propulsion demand"), Flight->GetPropulsionDemandNormalized(), 0.0f);
+	EdenRuntimeCompositionTests::TestFloatNearlyEqual(
+		*this,
+		TEXT("Assist-off zero command conserves momentum"),
+		Flight->GetSpeedMetersPerSecond(),
+		SpeedBeforeCoastMetersPerSecond);
 
 	Clock->Tick(1.0f);
 	EdenRuntimeCompositionTests::TestFloatNearlyEqual(
@@ -288,6 +299,13 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 		TEXT("Zero propulsion demand stops propulsion fuel consumption"),
 		Fuel->GetFuelStateSnapshot().FuelQuantityKilograms,
 		FuelAfterThrustKilograms);
+
+	// With Flight Assist on, released controls brake on real thrusters, which bills propellant.
+	FEdenFlightInputCommand AssistedStopCommand;
+	AssistedStopCommand.bStabilizationEnabled = true;
+	Pawn->ApplyFlightInputCommand(AssistedStopCommand, 0.05f);
+	TestTrue(TEXT("Assist braking reports propulsion demand"), Flight->GetPropulsionDemandNormalized() > 0.0f);
+	TestTrue(TEXT("Assist braking slows the ship"), Flight->GetSpeedMetersPerSecond() < SpeedBeforeCoastMetersPerSecond);
 
 	Power->SetBatteryChargeKilowattHours(Power->GetActivePowerConfig().BatteryCapacityKilowattHours * 0.5f);
 	const float BatteryBeforeAdvanceKilowattHours = Power->GetPowerStateSnapshot().BatteryChargeKilowattHours;
@@ -446,6 +464,139 @@ bool FEdenRuntimeMissionSubsystemAndSolarEventAssetAccessibleTest::RunTest(const
 	TestEqual(TEXT("Single mission subsystem instance"), Mission, World->GetSubsystem<UEdenMissionSubsystem>());
 	TestTrue(TEXT("Mission loads Solar Event asset"), Mission->LoadMissionFromDefinitionAsset(SolarEvent));
 	TestEqual(TEXT("Active mission id is SolarCrisis"), Mission->GetActiveMissionId(), FName("SolarCrisis"));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest,
+	"Eden.Integration.Flight.SpacecraftBlueprintUsesValidFlightModel",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UClass* PawnClass = StaticLoadClass(
+		AEdenSpacecraftPawn::StaticClass(),
+		nullptr,
+		EdenRuntimeCompositionTests::PawnBlueprintClassPath);
+	TestNotNull(TEXT("BP_EdenSpacecraftPawn class loads"), PawnClass);
+	const AEdenSpacecraftPawn* DefaultPawn = PawnClass ? PawnClass->GetDefaultObject<AEdenSpacecraftPawn>() : nullptr;
+	const UEdenFlightMovementComponent* Flight = DefaultPawn ? DefaultPawn->GetFlightMovementComponent() : nullptr;
+	TestNotNull(TEXT("Blueprint keeps the C++ flight movement component"), Flight);
+	if (!Flight)
+	{
+		return false;
+	}
+
+	TestTrue(TEXT("Blueprint flight component is exactly the C++ class"), Flight->GetClass() == UEdenFlightMovementComponent::StaticClass());
+	TestTrue(TEXT("Blueprint flight moves the C++ sphere root"), Flight->UpdatedComponent.Get() == static_cast<const USceneComponent*>(DefaultPawn->GetRequiredCollisionRoot()));
+
+	const FEdenFlightStepSettings DefaultStep;
+	const FEdenFlightPropulsionSettings DefaultPropulsion;
+	const FEdenFlightMovementSettings DefaultRotation;
+	TestTrue(TEXT("Blueprint step settings are valid"), FEdenFlightMovementModel::ValidateStepSettings(Flight->StepSettings));
+	TestTrue(
+		TEXT("Blueprint propulsion settings are valid"),
+		FEdenFlightMovementModel::ValidatePropulsionSettings(Flight->PropulsionSettings, Flight->StepSettings.GetFixedStepSeconds()));
+
+	// The Blueprint must not silently override the C++ flight model. A deliberate per-ship tune must update these expectations.
+	TestEqual(TEXT("Step rate not overridden"), Flight->StepSettings.FixedStepHz, DefaultStep.FixedStepHz);
+	TestEqual(TEXT("Max steps per update not overridden"), Flight->StepSettings.MaxStepsPerUpdate, DefaultStep.MaxStepsPerUpdate);
+	TestEqual(TEXT("Dry mass not overridden"), Flight->PropulsionSettings.DryMassKilograms, DefaultPropulsion.DryMassKilograms);
+	TestEqual(TEXT("Forward thrust not overridden"), Flight->PropulsionSettings.ForwardThrustNewtons, DefaultPropulsion.ForwardThrustNewtons);
+	TestEqual(TEXT("Reverse thrust not overridden"), Flight->PropulsionSettings.ReverseThrustNewtons, DefaultPropulsion.ReverseThrustNewtons);
+	TestEqual(TEXT("Lateral thrust not overridden"), Flight->PropulsionSettings.LateralThrustNewtons, DefaultPropulsion.LateralThrustNewtons);
+	TestEqual(TEXT("Vertical thrust not overridden"), Flight->PropulsionSettings.VerticalThrustNewtons, DefaultPropulsion.VerticalThrustNewtons);
+	TestEqual(
+		TEXT("Assist speed not overridden"),
+		Flight->PropulsionSettings.AssistMaxSpeedMetersPerSecond,
+		DefaultPropulsion.AssistMaxSpeedMetersPerSecond);
+	TestEqual(
+		TEXT("Assist response not overridden"),
+		Flight->PropulsionSettings.AssistResponseTimeSeconds,
+		DefaultPropulsion.AssistResponseTimeSeconds);
+	TestEqual(
+		TEXT("Rotation max rate not overridden"),
+		Flight->MovementSettings.MaxAngularSpeedDegreesPerSecond,
+		DefaultRotation.MaxAngularSpeedDegreesPerSecond);
+	TestEqual(
+		TEXT("Rotation acceleration not overridden"),
+		Flight->MovementSettings.AngularAccelerationDegreesPerSecondSquared,
+		DefaultRotation.AngularAccelerationDegreesPerSecondSquared);
+	TestEqual(
+		TEXT("Rotation deceleration not overridden"),
+		Flight->MovementSettings.AngularDecelerationDegreesPerSecondSquared,
+		DefaultRotation.AngularDecelerationDegreesPerSecondSquared);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionFlightFixedStepFollowsSimulationPauseTest,
+	"Eden.Integration.Flight.FixedStepFollowsSimulationPause",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionFlightFixedStepFollowsSimulationPauseTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld RuntimeWorld;
+	UWorld* World = RuntimeWorld.Get();
+	UEdenSimulationClockSubsystem* Clock = World ? World->GetSubsystem<UEdenSimulationClockSubsystem>() : nullptr;
+	TestNotNull(TEXT("Simulation clock exists"), Clock);
+	if (!World || !Clock)
+	{
+		return false;
+	}
+
+	AEdenSpacecraftPawn* Pawn = World->SpawnActor<AEdenSpacecraftPawn>(AEdenSpacecraftPawn::StaticClass(), FTransform::Identity);
+	TestNotNull(TEXT("Spacecraft spawns"), Pawn);
+	if (!Pawn)
+	{
+		return false;
+	}
+
+	World->BeginPlay();
+	EdenRuntimeCompositionTests::EnsureBeginPlay(Pawn);
+	UEdenFlightMovementComponent* Flight = Pawn->GetFlightMovementComponent();
+	TestNotNull(TEXT("Flight component exists"), Flight);
+	if (!Flight)
+	{
+		return false;
+	}
+
+	FEdenFlightInputCommand Burn;
+	Burn.TranslationInput = FVector(1.0, 0.0, 0.0);
+	Burn.bStabilizationEnabled = false;
+
+	Clock->PauseSimulation();
+	Pawn->ApplyFlightInputCommand(Burn, 0.1f);
+	TestEqual(TEXT("Paused simulation clock runs no flight steps"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(0));
+	TestTrue(TEXT("Paused simulation clock does not move the ship"), Pawn->GetActorLocation().Equals(FVector::ZeroVector, 0.0));
+	TestEqual(TEXT("Paused simulation clock leaves velocity at rest"), Flight->GetSpeedMetersPerSecond(), 0.0f);
+
+	Clock->ResumeSimulation();
+	Pawn->ApplyFlightInputCommand(Burn, 0.1f);
+	TestEqual(TEXT("Resumed flight runs twelve 120 Hz steps for 0.1 s"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(12));
+	// 0.1 s at 10 m/s^2 from rest: v = 1 m/s, x = 0.05 m = 5 cm. No catch-up of paused time.
+	TestTrue(
+		FString::Printf(TEXT("Resumed flight speed is 1 m/s (%.9f)"), Flight->GetSpeedMetersPerSecond()),
+		FMath::IsNearlyEqual(Flight->GetSpeedMetersPerSecond(), 1.0f, 1.0e-5f));
+	TestTrue(
+		FString::Printf(TEXT("Resumed flight moved 5 cm along +X (%s)"), *Pawn->GetActorLocation().ToString()),
+		Pawn->GetActorLocation().Equals(FVector(5.0, 0.0, 0.0), 1.0e-6));
+
+	const FEdenFlightDynamicsSnapshot Snapshot = Flight->GetFlightDynamicsSnapshot();
+	TestTrue(TEXT("Snapshot acceleration is 10 m/s^2 along +X"), Snapshot.AccelerationWorldMetersPerSecondSquared.Equals(FVector(10.0, 0.0, 0.0), 1.0e-9));
+	TestTrue(TEXT("Snapshot applied force is 100 kN forward"), Snapshot.AppliedBodyForceNewtons.Equals(FVector(100000.0, 0.0, 0.0), 1.0e-6));
+	TestFalse(TEXT("Snapshot reports assist off"), Snapshot.bFlightAssistActive);
+	TestEqual(TEXT("No dropped steps"), Snapshot.DroppedFlightStepCount, static_cast<int64>(0));
+
+	Flight->ResetFlightMovement();
+	TestEqual(TEXT("Reset clears flight step count"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(0));
+	TestEqual(TEXT("Reset clears velocity"), Flight->GetSpeedMetersPerSecond(), 0.0f);
+
 	return true;
 }
 
