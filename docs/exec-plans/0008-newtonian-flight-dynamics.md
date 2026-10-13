@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B provisionally approved (automation green; **human PIE pending**). Checkpoint C implemented (automation green; **human PIE pending**). Checkpoint D implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
+Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B provisionally approved (automation green; **human PIE pending**). Checkpoint C implemented (automation green; **human PIE pending**). Checkpoint D provisionally approved (automation green; **human PIE pending**). Checkpoint F automation complete (§F); **human PIE A–D pending**. Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
 
 Fuel note (CP-D): propellant is drawn from **delivered** thrust (translation and attitude), one fuel-system transaction per 120 Hz flight step. An empty tank delivers no thrust or torque, and limited power reduces delivery. Gameplay values are not rebalanced: the Isp placeholder reproduces the pre-0008 rate.
 
@@ -280,6 +280,152 @@ The model costs O(1) per flight step. At 120 Hz that is 120 sweeps per second pe
 
 Rollback: each checkpoint is one commit; `git revert` restores the previous accepted checkpoint. `v0.1.0-flight-shell` and `main` remain the kinematic reference.
 
+## Checkpoint F — regression, contract audit, PIE preparation
+
+Status: automation complete (382/382 `Eden.`); **human PIE A–D pending** (not self-certified). Merge blocked until the Checkpoint M (0007) PIE and the §F.5 checklist both pass.
+
+### F.1 Telemetry contract audit: `PropulsionDemandNormalized`
+
+Audited on Unreal `feature/0008-newtonian-flight` and ProjectEden `3d1c239`.
+
+| Surface | Contains the field? | Evidence |
+|---|---|---|
+| Telemetry Export Schema v1 / EDEN OS telemetry wire (`BuildTelemetryJsonV1` → `AppendSnapshot`) | **No** | Fields: sequence, simulationTime, missionElapsed, fuelFraction, batteryFraction, generationKilowatts, demandKilowatts, temperatureCelsius, missionState/Phase/Id, thermalMode, loadShed, propulsionPriority, thrustAuthority |
+| Advisory request (`BuildAdvisoryJsonV1`) | **No** | Mission, thermal, battery and fuel fractions, trends, sample counts. No flight fields. |
+| Command-proposal request (`BuildCommandProposalJsonV1`) | **No** | — |
+| Wire validation | Finite check only | `EdenOsWireSerializationModel.cpp:147` |
+| ProjectEden `packages` / `apps` | **No consumer** | Positive control `fuelFraction`: 2 files. `propulsionDemand`, `propulsion_demand`, `thrustAuthority`: 0. |
+| In-process Unreal | Fuel system legacy path (bypassed while flight meters directly); `ShowDebug` fuel line | — |
+
+**Conclusion.** Changing the meaning to delivered output causes no wire or EDEN behavioural incompatibility. The field has never been on an EDEN-facing payload, and the v1 contract is unchanged.
+
+Requested and delivered propulsion are independently observable in-process (`FEdenFlightStateSnapshot::Dynamics`):
+
+- `RequestedThrusterOutputNewtons` / `DeliveredThrusterOutputNewtons`
+- requested and applied force and torque
+- `PowerThrustFraction`, `PropellantBurnFraction`, `PropellantFlowKilogramsPerSecond`, `bPowerLimited`, `bPropellantLimited`
+
+EDEN currently receives neither requested nor delivered propulsion, so it cannot yet tell "requesting full thrust" from "producing zero". Exposing that needs an **explicit additive schema change** with matching ProjectEden work, which is out of scope for 0008. Candidate fields: `requestedThrusterOutputNewtons`, `deliveredThrusterOutputNewtons`, `powerLimited`, `propellantLimited`, `propellantKilograms`.
+
+### F.2 Resource interaction verification (automated)
+
+- **Mid-step depletion:** `Propellant.MidStepDepletionPartialBurn`, `Integration.Flight.EmptyTankStopsPropulsion`.
+- **Single propellant owner, no double consumption:** `Integration.Flight.FuelSystemIsSinglePropellantOwner`. `ResourceTransitionsStayConsistent` §1: interleaved 10 Hz resource ticks plus a 5 s burn draws exactly ṁ × 5 s (1e-9).
+- **Pause and resume:** no steps, draws or motion while paused, and no catch-up on resume (§2; `FixedStepFollowsSimulationPause`).
+- **Power tiers Normal → Critical → Depleted → recharged:** delivered output and propellant follow each tier (§3).
+- **Natural recovery from a dead battery** (§3b), with the shipped `DA_EdenPowerConfig` (20 kWh, generation 2 kW, baseline 1 kW, Critical below 10 %):
+  - Depleted lasts about one 0.1 s tick, then propulsion returns at the Critical tier (40 %).
+  - Full thrust returns after about **120 min** of simulated time at baseline load.
+- **Load shed during Critical power:** assist inactive, drift, no propellant drawn (§4).
+- **Mission abort and reset:** the propellant ledger is untouched (missions never own fuel). `ResetFuelState` restores it, and flight mass follows immediately (§5).
+- **Developer commands for PIE:** `EdenSetFuelKilograms` and `EdenSetBatteryFraction` (`Integration.Flight.DeveloperResourceCommands`).
+
+### F.3 Solar Crisis with Newtonian propulsion
+
+`Eden.Scenario.Flight.SolarCrisisWithNewtonianPropulsion` uses the real `BP_EdenSpacecraftPawn` and its Data Assets, with a pilot who burns and yaws for 1 s every 5 s under assist. It runs 90 s.
+
+| Operator profile | Mission | Power-limited | No propulsion | Propellant used |
+|---|---|---|---|---|
+| Passive | Succeeded | 0 s | 0 s | 48.98 kg |
+| Shed during impact | Failed (shed cuts thermal dissipation — ADR-0002 trade-off) | 0 s | 0 s | 44.29 kg |
+| Shed + thermal Boost | Succeeded | 0 s | 0 s | 44.29 kg |
+
+- With the shipped Data Assets the battery never reaches Critical during Solar Crisis. Propulsion is never power-limited and there is no loss of control.
+- The mission remains completable.
+- **Balance observations, deferred to the propulsion rebalance (not changed, per decision):**
+  - An actively manoeuvring pilot uses about 45–49 kg of the 100 kg tank in 90 s, because assist braking and attitude thrust now bill propellant. Heavier manoeuvring could threaten `ConservePropellant`.
+  - After a full battery drain, the ship flies at 40 % thrust for about 2 h of simulated time. That is not a permanent loss, but it is probably longer than intended.
+
+### F.4 Approximation boundaries
+
+| Approximation | Valid when | Ignores or breaks | Future owner |
+|---|---|---|---|
+| Lumped per-axis thrust envelope (fwd 100 / rev 50 / lateral 20 / vertical 20 kN) | Rigid hull, on-axis thrusters | No thruster positions, cant or failures. Translation and attitude are separate budgets, so full thrust and full torque can be used at once. | Thruster-level model |
+| Lumped per-axis torque, lever arms 5/10/10 m | First-order RCS propellant billing | Fixed lever arms; RCS not shared with translation | Same |
+| Diagonal inertia scaled by `m/m_dry` | Propellant distributed like the hull; small propellant fraction (1 %) | Tank geometry, products of inertia, slosh | Mass-properties model |
+| Constant centre of mass | Burns through the CoM | No off-axis thrust from CoM travel | Same |
+| No `İω` term in Euler's equations | Exhaust leaves with the body's rotation | Jet damping | — |
+| Power tiers (1 / 0.4 / 0); thrusters draw no battery power | Coarse "valves and controllers need power" behaviour | Firing never drains the battery; discontinuous at tier edges | Electrical propulsion load |
+| Placeholder Isp ≈ 10 197 s | Preserving the pre-0008 balance (1 kg/s at 100 kN) | Unphysical: chemical RCS is 220–320 s, so Δv per kg is about 30× too high | Propulsion rebalance (deferred) |
+| Constant-force step, midpoint mass, RK4 rotation | 120 Hz, rates ≲ 2 rad/s | Very high spin rates or long steps lose accuracy (tests bound drift at < 1e-6 per 60 s) | — |
+| Inelastic slide collision | Low-speed contact with static geometry | No restitution, no angular impulse | Collision plan |
+| Input sampled once per render frame | — | Up to one frame of command latency (`FrameSampledInputBounded`) | — |
+| No thermal limit on propulsion | — | Overheating does not reduce thrust | Future |
+
+### F.5 Consolidated human PIE checklist (Checkpoints A–D)
+
+Record every item as **PASS / FAIL / NOTES**. Automation does not mark any of these done.
+
+**Setup**
+
+1. Close the Editor that has `EdenSpaceSimulator 5.8` open. That copy stays on `main` for Checkpoint M.
+2. Open `K:\UnrealProjects\SpaceSimulator\EdenSpaceSimulator\EdenSpaceSimulator.uproject` (branch `feature/0008-newtonian-flight`, at or after the Checkpoint F commit). Let it rebuild if prompted.
+3. Open `/Game/Eden/Maps/L_FlightSandbox` and press **Play**. Click into the viewport to capture the mouse.
+4. In the console (`` ` ``), run `ShowDebug EdenSystems`. You should see the **Flight**, **Attitude** and **Propulsion** lines below Fuel/Power/Thermal.
+
+Controls: W/S forward/reverse · A/D strafe · Space / Left Ctrl up/down · Mouse X yaw · Mouse Y pitch · Q/E roll · **X** toggles Flight Assist · **T** thermal mode · **L** load shed · **P** propulsion priority.
+
+Console commands: `StartMission`, `RestartMission`, `AbortMission`, `ShowAfterAction`, `EdenSetFuelKilograms <kg>`, `EdenSetBatteryFraction <0..1>`, `pause`, `t.MaxFPS <n>`.
+
+**A — Newtonian translation and the 120 Hz step**
+
+| # | Action | Expected | Pass if |
+|---|---|---|---|
+| A1 | **X** until the Flight line shows `Assist Requested=false`. Hold **W** about 2 s, release. | About 10 m/s² while held. Speed constant after release. Force (100, 0, 0) kN while held, then 0. | Speed after release changes by less than 0.01 m/s over 5 s |
+| A2 | Assist off, moving forward: hold **S** | Decelerates at about 5 m/s² (reverse 50 kN) | Smooth deceleration, no snap |
+| A3 | Assist off: hold **W** 15 s | No speed cap | Speed > 120 m/s |
+| A4 | **X** (assist on), release all | Brakes on thrusters to rest; Force and Delivered > 0 while braking | Stops with no overshoot or reverse drift |
+| A5 | Assist on: hold **W** | Settles at about 100 m/s | 100 ± 1 m/s |
+| A6 | **P** (Reduced), repeat A1 | Half acceleration; Authority 0.50 | About 5 m/s² |
+| A7 | `pause`, wait, unpause | Nothing moves while paused; no jump on resume | Position and speed identical across the pause |
+| A8 | `t.MaxFPS 30`, A1 for 2 s; `t.MaxFPS 144`, repeat | Same gain (about 20 m/s) at both caps | Agree within about 0.5 m/s (one frame of hold time) |
+
+**B — Rigid-body rotation**
+
+| # | Action | Expected | Pass if |
+|---|---|---|---|
+| B1 | Assist off: flick the mouse right, then stop | Yaw rate builds and keeps turning after the mouse stops | Attitude `Rate` Z constant and non-zero |
+| B2 | Assist off: tap **E** | Rolls right and keeps rolling | Roll continues |
+| B3 | Assist on: release all | Rotation stops through torque within a few seconds | Rate → 0; Torque non-zero while stopping |
+| B4 | Assist on: steady mouse right | Steady yaw rate of at most 60 °/s | No oscillation |
+| B5 | Directions | Mouse up/down pitch, left/right yaw, Q/E roll — same as before 0008 | Matches previous feel (note any inversion preference) |
+| B6 | Turn 90°, then **W** (assist off) | Thrust along the new nose; old velocity kept | Velocity bends; no instant change on turning |
+| B7 | Feel note | 27–44 °/s² angular acceleration (old 180); assist max 60 °/s (old 90) | Record too slow / OK / too fast per axis |
+
+**C — Assist propellant billing and operator constraints**
+
+| # | Action | Expected | Pass if |
+|---|---|---|---|
+| C1 | Assist off, spinning, released | Propulsion `Delivered=0.0 kN`, Flow 0 | No propellant use |
+| C2 | Assist on while spinning | Delivered > 0 while braking; Propellant falls | Stops falling at rest |
+| C3 | **L** (Shed) with assist requested | `Assist Requested=true Active=false`; free drift and spin; Delivered 0 | No braking |
+| C4 | **L** (Normal) | Assist resumes | Active=true; motion settles |
+| C5 | **P** Reduced, full yaw | Turn rate builds at half the rate | Available torque halved on the Attitude line |
+
+**D — Propellant mass and delivered propulsion**
+
+| # | Action | Expected | Pass if |
+|---|---|---|---|
+| D1 | At rest | `Metered=true`, Propellant about 100 kg, Mass about 10 100 kg | Mass = 10 000 + Propellant |
+| D2 | Hold **W** (assist off) 5 s | Flow about 1.0 kg/s; Propellant −5 kg; Mass follows | 5 ± 0.2 kg used |
+| D3 | `EdenSetFuelKilograms 0.5`, hold **W** | Burns about 0.5 s, then coasts. Propellant 0.000, never negative. `Limited(propellant=true)`. Fuel Depleted. | Constant speed after empty |
+| D4 | Empty tank: every control, assist on and off | Requested > 0, Delivered 0; no thrust or torque; drift and spin persist | No change from any input |
+| D5 | `EdenSetFuelKilograms 100` | Thrust returns | A1 restored |
+| D6 | `EdenSetBatteryFraction 0.05` (Critical, below 10 %), hold **W** | `Power=0.40`, Requested 100 kN, Delivered 40 kN, about 4 m/s², Flow about 0.4 kg/s, `Limited(power=true)` | All match |
+| D7 | `EdenSetBatteryFraction 0`, immediately try controls | `Power=0.00` for about one tick, then 0.40 as baseline charging (+1 kW) lifts the battery off zero | Brief zero delivery, then the Critical tier without intervention |
+| D8 | Stay Critical | Remains at 0.40 for about 2 h of simulated time (not practical to wait) | Propulsion never returns to 0 while charging |
+| D9 | `EdenSetBatteryFraction 1` | Full delivery | Power=1.00 |
+
+**Mission and regression**
+
+| # | Action | Expected | Pass if |
+|---|---|---|---|
+| M1 | `StartMission`, fly normally (manoeuvre every few seconds), handle the event with **T**/**L** | Solar Crisis reaches Succeeded or Failed. Full thrust throughout unless you drained the battery. | Terminal state; control never permanently lost |
+| M2 | `ShowAfterAction` | AAR coherent with the session | Propellant used matches the Propulsion line |
+| M3 | `RestartMission` | Mission resets; fuel is **not** refilled by the mission (by design) | Propellant unchanged by the restart |
+| M4 | Stop and restart PIE | At rest, assist on, full tank, Normal power | Clean reset |
+| M5 | Output Log | No errors; no repeating `LogEdenFlight` warnings; no "dropped flight steps" at normal frame rates | Clean log |
+
 ## Progress log
 
 - 2026-10-12: Audited flight, clock, fuel, power, operator, telemetry, and tests on `main` @ `9738130`. Created branch `feature/0008-newtonian-flight`. Drafted this plan. No production code changed.
@@ -323,6 +469,13 @@ Rollback: each checkpoint is one commit; `git revert` restores the previous acce
 - 2026-10-13: Deviation (CP-D). The plan sketched resource limits as a pawn-written multiplier and an `IEdenFlightMassSource`. They became one `IEdenPropellantSupply` (mass plus the draw transaction, discovered by flight) and `IEdenPropulsionPowerSource` (state, discovered by flight). There is no pawn wiring, and the dependency direction stays flight → interfaces ← resources.
 - 2026-10-13: Deviation (CP-D). `FEdenFlightStepInput::MassKilograms` became `DryMassKilograms`, and `Dynamics.ThrusterOutputNewtons` became `DeliveredThrusterOutputNewtons` (in-process only; no wire impact).
 - 2026-10-13: Approximation (CP-D). Power limits are discrete state tiers, and thrusters do not draw battery power. Inertia scales with total mass (propellant distributed like the hull). Euler's equations omit the `İω` term. Thermal limits on propulsion are not modelled.
+- 2026-10-13: Checkpoint F:
+  - Full regression: 382/382 `Eden.`. All three 60 s determinism profiles reproduce their earlier final states exactly.
+  - `PropulsionDemandNormalized` contract audit (§F.1): no EDEN payload carries it.
+  - Added `Integration.Flight.ResourceTransitionsStayConsistent`, `Integration.Flight.DeveloperResourceCommands` and `Scenario.Flight.SolarCrisisWithNewtonianPropulsion`.
+  - Added PIE dev commands `EdenSetFuelKilograms` / `EdenSetBatteryFraction` (forward to the owners' existing setters).
+  - Approximation boundaries (§F.4) and the consolidated PIE checklist (§F.5).
+  - No rebalance (decision).
 - 2026-10-12: Feel change (CP-B), to tune in PIE. With the default inertia and torque, angular acceleration is about 27–44 deg/s² (the kinematic shell used 180 deg/s²), and assist tops out at 60 deg/s (was 90).
 
 ## Decision log

@@ -2,7 +2,13 @@
 
 ## Status
 
-Proposed (ExecPlan 0008). Accepted when 0008 Checkpoint F passes.
+Proposed (ExecPlan 0008). Reviewed at Checkpoint F (2026-10-13): this record matches the implemented architecture of Checkpoints A–D, and the full automated regression is green.
+
+**Acceptance is blocked on human validation:** it requires the ExecPlan 0008 §F.5 PIE checklist PASS and the Checkpoint M (0007) PIE PASS. Automation does not accept this record.
+
+### Telemetry contract (Checkpoint F audit)
+
+`PropulsionDemandNormalized` appears on **no** EDEN-facing payload: not Telemetry Export v1, not the advisory request, not the command-proposal request. No ProjectEden code reads it. Its change to delivered output is therefore internal to Unreal, and the v1 wire contract is unchanged. Requested and delivered propulsion are independently observable in `Dynamics`. Exposing them to EDEN would be a separate, explicit additive schema change (ExecPlan 0008 §F.1).
 
 ## Date
 

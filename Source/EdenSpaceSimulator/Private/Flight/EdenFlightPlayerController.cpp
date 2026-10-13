@@ -539,6 +539,46 @@ void AEdenFlightPlayerController::ExportTelemetry()
 	UE_LOG(LogEdenFlight, Log, TEXT("%s ExportTelemetry wrote '%s'."), *GetNameSafe(this), *Path);
 }
 
+void AEdenFlightPlayerController::EdenSetFuelKilograms(float Kilograms)
+{
+	const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
+	UEdenFuelSystemComponent* Fuel = SpacecraftPawn ? SpacecraftPawn->GetFuelSystemComponent() : nullptr;
+	if (!Fuel)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s EdenSetFuelKilograms: no possessed spacecraft fuel system."), *GetNameSafe(this));
+		return;
+	}
+
+	Fuel->SetFuelQuantityKilograms(Kilograms);
+	UE_LOG(
+		LogEdenFlight,
+		Log,
+		TEXT("%s EdenSetFuelKilograms: stored propellant now %.3f kg."),
+		*GetNameSafe(this),
+		Fuel->GetPropellantMassKilograms());
+}
+
+void AEdenFlightPlayerController::EdenSetBatteryFraction(float Fraction)
+{
+	const AEdenSpacecraftPawn* SpacecraftPawn = GetPawn<AEdenSpacecraftPawn>();
+	UEdenPowerSystemComponent* Power = SpacecraftPawn ? SpacecraftPawn->GetPowerSystemComponent() : nullptr;
+	if (!Power || !Power->IsPowerSimulationEnabled())
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s EdenSetBatteryFraction: no possessed spacecraft power system."), *GetNameSafe(this));
+		return;
+	}
+
+	const float SafeFraction = FMath::IsFinite(Fraction) ? FMath::Clamp(Fraction, 0.0f, 1.0f) : 0.0f;
+	Power->SetBatteryChargeKilowattHours(Power->GetActivePowerConfig().BatteryCapacityKilowattHours * SafeFraction);
+	UE_LOG(
+		LogEdenFlight,
+		Log,
+		TEXT("%s EdenSetBatteryFraction: battery %.1f%%, power state %s."),
+		*GetNameSafe(this),
+		SafeFraction * 100.0f,
+		*UEnum::GetValueAsString(Power->GetPowerStateSnapshot().PowerState));
+}
+
 void AEdenFlightPlayerController::ShowAfterAction()
 {
 	UWorld* World = GetWorld();

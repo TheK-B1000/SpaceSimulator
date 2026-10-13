@@ -790,6 +790,328 @@ bool FEdenRuntimeCompositionPowerLimitsDeliveredPropulsionTest::RunTest(const FS
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionResourceTransitionsStayConsistentTest,
+	"Eden.Integration.Flight.ResourceTransitionsStayConsistent",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionResourceTransitionsStayConsistentTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	const FEdenFlightPropulsionSettings Propulsion;
+	const FEdenFlightInputCommand Burn = EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn();
+	const double FullFlow = FEdenFlightMovementModel::CalculatePropellantMassFlowKilogramsPerSecond(Propulsion.ForwardThrustNewtons, Propulsion);
+	auto Propellant = [&Fixture]() { return Fixture.Fuel->GetPropellantMassKilograms(); };
+
+	// 1. Interleaved 10 Hz resource ticks and 120 Hz flight for 5 s: propellant is billed once, by flight.
+	double Before = Propellant();
+	for (int32 Update = 0; Update < 50; ++Update)
+	{
+		Fixture.Advance(Burn, 1);
+		Fixture.Clock->Tick(0.1f);
+	}
+	TestTrue(
+		FString::Printf(TEXT("Interleaved resource ticks: 5 s burn draws exactly mdot x 5 s (%.9f vs %.9f kg)"), Before - Propellant(), FullFlow * 5.0),
+		FMath::IsNearlyEqual(Before - Propellant(), FullFlow * 5.0, FullFlow * 5.0 * 1.0e-9));
+
+	// 2. Pause: no flight steps, no draws, no motion; resume continues without catch-up.
+	Before = Propellant();
+	const FVector VelocityBeforePause = Fixture.Flight->Velocity;
+	Fixture.Clock->PauseSimulation();
+	Fixture.Advance(Burn, 5);
+	Fixture.Clock->Tick(0.5f);
+	TestEqual(TEXT("Paused: no propellant drawn"), Propellant(), Before);
+	TestTrue(TEXT("Paused: velocity unchanged"), Fixture.Flight->Velocity.Equals(VelocityBeforePause, 0.0));
+	Fixture.Clock->ResumeSimulation();
+	Fixture.Advance(Burn, 1);
+	TestTrue(
+		TEXT("Resumed: one update draws one update of propellant"),
+		FMath::IsNearlyEqual(Before - Propellant(), FullFlow * 0.1, FullFlow * 0.1 * 1.0e-9));
+
+	// 3. Power tiers in sequence, including recovery: delivered thrust and propellant follow each tier.
+	const FEdenPowerConfig PowerConfig = Fixture.Power->GetActivePowerConfig();
+	struct FTier
+	{
+		const TCHAR* Name;
+		float ChargeFraction;
+		EEdenPowerState ExpectedState;
+		double ExpectedFraction;
+	};
+	const FTier Tiers[] = {
+		{TEXT("Normal"), 1.0f, EEdenPowerState::Normal, 1.0},
+		{TEXT("Critical"), PowerConfig.CriticalThresholdFraction * 0.5f, EEdenPowerState::Critical, Propulsion.CriticalPowerThrustFraction},
+		{TEXT("Depleted"), 0.0f, EEdenPowerState::Depleted, Propulsion.DepletedPowerThrustFraction},
+		{TEXT("Recharged"), 1.0f, EEdenPowerState::Normal, 1.0},
+	};
+	for (const FTier& Tier : Tiers)
+	{
+		Fixture.Power->SetBatteryChargeKilowattHours(PowerConfig.BatteryCapacityKilowattHours * Tier.ChargeFraction);
+		TestTrue(FString::Printf(TEXT("%s: power state"), Tier.Name), Fixture.Power->GetPowerStateSnapshot().PowerState == Tier.ExpectedState);
+		Before = Propellant();
+		Fixture.Advance(Burn, 1);
+		const double ExpectedFlow = FullFlow * Tier.ExpectedFraction;
+		TestTrue(
+			FString::Printf(TEXT("%s: delivered output is %.0f%% of request"), Tier.Name, Tier.ExpectedFraction * 100.0),
+			FMath::IsNearlyEqual(
+				static_cast<double>(Fixture.Flight->GetFlightDynamicsSnapshot().DeliveredThrusterOutputNewtons),
+				Propulsion.ForwardThrustNewtons * Tier.ExpectedFraction,
+				1.0));
+		TestTrue(
+			FString::Printf(TEXT("%s: propellant follows delivered thrust"), Tier.Name),
+			FMath::IsNearlyEqual(Before - Propellant(), ExpectedFlow * 0.1, FMath::Max(ExpectedFlow * 0.1 * 1.0e-9, 1.0e-15)));
+	}
+
+	// 3b. Natural recovery: from a dead battery, the real power simulation (baseline load only) must bring
+	// propulsion back by itself; Depleted is not a permanent loss of control.
+	Fixture.Power->SetBatteryChargeKilowattHours(0.0f);
+	TestEqual(TEXT("Dead battery: no propulsion"), Fixture.Flight->GetPowerThrustFraction(), 0.0f);
+	double SecondsToRecover = -1.0;
+	for (int32 Tick = 0; Tick < 6000 && SecondsToRecover < 0.0; ++Tick)
+	{
+		Fixture.Clock->Tick(0.1f);
+		if (Fixture.Flight->GetPowerThrustFraction() > 0.0f)
+		{
+			SecondsToRecover = (Tick + 1) * 0.1;
+		}
+	}
+	const double NetKilowatts = Fixture.Power->GetPowerStateSnapshot().NetPowerKilowatts;
+	const double KilowattHoursToLeaveCritical = PowerConfig.BatteryCapacityKilowattHours * PowerConfig.CriticalThresholdFraction;
+	AddInfo(FString::Printf(
+		TEXT("Dead battery recovery: propulsion back after %.1f s at the Critical tier (generation %.2f kW, demand %.2f kW, net %.2f kW). ")
+		TEXT("Battery %.2f kWh, Critical below %.0f%% (%.3f kWh): full thrust returns after ~%.1f min at baseline load."),
+		SecondsToRecover,
+		Fixture.Power->GetPowerStateSnapshot().GenerationKilowatts,
+		Fixture.Power->GetPowerStateSnapshot().TotalDemandKilowatts,
+		NetKilowatts,
+		PowerConfig.BatteryCapacityKilowattHours,
+		PowerConfig.CriticalThresholdFraction * 100.0f,
+		KilowattHoursToLeaveCritical,
+		NetKilowatts > 0.0 ? KilowattHoursToLeaveCritical / NetKilowatts * 60.0 : -1.0));
+	TestTrue(TEXT("Dead battery recovers propulsion within 10 minutes of simulated time"), SecondsToRecover > 0.0);
+	Fixture.Power->SetBatteryChargeKilowattHours(PowerConfig.BatteryCapacityKilowattHours);
+
+	// 4. Load shed during Critical power: assist removed and thrust limited at the same time.
+	UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+	TestTrue(TEXT("Operator control enabled"), Operator && Operator->IsOperatorControlEnabled());
+	if (Operator)
+	{
+		Fixture.Power->SetBatteryChargeKilowattHours(PowerConfig.BatteryCapacityKilowattHours * PowerConfig.CriticalThresholdFraction * 0.5f);
+		Operator->SetLoadShedMode(EEdenLoadShedMode::Shed);
+		FEdenFlightInputCommand AssistedHold;
+		AssistedHold.bStabilizationEnabled = true;
+		const FVector DriftVelocity = Fixture.Flight->Velocity;
+		Before = Propellant();
+		Fixture.Advance(AssistedHold, 3);
+		TestFalse(TEXT("Shed + Critical: assist inactive"), Fixture.Flight->GetFlightDynamicsSnapshot().bFlightAssistActive);
+		TestTrue(TEXT("Shed + Critical: ship drifts"), Fixture.Flight->Velocity.Equals(DriftVelocity, 1.0e-9));
+		TestEqual(TEXT("Shed + Critical: no propellant drawn"), Propellant(), Before);
+		Operator->SetLoadShedMode(EEdenLoadShedMode::Normal);
+		Fixture.Power->SetBatteryChargeKilowattHours(PowerConfig.BatteryCapacityKilowattHours);
+	}
+
+	// 5. Mission reset leaves the fuel ledger alone; a fuel reset restores it and flight follows immediately.
+	UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+	UEdenMissionDefinitionDataAsset* SolarEvent =
+		Cast<UEdenMissionDefinitionDataAsset>(FSoftObjectPath(EdenRuntimeCompositionTests::SolarEventMissionPath).TryLoad());
+	if (TestNotNull(TEXT("Mission subsystem"), Mission) && TestNotNull(TEXT("Solar Event asset"), SolarEvent))
+	{
+		Mission->SetMissionResourceTargets(Fixture.Pawn->GetThermalSystemComponent(), Fixture.Power, Fixture.Fuel);
+		Mission->LoadMissionFromDefinitionAsset(SolarEvent);
+		Mission->StartMission();
+		Before = Propellant();
+		Mission->AbortMission();
+		Mission->ResetMission();
+		TestEqual(TEXT("Mission abort/reset does not touch stored propellant"), Propellant(), Before);
+	}
+	TestTrue(TEXT("Fuel reset succeeds"), Fixture.Fuel->ResetFuelState());
+	const double Restored = Propellant();
+	TestTrue(
+		TEXT("Flight mass follows the reset ledger immediately"),
+		FMath::IsNearlyEqual(static_cast<double>(Fixture.Flight->GetMassKilograms()), Propulsion.DryMassKilograms + Restored, 1.0e-3));
+	Fixture.Advance(Burn, 1);
+	TestTrue(
+		TEXT("After fuel reset, draws come from the restored ledger"),
+		FMath::IsNearlyEqual(Restored - Propellant(), FullFlow * 0.1, FullFlow * 0.1 * 1.0e-9));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionDeveloperResourceCommandsTest,
+	"Eden.Integration.Flight.DeveloperResourceCommands",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionDeveloperResourceCommandsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	AEdenFlightPlayerController* Controller = Fixture.Pawn->GetWorld()->SpawnActor<AEdenFlightPlayerController>(
+		AEdenFlightPlayerController::StaticClass(),
+		FTransform::Identity);
+	if (!TestNotNull(TEXT("Controller spawns"), Controller))
+	{
+		return false;
+	}
+	EdenRuntimeCompositionTests::EnsureBeginPlay(Controller);
+	Controller->Possess(Fixture.Pawn);
+
+	// The PIE checklist relies on these to reach empty-tank and power-tier states quickly.
+	Controller->EdenSetFuelKilograms(2.5f);
+	TestTrue(TEXT("EdenSetFuelKilograms sets the fuel ledger"), FMath::IsNearlyEqual(Fixture.Fuel->GetPropellantMassKilograms(), 2.5, 1.0e-6));
+	Controller->EdenSetFuelKilograms(0.0f);
+	TestEqual(TEXT("EdenSetFuelKilograms 0 empties the tank"), Fixture.Fuel->GetPropellantMassKilograms(), 0.0);
+
+	const FEdenPowerConfig PowerConfig = Fixture.Power->GetActivePowerConfig();
+	Controller->EdenSetBatteryFraction(PowerConfig.CriticalThresholdFraction * 0.5f);
+	TestTrue(TEXT("EdenSetBatteryFraction reaches Critical"), Fixture.Power->GetPowerStateSnapshot().PowerState == EEdenPowerState::Critical);
+	Controller->EdenSetBatteryFraction(0.0f);
+	TestTrue(TEXT("EdenSetBatteryFraction 0 reaches Depleted"), Fixture.Power->GetPowerStateSnapshot().PowerState == EEdenPowerState::Depleted);
+	Controller->EdenSetBatteryFraction(1.0f);
+	TestTrue(TEXT("EdenSetBatteryFraction 1 restores Normal"), Fixture.Power->GetPowerStateSnapshot().PowerState == EEdenPowerState::Normal);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionSolarCrisisWithNewtonianPropulsionTest,
+	"Eden.Scenario.Flight.SolarCrisisWithNewtonianPropulsion",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionSolarCrisisWithNewtonianPropulsionTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	struct FProfile
+	{
+		const TCHAR* Name;
+		bool bShedDuringImpact;
+		EEdenThermalControlMode ImpactThermalMode;
+	};
+	const FProfile Profiles[] = {
+		{TEXT("Passive operator"), false, EEdenThermalControlMode::Nominal},
+		{TEXT("Shed during impact"), true, EEdenThermalControlMode::Nominal},
+		{TEXT("Shed + thermal boost"), true, EEdenThermalControlMode::Boost},
+	};
+
+	int32 SucceededProfiles = 0;
+	for (const FProfile& Profile : Profiles)
+	{
+		EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+		if (!TestTrue(FString::Printf(TEXT("%s: pawn runs"), Profile.Name), Fixture.Setup(*this)))
+		{
+			return false;
+		}
+
+		UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+		UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+		UEdenMissionDefinitionDataAsset* SolarEvent =
+			Cast<UEdenMissionDefinitionDataAsset>(FSoftObjectPath(EdenRuntimeCompositionTests::SolarEventMissionPath).TryLoad());
+		if (!Operator || !Mission || !SolarEvent)
+		{
+			return false;
+		}
+
+		Mission->SetMissionResourceTargets(Fixture.Pawn->GetThermalSystemComponent(), Fixture.Power, Fixture.Fuel);
+		TestTrue(FString::Printf(TEXT("%s: mission loads"), Profile.Name), Mission->LoadMissionFromDefinitionAsset(SolarEvent));
+		TestTrue(FString::Printf(TEXT("%s: mission starts"), Profile.Name), Mission->StartMission());
+
+		// A pilot who keeps manoeuvring: 1 s burn + yaw every 5 s, assisted hold otherwise.
+		FEdenFlightInputCommand Manoeuvre;
+		Manoeuvre.TranslationInput = FVector(1.0, 0.0, 0.0);
+		Manoeuvre.RotationInput = FVector(0.0, 1.0, 0.0);
+		Manoeuvre.bStabilizationEnabled = true;
+		FEdenFlightInputCommand Hold;
+		Hold.bStabilizationEnabled = true;
+
+		bool bActionsApplied = false;
+		bool bRestoredAfterImpact = false;
+		double MinPowerFraction = 1.0;
+		double SecondsWithoutPropulsion = 0.0;
+		double LastSecondWithoutPropulsion = -1.0;
+		double SecondsPowerLimited = 0.0;
+		const double InitialPropellant = Fixture.Fuel->GetPropellantMassKilograms();
+		EEdenMissionState TerminalState = EEdenMissionState::Running;
+		constexpr int32 Updates = 900; // 90 s: mission plus 30+ s of aftermath
+		for (int32 Update = 0; Update < Updates; ++Update)
+		{
+			const double Seconds = Update * 0.1;
+			const EEdenMissionPhase Phase = Mission->GetMissionPhase();
+			if (!bActionsApplied && Phase == EEdenMissionPhase::Impact)
+			{
+				if (Profile.bShedDuringImpact)
+				{
+					Operator->SetLoadShedMode(EEdenLoadShedMode::Shed);
+				}
+				Operator->SetThermalControlMode(Profile.ImpactThermalMode);
+				bActionsApplied = true;
+			}
+			if (bActionsApplied && !bRestoredAfterImpact && Phase != EEdenMissionPhase::Impact)
+			{
+				Operator->SetLoadShedMode(EEdenLoadShedMode::Normal);
+				Operator->SetThermalControlMode(EEdenThermalControlMode::Nominal);
+				bRestoredAfterImpact = true;
+			}
+
+			const bool bManoeuvring = FMath::Fmod(Seconds, 5.0) < 1.0;
+			Fixture.Advance(bManoeuvring ? Manoeuvre : Hold, 1);
+			Fixture.Clock->Tick(0.1f);
+
+			const double PowerFraction = Fixture.Flight->GetPowerThrustFraction();
+			MinPowerFraction = FMath::Min(MinPowerFraction, PowerFraction);
+			SecondsPowerLimited += PowerFraction < 1.0 ? 0.1 : 0.0;
+			if (PowerFraction <= 0.0)
+			{
+				SecondsWithoutPropulsion += 0.1;
+				LastSecondWithoutPropulsion = Seconds;
+			}
+
+			const EEdenMissionState State = Mission->GetMissionState();
+			if (TerminalState == EEdenMissionState::Running && (State == EEdenMissionState::Succeeded || State == EEdenMissionState::Failed))
+			{
+				TerminalState = State;
+			}
+		}
+
+		const double FinalPowerFraction = Fixture.Flight->GetPowerThrustFraction();
+		AddInfo(FString::Printf(
+			TEXT("%s: mission %s; min power fraction %.2f; %.1f s power-limited; %.1f s with no propulsion (last at %.1f s); final power fraction %.2f (%s); propellant used %.2f kg"),
+			Profile.Name,
+			*UEnum::GetValueAsString(Mission->GetMissionState()),
+			MinPowerFraction,
+			SecondsPowerLimited,
+			SecondsWithoutPropulsion,
+			LastSecondWithoutPropulsion,
+			FinalPowerFraction,
+			*UEnum::GetValueAsString(Fixture.Power->GetPowerStateSnapshot().PowerState),
+			InitialPropellant - Fixture.Fuel->GetPropellantMassKilograms()));
+
+		TestTrue(
+			FString::Printf(TEXT("%s: mission reaches a terminal state"), Profile.Name),
+			TerminalState == EEdenMissionState::Succeeded || TerminalState == EEdenMissionState::Failed);
+		TestTrue(
+			FString::Printf(TEXT("%s: propulsion is available again after the event (no permanent loss of control)"), Profile.Name),
+			FinalPowerFraction > 0.0);
+		TestTrue(FString::Printf(TEXT("%s: propellant never negative"), Profile.Name), Fixture.Fuel->GetPropellantMassKilograms() >= 0.0);
+		SucceededProfiles += TerminalState == EEdenMissionState::Succeeded ? 1 : 0;
+	}
+
+	TestTrue(TEXT("Solar Crisis remains completable with Newtonian propulsion"), SucceededProfiles > 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest,
 	"Eden.Integration.Flight.SpacecraftBlueprintUsesValidFlightModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

@@ -55,6 +55,14 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Telemetry")
 	void ShowAfterAction();
 
+	/** PIE/dev: set stored propellant (kg) through the fuel system, its only owner. For empty-tank / depletion checks. */
+	UFUNCTION(Exec, Category = "Eden|Debug")
+	void EdenSetFuelKilograms(float Kilograms);
+
+	/** PIE/dev: set battery charge as a fraction of capacity through the power system. For power-tier checks. */
+	UFUNCTION(Exec, Category = "Eden|Debug")
+	void EdenSetBatteryFraction(float Fraction);
+
 	/**
 	 * PIE/dev: enable EDEN OS transport.
 	 * BaseUrl optional; if empty, uses EDEN_OS_LIVE_E2E_BASE_URL then UEdenOsConnectionSettings::BaseUrl.
