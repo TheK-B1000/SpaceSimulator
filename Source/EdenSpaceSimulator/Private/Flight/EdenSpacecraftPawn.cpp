@@ -3,7 +3,9 @@
 #include "Flight/EdenSpacecraftPawn.h"
 
 #include "Components/SphereComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Core/EdenLogCategories.h"
+#include "Engine/StaticMesh.h"
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "Engine/CollisionProfile.h"
 #include "Flight/EdenFlightMovementComponent.h"
@@ -235,6 +237,64 @@ void AEdenSpacecraftPawn::DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo&
 	YPos = Canvas->DisplayDebugManager.GetYPos();
 }
 #endif
+
+void AEdenSpacecraftPawn::BeginPlay()
+{
+	Super::BeginPlay();
+	ApplyPresentationHull();
+}
+
+void AEdenSpacecraftPawn::ApplyPresentationHull()
+{
+	// Presentation only. The sphere root remains the movement body.
+	static const TCHAR* HullPath = TEXT("/Game/StarSparrow/Meshes/Examples/SM_StarSparrow01.SM_StarSparrow01");
+	UStaticMesh* Hull = LoadObject<UStaticMesh>(nullptr, HullPath);
+	if (!Hull)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s could not load Star Sparrow hull (%s)."), *GetNameSafe(this), HullPath);
+		return;
+	}
+
+	UStaticMeshComponent* HullMesh = nullptr;
+	TArray<UStaticMeshComponent*> Meshes;
+	GetComponents<UStaticMeshComponent>(Meshes);
+	for (UStaticMeshComponent* Mesh : Meshes)
+	{
+		if (Mesh && Mesh->GetName().Contains(TEXT("Placeholder")))
+		{
+			HullMesh = Mesh;
+			break;
+		}
+	}
+
+	if (!HullMesh)
+	{
+		HullMesh = NewObject<UStaticMeshComponent>(this, TEXT("StarSparrowHull"));
+		HullMesh->SetupAttachment(RequiredCollisionRoot);
+		HullMesh->RegisterComponent();
+	}
+
+	const FBoxSphereBounds LocalBounds = Hull->GetBounds();
+	const float LongestAxis = LocalBounds.BoxExtent.GetMax() * 2.0f;
+	constexpr float TargetLengthCentimeters = 1200.0f;
+	const float Scale = LongestAxis > KINDA_SMALL_NUMBER ? TargetLengthCentimeters / LongestAxis : 1.0f;
+
+	HullMesh->SetStaticMesh(Hull);
+	HullMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HullMesh->SetGenerateOverlapEvents(false);
+	HullMesh->SetRelativeScale3D(FVector(Scale));
+	HullMesh->SetRelativeLocation(-LocalBounds.Origin * Scale);
+	HullMesh->SetRelativeRotation(FRotator::ZeroRotator);
+
+	UE_LOG(
+		LogEdenFlight,
+		Log,
+		TEXT("%s presentation hull SM_StarSparrow01 length %.0f cm scaled to %.0f cm (scale %.3f). Collision root unchanged."),
+		*GetNameSafe(this),
+		LongestAxis,
+		TargetLengthCentimeters,
+		Scale);
+}
 
 void AEdenSpacecraftPawn::ApplyFlightInputCommand(const FEdenFlightInputCommand& Command, float DeltaTimeSeconds)
 {

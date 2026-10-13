@@ -94,3 +94,13 @@ $RECYCLE.BIN/
 # Plugins/
 # *.uproject
 # Build/
+
+# Star Sparrow free sample (Ebal Studios / Fab): keep only the hull we fly.
+# Re-download the pack locally if you need the other 39 examples or modules.
+Content/StarSparrow/Blueprints/
+Content/StarSparrow/Maps/
+Content/StarSparrow/Meshes/Modules/
+Content/StarSparrow/Meshes/Examples/*
+!Content/StarSparrow/Meshes/Examples/SM_StarSparrow01.uasset
+Content/StarSparrow/Materials/MI_StarSparrow_*.uasset
+!Content/StarSparrow/Materials/MI_StarSparrow_Red.uasset

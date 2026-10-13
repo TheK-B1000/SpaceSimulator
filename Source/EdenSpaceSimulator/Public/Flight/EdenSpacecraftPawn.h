@@ -26,6 +26,7 @@ public:
 	AEdenSpacecraftPawn();
 
 	virtual UPawnMovementComponent* GetMovementComponent() const override;
+	virtual void BeginPlay() override;
 	virtual void PostInitializeComponents() override;
 #if !UE_BUILD_SHIPPING
 	virtual void DisplayDebug(UCanvas* Canvas, const FDebugDisplayInfo& DebugDisplay, float& YL, float& YPos) override;
@@ -59,6 +60,7 @@ public:
 
 private:
 	void RestoreRequiredCollisionRoot();
+	void ApplyPresentationHull();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<USphereComponent> RequiredCollisionRoot;
