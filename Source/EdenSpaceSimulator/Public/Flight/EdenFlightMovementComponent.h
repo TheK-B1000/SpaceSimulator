@@ -49,11 +49,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	bool IsStabilizationAssistAvailable() const;
 
+	/** Body axes X (roll), Y (pitch), Z (yaw), rad/s. */
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
-	FVector GetAngularVelocityLocalDegreesPerSecond() const;
+	FVector GetAngularVelocityBodyRadiansPerSecond() const;
 
+	/** Sets body angular velocity (rad/s), e.g. for scenario setup. Not used by controllers, which act through torque. */
 	UFUNCTION(BlueprintCallable, Category = "Eden|Flight")
-	void SetAngularVelocityLocalDegreesPerSecond(FVector NewAngularVelocityLocalDegreesPerSecond);
+	void SetAngularVelocityBodyRadiansPerSecond(FVector NewAngularVelocityBodyRadiansPerSecond);
 
 	/** Operator authority x future resource limits; what the thrusters can actually deliver. */
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
@@ -69,9 +71,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|Flight")
 	FEdenFlightDynamicsSnapshot GetFlightDynamicsSnapshot() const;
 
-	/** Kinematic rotation tuning (until 0008 Checkpoint B). */
+	/** Rigid-body rotation parameters for this spacecraft: inertia, control torque, assist. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight")
-	FEdenFlightMovementSettings MovementSettings;
+	FEdenFlightAttitudeSettings AttitudeSettings;
 
 	/** Newtonian translation parameters for this spacecraft. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight")
@@ -85,10 +87,13 @@ private:
 	bool IsFlightTimePaused() const;
 	FEdenFlightPropulsionSettings GetActivePropulsionSettings() const;
 	FEdenFlightPropulsionSettings ResolvePropulsionSettings(double FixedStepSeconds);
+	FEdenFlightAttitudeSettings GetActiveAttitudeSettings() const;
+	FEdenFlightAttitudeSettings ResolveAttitudeSettings(double FixedStepSeconds);
 	FEdenFlightStepSettings ResolveStepSettings();
 	void RunFlightStep(
 		const FEdenFlightInputCommand& Command,
 		const FEdenFlightPropulsionSettings& ActivePropulsion,
+		const FEdenFlightAttitudeSettings& ActiveAttitude,
 		double FixedStepSeconds);
 	void ResetFlightSimulationState();
 	void LogInvalidInputState(bool bInputWasSanitized);
@@ -96,7 +101,13 @@ private:
 	void LogDroppedSteps(int32 DroppedSteps, double FixedStepSeconds);
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
-	FVector AngularVelocityLocalDegreesPerSecond = FVector::ZeroVector;
+	FVector AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
+	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
+	FVector LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	float PropulsionDemandNormalized = 0.0f;
@@ -129,10 +140,10 @@ private:
 	int64 DroppedFlightStepCount = 0;
 
 	double FlightAccumulatorSeconds = 0.0;
-	FEdenFlightThrustEnvelope LastThrustEnvelope;
 
 	bool bLoggedInvalidInputState = false;
 	bool bLoggedInvalidPropulsionSettings = false;
+	bool bLoggedInvalidAttitudeSettings = false;
 	bool bLoggedInvalidStepSettings = false;
 	bool bWasBlockedLastMove = false;
 };

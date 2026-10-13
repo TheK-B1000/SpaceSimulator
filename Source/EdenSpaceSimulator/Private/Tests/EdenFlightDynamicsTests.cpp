@@ -56,14 +56,14 @@ FEdenFlightStepOutput SingleStep(
 	FEdenFlightStepInput Input;
 	Input.Command = Command;
 	Input.Translation.VelocityWorldMetersPerSecond = VelocityWorld;
-	Input.BodyRotation = Rotation;
+	Input.Rotation.Orientation = Rotation;
 	Input.MassKilograms = FEdenFlightPropulsionSettings().DryMassKilograms;
 	Input.ThrustAuthority = Authority;
 	Input.bAssistAvailable = bAssistAvailable;
 	return FEdenFlightMovementModel::StepFlight(
 		Input,
 		FEdenFlightPropulsionSettings(),
-		FEdenFlightMovementSettings(),
+		FEdenFlightAttitudeSettings(),
 		FEdenFlightStepSettings().GetFixedStepSeconds());
 }
 }
@@ -271,7 +271,7 @@ bool FEdenFlightDynamicsAssistTracksCommandedVelocityTest::RunTest(const FString
 	for (int32 Step = 0; Step < 3600; ++Step)
 	{
 		const FEdenFlightStepOutput Output =
-			FEdenFlightMovementModel::StepFlight(Input, Config.Propulsion, Config.Rotation, Config.Step.GetFixedStepSeconds());
+			FEdenFlightMovementModel::StepFlight(Input, Config.Propulsion, Config.Attitude, Config.Step.GetFixedStepSeconds());
 		bOvershot |= Output.Translation.State.VelocityWorldMetersPerSecond.X > Config.Propulsion.AssistMaxSpeedMetersPerSecond + 1.0e-9;
 		Input.Translation = Output.Translation.State;
 	}
@@ -290,7 +290,7 @@ bool FEdenFlightDynamicsAssistBrakingIsThrustLimitedTest::RunTest(const FString&
 	(void)Parameters;
 
 	const FEdenFlightPropulsionSettings Propulsion;
-	const FEdenFlightMovementSettings Rotation;
+	const FEdenFlightAttitudeSettings Attitude;
 	const double FixedStep = FEdenFlightStepSettings().GetFixedStepSeconds();
 	const double ReverseAcceleration = Propulsion.ReverseThrustNewtons / Propulsion.DryMassKilograms;
 	// Saturation ends when the proportional request m * v / tau falls to the reverse rating.
@@ -308,7 +308,7 @@ bool FEdenFlightDynamicsAssistBrakingIsThrustLimitedTest::RunTest(const FString&
 	bool bDemandBilled = false;
 	for (int32 Step = 0; Step < 120 * 70; ++Step)
 	{
-		const FEdenFlightStepOutput Output = FEdenFlightMovementModel::StepFlight(Input, Propulsion, Rotation, FixedStep);
+		const FEdenFlightStepOutput Output = FEdenFlightMovementModel::StepFlight(Input, Propulsion, Attitude, FixedStep);
 		const double AppliedForce = Output.AppliedBodyForceNewtons.X;
 		bExceededReverseThrust |= AppliedForce < -Propulsion.ReverseThrustNewtons - 1.0e-6;
 		bReversedDirection |= Output.Translation.State.VelocityWorldMetersPerSecond.X < -1.0e-9;
@@ -480,10 +480,11 @@ bool FEdenFlightDynamicsFrameRateIndependence60sTest::RunTest(const FString& Par
 		const FString Pair = FString::Printf(TEXT("%s vs %s"), *Source.Name, *ReferenceName);
 		TestTrue(FString::Printf(TEXT("%s: position bit-identical"), *Pair), A.Translation.PositionWorldMeters == B.Translation.PositionWorldMeters);
 		TestTrue(FString::Printf(TEXT("%s: velocity bit-identical"), *Pair), A.Translation.VelocityWorldMetersPerSecond == B.Translation.VelocityWorldMetersPerSecond);
-		TestTrue(FString::Printf(TEXT("%s: orientation bit-identical"), *Pair), A.Rotation == B.Rotation);
+		TestTrue(FString::Printf(TEXT("%s: orientation bit-identical"), *Pair), A.Rotation.Orientation == B.Rotation.Orientation);
 		TestTrue(
 			FString::Printf(TEXT("%s: angular velocity bit-identical"), *Pair),
-			A.AngularVelocityLocalDegreesPerSecond == B.AngularVelocityLocalDegreesPerSecond);
+			A.Rotation.AngularVelocityBodyRadiansPerSecond == B.Rotation.AngularVelocityBodyRadiansPerSecond);
+		TestTrue(FString::Printf(TEXT("%s: torque stays inside the envelope"), *Source.Name), Result.MaxTorqueEnvelopeExcessNewtonMeters <= 1.0e-6);
 	}
 
 	if (Reference.IsSet())
@@ -492,7 +493,7 @@ bool FEdenFlightDynamicsFrameRateIndependence60sTest::RunTest(const FString& Par
 			TEXT("60 s profile final: position %s m, velocity %s m/s, rotation %s"),
 			*Reference->Final.Translation.PositionWorldMeters.ToString(),
 			*Reference->Final.Translation.VelocityWorldMetersPerSecond.ToString(),
-			*Reference->Final.Rotation.Rotator().ToString()));
+			*Reference->Final.Rotation.Orientation.Rotator().ToString()));
 		// The assisted stop is thrust-limited: after the rotation segment most momentum lies on the
 		// 20 kN RCS axes (2 m/s^2), so 25 s slows the ship but cannot stop it. Assist must not cheat.
 		EdenFlightHarness::FRunConfig UntilStop = EdenFlightDynamicsTests::MakeConfig(35.0, Profile);

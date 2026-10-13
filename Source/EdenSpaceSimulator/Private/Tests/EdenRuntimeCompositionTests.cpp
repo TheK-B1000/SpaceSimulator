@@ -401,7 +401,7 @@ bool FEdenRuntimeCompositionFlightResetClearsPossessedRuntimeStateTest::RunTest(
 	TestTrue(TEXT("Test seeds controller input intent through reflected property"), EdenRuntimeCompositionTests::SeedControllerInputIntent(Controller, SeededCommand));
 
 	Flight->Velocity = FVector(100.0f, 50.0f, 25.0f);
-	Flight->SetAngularVelocityLocalDegreesPerSecond(FVector(10.0f, 20.0f, 30.0f));
+	Flight->SetAngularVelocityBodyRadiansPerSecond(FVector(0.1f, 0.2f, 0.3f));
 
 	Controller->Possess(Pawn);
 
@@ -410,12 +410,12 @@ bool FEdenRuntimeCompositionFlightResetClearsPossessedRuntimeStateTest::RunTest(
 	TestEqual(TEXT("Controller OnPossess clears rotation intent"), CurrentCommand.RotationInput, FVector::ZeroVector);
 	TestTrue(TEXT("Controller OnPossess restores stabilization default"), CurrentCommand.bStabilizationEnabled);
 	TestEqual(TEXT("Pawn reset during OnPossess clears linear velocity"), Flight->Velocity, FVector::ZeroVector);
-	TestEqual(TEXT("Pawn reset during OnPossess clears angular velocity"), Flight->GetAngularVelocityLocalDegreesPerSecond(), FVector::ZeroVector);
+	TestEqual(TEXT("Pawn reset during OnPossess clears angular velocity"), Flight->GetAngularVelocityBodyRadiansPerSecond(), FVector::ZeroVector);
 	TestEqual(TEXT("Pawn reset during OnPossess clears propulsion demand"), Flight->GetPropulsionDemandNormalized(), 0.0f);
 
 	TestTrue(TEXT("Test re-seeds controller input intent after possession"), EdenRuntimeCompositionTests::SeedControllerInputIntent(Controller, SeededCommand));
 	Flight->Velocity = FVector(10.0f, 20.0f, 30.0f);
-	Flight->SetAngularVelocityLocalDegreesPerSecond(FVector(5.0f, 6.0f, 7.0f));
+	Flight->SetAngularVelocityBodyRadiansPerSecond(FVector(0.5f, 0.6f, 0.7f));
 
 	Controller->ClearFlightInputIntent();
 	Pawn->ResetFlightState();
@@ -425,7 +425,7 @@ bool FEdenRuntimeCompositionFlightResetClearsPossessedRuntimeStateTest::RunTest(
 	TestEqual(TEXT("Explicit controller reset clears rotation intent"), ClearedCommand.RotationInput, FVector::ZeroVector);
 	TestTrue(TEXT("Explicit controller reset restores stabilization default"), ClearedCommand.bStabilizationEnabled);
 	TestEqual(TEXT("Explicit pawn reset clears linear velocity"), Flight->Velocity, FVector::ZeroVector);
-	TestEqual(TEXT("Explicit pawn reset clears angular velocity"), Flight->GetAngularVelocityLocalDegreesPerSecond(), FVector::ZeroVector);
+	TestEqual(TEXT("Explicit pawn reset clears angular velocity"), Flight->GetAngularVelocityBodyRadiansPerSecond(), FVector::ZeroVector);
 	TestEqual(TEXT("Explicit pawn reset clears propulsion demand"), Flight->GetPropulsionDemandNormalized(), 0.0f);
 
 	return true;
@@ -494,7 +494,7 @@ bool FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest::RunTest
 
 	const FEdenFlightStepSettings DefaultStep;
 	const FEdenFlightPropulsionSettings DefaultPropulsion;
-	const FEdenFlightMovementSettings DefaultRotation;
+	const FEdenFlightAttitudeSettings DefaultAttitude;
 	TestTrue(TEXT("Blueprint step settings are valid"), FEdenFlightMovementModel::ValidateStepSettings(Flight->StepSettings));
 	TestTrue(
 		TEXT("Blueprint propulsion settings are valid"),
@@ -516,18 +516,27 @@ bool FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest::RunTest
 		TEXT("Assist response not overridden"),
 		Flight->PropulsionSettings.AssistResponseTimeSeconds,
 		DefaultPropulsion.AssistResponseTimeSeconds);
+	TestTrue(
+		TEXT("Blueprint attitude settings are valid"),
+		FEdenFlightMovementModel::ValidateAttitudeSettings(Flight->AttitudeSettings, Flight->StepSettings.GetFixedStepSeconds()));
+	TestTrue(
+		TEXT("Inertia tensor not overridden"),
+		Flight->AttitudeSettings.PrincipalMomentsOfInertiaKilogramMetersSquared == DefaultAttitude.PrincipalMomentsOfInertiaKilogramMetersSquared);
+	TestEqual(TEXT("Roll torque not overridden"), Flight->AttitudeSettings.RollTorqueNewtonMeters, DefaultAttitude.RollTorqueNewtonMeters);
+	TestEqual(TEXT("Pitch torque not overridden"), Flight->AttitudeSettings.PitchTorqueNewtonMeters, DefaultAttitude.PitchTorqueNewtonMeters);
+	TestEqual(TEXT("Yaw torque not overridden"), Flight->AttitudeSettings.YawTorqueNewtonMeters, DefaultAttitude.YawTorqueNewtonMeters);
 	TestEqual(
-		TEXT("Rotation max rate not overridden"),
-		Flight->MovementSettings.MaxAngularSpeedDegreesPerSecond,
-		DefaultRotation.MaxAngularSpeedDegreesPerSecond);
+		TEXT("Assist angular rate not overridden"),
+		Flight->AttitudeSettings.AssistMaxAngularRateDegreesPerSecond,
+		DefaultAttitude.AssistMaxAngularRateDegreesPerSecond);
 	TestEqual(
-		TEXT("Rotation acceleration not overridden"),
-		Flight->MovementSettings.AngularAccelerationDegreesPerSecondSquared,
-		DefaultRotation.AngularAccelerationDegreesPerSecondSquared);
+		TEXT("Assist angular response not overridden"),
+		Flight->AttitudeSettings.AssistAngularResponseTimeSeconds,
+		DefaultAttitude.AssistAngularResponseTimeSeconds);
 	TestEqual(
-		TEXT("Rotation deceleration not overridden"),
-		Flight->MovementSettings.AngularDecelerationDegreesPerSecondSquared,
-		DefaultRotation.AngularDecelerationDegreesPerSecondSquared);
+		TEXT("Orientation hold response not overridden"),
+		Flight->AttitudeSettings.OrientationHoldResponseTimeSeconds,
+		DefaultAttitude.OrientationHoldResponseTimeSeconds);
 
 	return true;
 }
@@ -592,6 +601,39 @@ bool FEdenRuntimeCompositionFlightFixedStepFollowsSimulationPauseTest::RunTest(c
 	TestTrue(TEXT("Snapshot applied force is 100 kN forward"), Snapshot.AppliedBodyForceNewtons.Equals(FVector(100000.0, 0.0, 0.0), 1.0e-6));
 	TestFalse(TEXT("Snapshot reports assist off"), Snapshot.bFlightAssistActive);
 	TestEqual(TEXT("No dropped steps"), Snapshot.DroppedFlightStepCount, static_cast<int64>(0));
+
+	// Rotation follows the same pause gate and acts only through torque.
+	FEdenFlightInputCommand Yaw;
+	Yaw.RotationInput = FVector(0.0, 1.0, 0.0);
+	Yaw.bStabilizationEnabled = false;
+	const FQuat OrientationBeforePause = Pawn->GetActorQuat();
+	Clock->PauseSimulation();
+	Pawn->ApplyFlightInputCommand(Yaw, 0.1f);
+	TestTrue(TEXT("Paused simulation clock does not rotate the ship"), Pawn->GetActorQuat().Equals(OrientationBeforePause, 0.0));
+	TestTrue(TEXT("Paused simulation clock leaves angular velocity at rest"), Flight->GetAngularVelocityBodyRadiansPerSecond().IsZero());
+
+	Clock->ResumeSimulation();
+	const FVector VelocityBeforeYaw = Flight->Velocity;
+	Pawn->ApplyFlightInputCommand(Yaw, 0.1f);
+	const FEdenFlightAttitudeSettings Attitude;
+	const double ExpectedYawRate = Attitude.YawTorqueNewtonMeters / Attitude.PrincipalMomentsOfInertiaKilogramMetersSquared.Z * 0.1;
+	TestTrue(
+		FString::Printf(TEXT("0.1 s of full yaw torque gives w = (tau / I) t (%.9f)"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z),
+		FMath::IsNearlyEqual(Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate, 1.0e-9));
+	TestTrue(TEXT("Yaw input turned the nose right"), Pawn->GetActorRotation().Yaw > 0.0);
+	TestTrue(TEXT("Turning without thrust leaves linear velocity unchanged"), Flight->Velocity.Equals(VelocityBeforeYaw, 1.0e-9));
+
+	const FEdenFlightDynamicsSnapshot AttitudeSnapshot = Flight->GetFlightDynamicsSnapshot();
+	TestTrue(
+		TEXT("Snapshot reports the applied yaw torque"),
+		AttitudeSnapshot.AppliedBodyTorqueNewtonMeters.Equals(FVector(0.0, 0.0, Attitude.YawTorqueNewtonMeters), 1.0e-6));
+	TestTrue(
+		TEXT("Snapshot reports available torque"),
+		AttitudeSnapshot.AvailableTorqueNewtonMeters.Equals(
+			FVector(Attitude.RollTorqueNewtonMeters, Attitude.PitchTorqueNewtonMeters, Attitude.YawTorqueNewtonMeters),
+			1.0e-6));
+	TestTrue(TEXT("Snapshot orientation matches the actor"), AttitudeSnapshot.OrientationWorld.Equals(Pawn->GetActorQuat(), 1.0e-12));
+	TestTrue(TEXT("Snapshot reports angular momentum"), AttitudeSnapshot.AngularMomentumWorld.Size() > 0.0);
 
 	Flight->ResetFlightMovement();
 	TestEqual(TEXT("Reset clears flight step count"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(0));

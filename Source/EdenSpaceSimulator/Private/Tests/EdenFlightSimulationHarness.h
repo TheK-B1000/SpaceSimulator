@@ -66,14 +66,13 @@ struct FFrameSource
 struct FBodyState
 {
 	FEdenFlightTranslationState Translation;
-	FVector AngularVelocityLocalDegreesPerSecond = FVector::ZeroVector;
-	FQuat Rotation = FQuat::Identity;
+	FEdenFlightRotationState Rotation;
 };
 
 struct FRunConfig
 {
 	FEdenFlightPropulsionSettings Propulsion;
-	FEdenFlightMovementSettings Rotation;
+	FEdenFlightAttitudeSettings Attitude;
 	FEdenFlightStepSettings Step;
 	TArray<FScriptedSegment> Script;
 	FFrameSource Frames = FFrameSource::Fixed(60.0);
@@ -95,6 +94,7 @@ struct FRunResult
 	/** Largest per-step |delta v| observed, and the largest |F| / envelope violation (should be 0). */
 	double MaxStepDeltaVelocityMetersPerSecond = 0.0;
 	double MaxEnvelopeExcessNewtons = 0.0;
+	double MaxTorqueEnvelopeExcessNewtonMeters = 0.0;
 };
 
 inline double NextFrameDeltaSeconds(const FFrameSource& Source, FRandomStream& Random)
@@ -134,6 +134,16 @@ inline FEdenFlightInputCommand CommandForTime(const TArray<FScriptedSegment>& Sc
 		}
 	}
 	return Active;
+}
+
+inline double TorqueEnvelopeExcessNewtonMeters(const FVector& Torque, const FEdenFlightTorqueEnvelope& Envelope)
+{
+	double Excess = 0.0;
+	for (int32 Axis = 0; Axis < 3; ++Axis)
+	{
+		Excess = FMath::Max(Excess, FMath::Abs(Torque[Axis]) - Envelope.MaxNewtonMeters[Axis]);
+	}
+	return Excess;
 }
 
 inline double EnvelopeExcessNewtons(const FVector& Force, const FEdenFlightThrustEnvelope& Envelope)
@@ -177,24 +187,25 @@ inline FRunResult Run(const FRunConfig& Config)
 				? CommandForStep(Config.Script, Result.Steps, FixedStep)
 				: FrameCommand;
 			Input.Translation = Result.Final.Translation;
-			Input.AngularVelocityLocalDegreesPerSecond = Result.Final.AngularVelocityLocalDegreesPerSecond;
-			Input.BodyRotation = Result.Final.Rotation;
+			Input.Rotation = Result.Final.Rotation;
 			Input.MassKilograms = Config.Propulsion.DryMassKilograms;
 			Input.ThrustAuthority = Config.ThrustAuthority;
 			Input.bAssistAvailable = Config.bAssistAvailable;
 
 			const FEdenFlightStepOutput Output =
-				FEdenFlightMovementModel::StepFlight(Input, Config.Propulsion, Config.Rotation, FixedStep);
+				FEdenFlightMovementModel::StepFlight(Input, Config.Propulsion, Config.Attitude, FixedStep);
 
 			Result.MaxStepDeltaVelocityMetersPerSecond = FMath::Max(
 				Result.MaxStepDeltaVelocityMetersPerSecond,
 				(Output.Translation.State.VelocityWorldMetersPerSecond - Input.Translation.VelocityWorldMetersPerSecond).Size());
 			Result.MaxEnvelopeExcessNewtons =
 				FMath::Max(Result.MaxEnvelopeExcessNewtons, EnvelopeExcessNewtons(Output.AppliedBodyForceNewtons, Output.Envelope));
+			Result.MaxTorqueEnvelopeExcessNewtonMeters = FMath::Max(
+				Result.MaxTorqueEnvelopeExcessNewtonMeters,
+				TorqueEnvelopeExcessNewtonMeters(Output.AppliedBodyTorqueNewtonMeters, Output.TorqueEnvelope));
 
 			Result.Final.Translation = Output.Translation.State;
-			Result.Final.AngularVelocityLocalDegreesPerSecond = Output.AngularVelocityLocalDegreesPerSecond;
-			Result.Final.Rotation = Output.NextBodyRotation;
+			Result.Final.Rotation = Output.Rotation.State;
 			++Result.Steps;
 		}
 

@@ -134,6 +134,29 @@ void DrawFlightDynamics(UCanvas* Canvas, const FEdenFlightDynamicsSnapshot& Flig
 			Flight.FlightStepCount,
 			Flight.DroppedFlightStepCount),
 		FColor::Magenta);
+	const FRotator Orientation = Flight.OrientationWorld.Rotator();
+	const FVector RateDegrees(
+		FMath::RadiansToDegrees(Flight.AngularVelocityBodyRadiansPerSecond.X),
+		FMath::RadiansToDegrees(Flight.AngularVelocityBodyRadiansPerSecond.Y),
+		FMath::RadiansToDegrees(Flight.AngularVelocityBodyRadiansPerSecond.Z));
+	DrawLine(
+		Canvas,
+		FString::Printf(
+			TEXT("Attitude: P=%.1f Y=%.1f R=%.1f deg  Rate(body X,Y,Z)=(%.2f, %.2f, %.2f) deg/s  Torque=(%.1f, %.1f, %.1f) kN*m of +/-(%.0f, %.0f, %.0f)  |L|=%.0f kg*m^2/s"),
+			Orientation.Pitch,
+			Orientation.Yaw,
+			Orientation.Roll,
+			RateDegrees.X,
+			RateDegrees.Y,
+			RateDegrees.Z,
+			Flight.AppliedBodyTorqueNewtonMeters.X / 1000.0,
+			Flight.AppliedBodyTorqueNewtonMeters.Y / 1000.0,
+			Flight.AppliedBodyTorqueNewtonMeters.Z / 1000.0,
+			Flight.AvailableTorqueNewtonMeters.X / 1000.0,
+			Flight.AvailableTorqueNewtonMeters.Y / 1000.0,
+			Flight.AvailableTorqueNewtonMeters.Z / 1000.0,
+			Flight.AngularMomentumWorld.Size()),
+		FColor::Magenta);
 }
 }
 #endif

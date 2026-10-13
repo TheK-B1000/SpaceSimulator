@@ -53,26 +53,47 @@ struct EDENSPACESIMULATOR_API FEdenFlightInputIntent
 };
 
 /**
- * Kinematic rotation tuning (ExecPlan 0008 Checkpoint B replaces this with
- * rigid-body rotation). Units are explicit because Unreal uses degrees.
- * Translation is Newtonian and configured by FEdenFlightPropulsionSettings.
+ * Per-spacecraft rigid-body rotation parameters, in SI units.
+ *
+ * Body axes follow the actor: X forward (roll axis), Y right (pitch axis),
+ * Z up (yaw axis). The inertia tensor is diagonal in these principal axes.
+ * Torque ratings are symmetric per axis and are design values.
  */
 USTRUCT(BlueprintType)
-struct EDENSPACESIMULATOR_API FEdenFlightMovementSettings
+struct EDENSPACESIMULATOR_API FEdenFlightAttitudeSettings
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight", meta = (ClampMin = "0.0", Units = "deg/s"))
-	float MaxAngularSpeedDegreesPerSecond = 90.0f;
+	/**
+	 * Principal moments of inertia about body X, Y, Z in kg*m^2.
+	 * Default: solid box 20 m (X) x 10 m (Y) x 5 m (Z) of 10 000 kg, I = m/12 (b^2 + c^2).
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude")
+	FVector PrincipalMomentsOfInertiaKilogramMetersSquared = FVector(104166.67, 354166.67, 416666.67);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight", meta = (ClampMin = "0.0"))
-	float AngularAccelerationDegreesPerSecondSquared = 180.0f;
+	/** Control torque about body X in N*m. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude", meta = (ClampMin = "0.0"))
+	float RollTorqueNewtonMeters = 80000.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight", meta = (ClampMin = "0.0"))
-	float AngularDecelerationDegreesPerSecondSquared = 135.0f;
+	/** Control torque about body Y in N*m. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude", meta = (ClampMin = "0.0"))
+	float PitchTorqueNewtonMeters = 180000.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight", meta = (ClampMin = "0.0"))
-	float InputReleaseTolerance = 0.001f;
+	/** Control torque about body Z in N*m. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude", meta = (ClampMin = "0.0"))
+	float YawTorqueNewtonMeters = 200000.0f;
+
+	/** Flight Assist: full stick commands this body rate. Reached only through torque; not a cap. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Assist", meta = (ClampMin = "0.0", Units = "deg/s"))
+	float AssistMaxAngularRateDegreesPerSecond = 60.0f;
+
+	/** Flight Assist rate-hold time constant. Must be at least four flight steps. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Assist", meta = (ClampMin = "0.001", Units = "s"))
+	float AssistAngularResponseTimeSeconds = 0.2f;
+
+	/** Orientation-hold controller time constant (autopilot / future EDEN seam). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Assist", meta = (ClampMin = "0.001", Units = "s"))
+	float OrientationHoldResponseTimeSeconds = 1.0f;
 };
 
 /**
@@ -178,6 +199,31 @@ struct EDENSPACESIMULATOR_API FEdenFlightDynamicsSnapshot
 	/** Requested and available (load shed can remove assist). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	bool bFlightAssistActive = true;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FQuat OrientationWorld = FQuat::Identity;
+
+	/** Body axes X (roll), Y (pitch), Z (yaw), in rad/s. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
+
+	/** Mean over the last flight step, body axes, rad/s^2. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector AngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
+
+	/** Torque available right now about each body axis (symmetric magnitude), after every authority limit. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector AvailableTorqueNewtonMeters = FVector::ZeroVector;
+
+	/** World-frame angular momentum in kg*m^2/s; constant when no torque acts. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	FVector AngularMomentumWorld = FVector::ZeroVector;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float RotationalKineticEnergyJoules = 0.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight", meta = (Units = "s"))
 	double FlightSimulationTimeSeconds = 0.0;

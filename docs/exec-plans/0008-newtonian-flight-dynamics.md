@@ -2,7 +2,9 @@
 
 ## Status
 
-Approved 2026-10-12 — In progress (Checkpoint A). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
+Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
+
+Fuel note until Phase 4: propulsion demand **drives fuel consumption**, but fuel availability does **not** yet constrain thrust or torque. An empty tank still produces full thrust.
 
 ## Problem and outcome
 
@@ -292,8 +294,24 @@ Rollback: each checkpoint is one commit; `git revert` restores the previous acce
 - 2026-10-12: Deviation — the linear fields of `FEdenFlightMovementSettings` were removed immediately rather than kept deprecated for one checkpoint. Only tests referenced them, and the Blueprint does not override them.
 - 2026-10-12: Deviation — `AssistResponseTimeSeconds` default 0.2 s (the plan draft said 0.5 s), for crisper settling. The controller saturates at full thrust, then settles exponentially.
 - 2026-10-12: Test migration. `Eden.Unit.Flight.LinearVelocityAcceleratesAndClamps` was removed (superseded by `Dynamics.AssistTracksCommandedVelocity` / `MomentumConservedAssistOff`). `StabilizationDampsReleasedAxes` became `AngularStabilizationDampsReleasedAxes` (linear parts moved to Dynamics). `Eden.Integration.Runtime.BlueprintPawnUsesRuntimeSystems` now releases controls with assist off to prove zero demand and zero fuel use, and separately asserts that assist braking bills demand.
+- 2026-10-12: Checkpoint B implemented:
+  - `FEdenFlightAttitudeSettings` (diagonal inertia from a 20×10×5 m, 10 t box; roll/pitch/yaw torque 80/180/200 kN·m; assist 60 deg/s, τ 0.2 s; orientation hold 1 s).
+  - Model: `FEdenFlightTorqueEnvelope`, `FEdenFlightAttitudeRequest`, `MapRotationInputToBodyAxes`, `ResolveAttitudeTorque`, `IntegrateRotation`, angular momentum and energy helpers.
+  - `StepFlight` integrates rotation after translation.
+  - Component state is now SI body rates (`Get/SetAngularVelocityBodyRadiansPerSecond`).
+  - Rotation fields added to the dynamics snapshot, plus a `ShowDebug EdenSystems` attitude line.
+  - Tests: `Eden.Unit.Flight.Rotation.*` and an extended `Eden.Integration.Flight.FixedStepFollowsSimulationPause`.
+  - ADR-0003 updated.
+- 2026-10-12: Deviation (CP-B). `FEdenFlightMovementSettings` and `UEdenFlightMovementComponent::MovementSettings` (kinematic rotation) were removed and replaced by `FEdenFlightAttitudeSettings` / `AttitudeSettings`. `Get/SetAngularVelocityLocalDegreesPerSecond` were replaced by `Get/SetAngularVelocityBodyRadiansPerSecond`. Only tests used them, and the Blueprint did not override them. `InputReleaseTolerance` became the model constant `FEdenFlightMovementModel::InputReleaseTolerance` (0.001, unchanged value).
+- 2026-10-12: Test migration (CP-B). `Eden.Unit.Flight.AngularVelocityAcceleratesAndClamps` and `AngularStabilizationDampsReleasedAxes` were removed (kinematic) and superseded by `Rotation.ConstantTorqueAngularAcceleration`, `AssistTracksCommandedRate`, `AssistStabilizesThroughTorque` and `AssistOffConservesSpinAfterRelease`. `InvalidDeltaTimeDoesNotMutateVelocity` and `EquivalentSimulatedTimeMatchesAcrossDeltaTimePartitions` now check rigid-body rotation.
+- 2026-10-12: Feel change (CP-B), to tune in PIE. With the default inertia and torque, angular acceleration is about 27–44 deg/s² (the kinematic shell used 180 deg/s²), and assist tops out at 60 deg/s (was 90).
 
 ## Decision log
+
+- 2026-10-12 (CP-B): Rotation uses the same layering as translation. The attitude request (`Torque` | `BodyRate` | `Orientation`) resolves to torque inside `FEdenFlightTorqueEnvelope`, then `IntegrateRotation` (RK4 on Euler's equations and the quaternion kinematics). The `Orientation` mode is the autopilot/EDEN seam and has no caller in 0008, so EDEN gains no control privileges.
+- 2026-10-12 (CP-B): Operator effective thrust authority now scales attitude torque as well as thrust (RCS is propulsion). This extends ADR-0002, where authority scaled translation only.
+- 2026-10-12 (CP-B): Attitude torque is not yet billed in `PropulsionDemandNormalized`, to avoid rebalancing (Decision 2). Billing via equivalent thrust arrives in Phase 3/4.
+- 2026-10-12 (CP-B): Rate-assist torque includes gyroscopic feed-forward `w x (I w)` so multi-axis rates hold without drift. It is still saturated by the envelope.
 
 - 2026-10-12: Extend the custom integrator rather than adopt Chaos (determinism, testability, existing ownership).
 - 2026-10-12 (approved, Decision 1): dedicated 120 Hz flight fixed step; resources and missions stay at 10 Hz on `UEdenSimulationClockSubsystem`. Flight advances only while the world and the simulation clock are both unpaused, from the same world delta time. Flight keeps its own `double` accumulator (the clock model's `float` accumulator is not precise enough over long sessions). Catch-up is bounded (default 60 steps = 0.5 s per update) to avoid a death spiral. Any time beyond that is **counted, logged as a warning, and exposed in the flight dynamics snapshot** — never silently discarded. The fixed step moves from CP-E into CP-A, because the frame-rate harness needs it.

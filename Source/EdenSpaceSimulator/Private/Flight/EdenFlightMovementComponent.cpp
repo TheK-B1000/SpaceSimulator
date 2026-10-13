@@ -38,10 +38,12 @@ void UEdenFlightMovementComponent::SetUpdatedComponent(USceneComponent* NewUpdat
 void UEdenFlightMovementComponent::StopMovementImmediately()
 {
 	Super::StopMovementImmediately();
-	AngularVelocityLocalDegreesPerSecond = FVector::ZeroVector;
+	AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
 	PropulsionDemandNormalized = 0.0f;
 	AppliedBodyForceNewtons = FVector::ZeroVector;
+	AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
 	LastAccelerationWorldMetersPerSecondSquared = FVector::ZeroVector;
+	LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
 	bWasBlockedLastMove = false;
 }
 
@@ -70,6 +72,7 @@ int32 UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputComman
 	const FEdenFlightStepSettings ActiveStep = ResolveStepSettings();
 	const double FixedStepSeconds = ActiveStep.GetFixedStepSeconds();
 	const FEdenFlightPropulsionSettings ActivePropulsion = ResolvePropulsionSettings(FixedStepSeconds);
+	const FEdenFlightAttitudeSettings ActiveAttitude = ResolveAttitudeSettings(FixedStepSeconds);
 
 	int32 DroppedSteps = 0;
 	const int32 StepsToRun = FEdenFlightMovementModel::CalculateFixedSteps(
@@ -87,7 +90,7 @@ int32 UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputComman
 
 	for (int32 StepIndex = 0; StepIndex < StepsToRun; ++StepIndex)
 	{
-		RunFlightStep(Command, ActivePropulsion, FixedStepSeconds);
+		RunFlightStep(Command, ActivePropulsion, ActiveAttitude, FixedStepSeconds);
 	}
 
 	return StepsToRun;
@@ -96,30 +99,32 @@ int32 UEdenFlightMovementComponent::MoveWithCommand(const FEdenFlightInputComman
 void UEdenFlightMovementComponent::RunFlightStep(
 	const FEdenFlightInputCommand& Command,
 	const FEdenFlightPropulsionSettings& ActivePropulsion,
+	const FEdenFlightAttitudeSettings& ActiveAttitude,
 	double FixedStepSeconds)
 {
 	FEdenFlightStepInput StepInput;
 	StepInput.Command = Command;
 	StepInput.Translation.VelocityWorldMetersPerSecond = EdenFlightUnits::CentimetersToMeters(Velocity);
-	StepInput.AngularVelocityLocalDegreesPerSecond = AngularVelocityLocalDegreesPerSecond;
-	StepInput.BodyRotation = UpdatedComponent->GetComponentQuat();
+	StepInput.Rotation.Orientation = UpdatedComponent->GetComponentQuat();
+	StepInput.Rotation.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
 	StepInput.MassKilograms = ActivePropulsion.DryMassKilograms;
 	StepInput.ThrustAuthority = GetEffectiveThrustAuthority();
 	StepInput.bAssistAvailable = bStabilizationAssistAvailable;
 
 	const FEdenFlightStepOutput StepOutput =
-		FEdenFlightMovementModel::StepFlight(StepInput, ActivePropulsion, MovementSettings, FixedStepSeconds);
+		FEdenFlightMovementModel::StepFlight(StepInput, ActivePropulsion, ActiveAttitude, FixedStepSeconds);
 
 	LogInvalidInputState(StepOutput.bInputWasSanitized);
 
 	bFlightAssistRequested = Command.bStabilizationEnabled;
 	bFlightAssistActive = StepOutput.bAssistActive;
-	LastThrustEnvelope = StepOutput.Envelope;
 	AppliedBodyForceNewtons = StepOutput.AppliedBodyForceNewtons;
+	AppliedBodyTorqueNewtonMeters = StepOutput.AppliedBodyTorqueNewtonMeters;
+	LastAngularAccelerationBodyRadiansPerSecondSquared = StepOutput.Rotation.AngularAccelerationBodyRadiansPerSecondSquared;
 	LastAccelerationWorldMetersPerSecondSquared = StepOutput.Translation.AccelerationWorldMetersPerSecondSquared;
 	PropulsionDemandNormalized = StepOutput.PropulsionDemandNormalized;
 	Velocity = EdenFlightUnits::MetersToCentimeters(StepOutput.Translation.State.VelocityWorldMetersPerSecond);
-	AngularVelocityLocalDegreesPerSecond = StepOutput.AngularVelocityLocalDegreesPerSecond;
+	AngularVelocityBodyRadiansPerSecond = StepOutput.Rotation.State.AngularVelocityBodyRadiansPerSecond;
 
 	const FVector DisplacementCentimeters = EdenFlightUnits::MetersToCentimeters(StepOutput.Translation.DisplacementWorldMeters);
 	FHitResult Hit;
@@ -143,10 +148,11 @@ void UEdenFlightMovementComponent::RunFlightStep(
 	}
 
 	// Exact compare: a default-tolerance Equals would drop slow per-step rotations at 120 Hz.
-	if (!StepOutput.NextBodyRotation.Equals(UpdatedComponent->GetComponentQuat(), 0.0))
+	const FQuat& NextOrientation = StepOutput.Rotation.State.Orientation;
+	if (!NextOrientation.Equals(UpdatedComponent->GetComponentQuat(), 0.0))
 	{
 		FHitResult RotationHit;
-		SafeMoveUpdatedComponent(FVector::ZeroVector, StepOutput.NextBodyRotation, false, RotationHit);
+		SafeMoveUpdatedComponent(FVector::ZeroVector, NextOrientation, false, RotationHit);
 	}
 
 	FlightSimulationTimeSeconds += FixedStepSeconds;
@@ -167,7 +173,6 @@ void UEdenFlightMovementComponent::ResetFlightSimulationState()
 	FlightSimulationTimeSeconds = 0.0;
 	FlightStepCount = 0;
 	DroppedFlightStepCount = 0;
-	LastThrustEnvelope = FEdenFlightThrustEnvelope();
 	bFlightAssistRequested = true;
 	bFlightAssistActive = true;
 }
@@ -220,6 +225,39 @@ FEdenFlightPropulsionSettings UEdenFlightMovementComponent::ResolvePropulsionSet
 	}
 
 	return FEdenFlightPropulsionSettings();
+}
+
+FEdenFlightAttitudeSettings UEdenFlightMovementComponent::GetActiveAttitudeSettings() const
+{
+	const double FixedStepSeconds = FEdenFlightMovementModel::ValidateStepSettings(StepSettings)
+		? StepSettings.GetFixedStepSeconds()
+		: FEdenFlightStepSettings().GetFixedStepSeconds();
+	return FEdenFlightMovementModel::ValidateAttitudeSettings(AttitudeSettings, FixedStepSeconds)
+		? AttitudeSettings
+		: FEdenFlightAttitudeSettings();
+}
+
+FEdenFlightAttitudeSettings UEdenFlightMovementComponent::ResolveAttitudeSettings(double FixedStepSeconds)
+{
+	TArray<FString> Errors;
+	if (FEdenFlightMovementModel::ValidateAttitudeSettings(AttitudeSettings, FixedStepSeconds, &Errors))
+	{
+		bLoggedInvalidAttitudeSettings = false;
+		return AttitudeSettings;
+	}
+
+	if (!bLoggedInvalidAttitudeSettings)
+	{
+		UE_LOG(
+			LogEdenFlight,
+			Warning,
+			TEXT("%s has invalid AttitudeSettings; using C++ defaults. %s"),
+			*GetNameSafe(this),
+			*FString::Join(Errors, TEXT(" ")));
+		bLoggedInvalidAttitudeSettings = true;
+	}
+
+	return FEdenFlightAttitudeSettings();
 }
 
 FEdenFlightStepSettings UEdenFlightMovementComponent::ResolveStepSettings()
@@ -275,6 +313,21 @@ FEdenFlightDynamicsSnapshot UEdenFlightMovementComponent::GetFlightDynamicsSnaps
 	Snapshot.AvailablePositiveThrustNewtons = Envelope.PositiveNewtons;
 	Snapshot.AvailableNegativeThrustNewtons = Envelope.NegativeNewtons;
 
+	const FEdenFlightAttitudeSettings ActiveAttitude = GetActiveAttitudeSettings();
+	FEdenFlightRotationState RotationState;
+	RotationState.Orientation = UpdatedComponent ? UpdatedComponent->GetComponentQuat() : FQuat::Identity;
+	RotationState.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
+	const FVector& Inertia = ActiveAttitude.PrincipalMomentsOfInertiaKilogramMetersSquared;
+	Snapshot.OrientationWorld = RotationState.Orientation;
+	Snapshot.AngularVelocityBodyRadiansPerSecond = AngularVelocityBodyRadiansPerSecond;
+	Snapshot.AngularAccelerationBodyRadiansPerSecondSquared = LastAngularAccelerationBodyRadiansPerSecondSquared;
+	Snapshot.AppliedBodyTorqueNewtonMeters = AppliedBodyTorqueNewtonMeters;
+	Snapshot.AvailableTorqueNewtonMeters =
+		FEdenFlightMovementModel::MakeTorqueEnvelope(ActiveAttitude, GetEffectiveThrustAuthority()).MaxNewtonMeters;
+	Snapshot.AngularMomentumWorld = FEdenFlightMovementModel::CalculateAngularMomentumWorld(RotationState, Inertia);
+	Snapshot.RotationalKineticEnergyJoules =
+		static_cast<float>(FEdenFlightMovementModel::CalculateRotationalKineticEnergy(RotationState, Inertia));
+
 	Snapshot.MassKilograms = GetMassKilograms();
 	Snapshot.EffectiveThrustAuthority = GetEffectiveThrustAuthority();
 	Snapshot.bFlightAssistRequested = bFlightAssistRequested;
@@ -318,27 +371,25 @@ bool UEdenFlightMovementComponent::IsStabilizationAssistAvailable() const
 	return bStabilizationAssistAvailable;
 }
 
-FVector UEdenFlightMovementComponent::GetAngularVelocityLocalDegreesPerSecond() const
+FVector UEdenFlightMovementComponent::GetAngularVelocityBodyRadiansPerSecond() const
 {
-	return AngularVelocityLocalDegreesPerSecond;
+	return AngularVelocityBodyRadiansPerSecond;
 }
 
-void UEdenFlightMovementComponent::SetAngularVelocityLocalDegreesPerSecond(FVector NewAngularVelocityLocalDegreesPerSecond)
+void UEdenFlightMovementComponent::SetAngularVelocityBodyRadiansPerSecond(FVector NewAngularVelocityBodyRadiansPerSecond)
 {
-	if (!FMath::IsFinite(NewAngularVelocityLocalDegreesPerSecond.X)
-		|| !FMath::IsFinite(NewAngularVelocityLocalDegreesPerSecond.Y)
-		|| !FMath::IsFinite(NewAngularVelocityLocalDegreesPerSecond.Z))
+	if (!FEdenFlightMovementModel::IsFiniteVector(NewAngularVelocityBodyRadiansPerSecond))
 	{
 		UE_LOG(
 			LogEdenFlight,
 			Warning,
 			TEXT("%s rejected non-finite angular velocity."),
 			*GetNameSafe(this));
-		AngularVelocityLocalDegreesPerSecond = FVector::ZeroVector;
+		AngularVelocityBodyRadiansPerSecond = FVector::ZeroVector;
 		return;
 	}
 
-	AngularVelocityLocalDegreesPerSecond = NewAngularVelocityLocalDegreesPerSecond;
+	AngularVelocityBodyRadiansPerSecond = NewAngularVelocityBodyRadiansPerSecond;
 }
 
 bool UEdenFlightMovementComponent::ValidateUpdatedComponentForFlight() const
