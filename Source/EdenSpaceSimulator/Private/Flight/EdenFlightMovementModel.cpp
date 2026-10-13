@@ -103,7 +103,7 @@ bool IsFiniteQuat(const FQuat& Value)
 		&& Value.SizeSquared() > UE_DOUBLE_SMALL_NUMBER;
 }
 
-bool IsValidInertia(const FVector& Inertia)
+bool IsFinitePositiveVector(const FVector& Inertia)
 {
 	return FEdenFlightMovementModel::IsFiniteVector(Inertia) && Inertia.X > 0.0 && Inertia.Y > 0.0 && Inertia.Z > 0.0;
 }
@@ -248,6 +248,9 @@ bool FEdenFlightMovementModel::ValidateAttitudeSettings(
 	EdenFlightMovementModel::ValidateNonNegative(TEXT("RollTorqueNewtonMeters"), Settings.RollTorqueNewtonMeters, bValid, OutErrors);
 	EdenFlightMovementModel::ValidateNonNegative(TEXT("PitchTorqueNewtonMeters"), Settings.PitchTorqueNewtonMeters, bValid, OutErrors);
 	EdenFlightMovementModel::ValidateNonNegative(TEXT("YawTorqueNewtonMeters"), Settings.YawTorqueNewtonMeters, bValid, OutErrors);
+	EdenFlightMovementModel::ValidatePositive(TEXT("ThrusterLeverArmsMeters.X"), Settings.ThrusterLeverArmsMeters.X, bValid, OutErrors);
+	EdenFlightMovementModel::ValidatePositive(TEXT("ThrusterLeverArmsMeters.Y"), Settings.ThrusterLeverArmsMeters.Y, bValid, OutErrors);
+	EdenFlightMovementModel::ValidatePositive(TEXT("ThrusterLeverArmsMeters.Z"), Settings.ThrusterLeverArmsMeters.Z, bValid, OutErrors);
 	EdenFlightMovementModel::ValidateNonNegative(
 		TEXT("AssistMaxAngularRateDegreesPerSecond"),
 		Settings.AssistMaxAngularRateDegreesPerSecond,
@@ -406,18 +409,33 @@ FEdenFlightTranslationStepResult FEdenFlightMovementModel::IntegrateTranslation(
 	return Result;
 }
 
-float FEdenFlightMovementModel::CalculatePropulsionDemandNormalized(
+double FEdenFlightMovementModel::CalculateThrusterOutputNewtons(
 	const FVector& AppliedBodyForceNewtons,
-	const FEdenFlightPropulsionSettings& Settings)
+	const FVector& AppliedBodyTorqueNewtonMeters,
+	const FEdenFlightAttitudeSettings& AttitudeSettings)
 {
-	if (!IsFiniteVector(AppliedBodyForceNewtons))
+	double Output = 0.0;
+	if (IsFiniteVector(AppliedBodyForceNewtons))
 	{
-		return 0.0f;
+		Output += FMath::Abs(AppliedBodyForceNewtons.X) + FMath::Abs(AppliedBodyForceNewtons.Y) + FMath::Abs(AppliedBodyForceNewtons.Z);
 	}
 
-	const double TotalThrust =
-		FMath::Abs(AppliedBodyForceNewtons.X) + FMath::Abs(AppliedBodyForceNewtons.Y) + FMath::Abs(AppliedBodyForceNewtons.Z);
-	if (TotalThrust <= 0.0)
+	const FVector& LeverArms = AttitudeSettings.ThrusterLeverArmsMeters;
+	if (IsFiniteVector(AppliedBodyTorqueNewtonMeters) && EdenFlightMovementModel::IsFinitePositiveVector(LeverArms))
+	{
+		for (int32 AxisIndex = 0; AxisIndex < 3; ++AxisIndex)
+		{
+			Output += FMath::Abs(AppliedBodyTorqueNewtonMeters[AxisIndex]) / LeverArms[AxisIndex];
+		}
+	}
+
+	return Output;
+}
+
+float FEdenFlightMovementModel::CalculatePropulsionDemandNormalized(double ThrusterOutputNewtons, const FEdenFlightPropulsionSettings& Settings)
+{
+	const double TotalThrust = ThrusterOutputNewtons;
+	if (!FMath::IsFinite(TotalThrust) || TotalThrust <= 0.0)
 	{
 		return 0.0f;
 	}
@@ -493,7 +511,7 @@ FVector FEdenFlightMovementModel::ResolveAttitudeTorque(
 {
 	const FVector& Inertia = Settings.PrincipalMomentsOfInertiaKilogramMetersSquared;
 	const FVector& AngularVelocity = State.AngularVelocityBodyRadiansPerSecond;
-	if (!EdenFlightMovementModel::IsValidInertia(Inertia) || !IsFiniteVector(AngularVelocity))
+	if (!EdenFlightMovementModel::IsFinitePositiveVector(Inertia) || !IsFiniteVector(AngularVelocity))
 	{
 		return FVector::ZeroVector;
 	}
@@ -554,7 +572,7 @@ FEdenFlightRotationStepResult FEdenFlightMovementModel::IntegrateRotation(
 	Result.State = State;
 
 	if (!IsValidDeltaTime(DeltaTimeSeconds)
-		|| !EdenFlightMovementModel::IsValidInertia(PrincipalMomentsOfInertia)
+		|| !EdenFlightMovementModel::IsFinitePositiveVector(PrincipalMomentsOfInertia)
 		|| !IsFiniteVector(BodyTorqueNewtonMeters)
 		|| !IsFiniteVector(State.AngularVelocityBodyRadiansPerSecond)
 		|| !EdenFlightMovementModel::IsFiniteQuat(State.Orientation))
@@ -656,8 +674,6 @@ FEdenFlightStepOutput FEdenFlightMovementModel::StepFlight(
 		Output.bStepWasValid = false;
 	}
 
-	Output.PropulsionDemandNormalized = CalculatePropulsionDemandNormalized(Output.AppliedBodyForceNewtons, PropulsionSettings);
-
 	// Rotation: torque from the attitude controller, inside the torque envelope, then rigid-body dynamics.
 	Output.TorqueEnvelope = MakeTorqueEnvelope(AttitudeSettings, Input.ThrustAuthority);
 	const FEdenFlightAttitudeRequest AttitudeRequest =
@@ -676,6 +692,11 @@ FEdenFlightStepOutput FEdenFlightMovementModel::StepFlight(
 		Output.AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
 		Output.bStepWasValid = false;
 	}
+
+	// Translation thrust and attitude torque draw on the same propellant, whichever controller asked.
+	Output.ThrusterOutputNewtons =
+		CalculateThrusterOutputNewtons(Output.AppliedBodyForceNewtons, Output.AppliedBodyTorqueNewtonMeters, AttitudeSettings);
+	Output.PropulsionDemandNormalized = CalculatePropulsionDemandNormalized(Output.ThrusterOutputNewtons, PropulsionSettings);
 
 	return Output;
 }

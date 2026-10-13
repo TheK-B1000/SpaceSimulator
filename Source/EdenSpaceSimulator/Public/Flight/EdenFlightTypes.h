@@ -83,6 +83,14 @@ struct EDENSPACESIMULATOR_API FEdenFlightAttitudeSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude", meta = (ClampMin = "0.0"))
 	float YawTorqueNewtonMeters = 200000.0f;
 
+	/**
+	 * Effective RCS lever arm for torque about body X, Y, Z in metres. Attitude torque costs
+	 * |tau_i| / LeverArm_i of thruster output, billed as propulsion demand. Default: half-width
+	 * (5 m) for roll, half-length (10 m) for pitch and yaw of the 20 x 10 x 5 m hull.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Attitude")
+	FVector ThrusterLeverArmsMeters = FVector(5.0, 10.0, 10.0);
+
 	/** Flight Assist: full stick commands this body rate. Reached only through torque; not a cap. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Flight|Assist", meta = (ClampMin = "0.0", Units = "deg/s"))
 	float AssistMaxAngularRateDegreesPerSecond = 60.0f;
@@ -177,6 +185,13 @@ struct EDENSPACESIMULATOR_API FEdenFlightDynamicsSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
 	FVector AppliedBodyForceNewtons = FVector::ZeroVector;
+
+	/**
+	 * Total thruster output on the last step: sum |F_i| for translation plus sum |tau_i| / LeverArm_i
+	 * for attitude, in newtons. Unclamped, unlike PropulsionDemandNormalized.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")
+	float ThrusterOutputNewtons = 0.0f;
 
 	/** Thrust available right now along +X/+Y/+Z, after every authority limit. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Flight")

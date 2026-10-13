@@ -570,6 +570,81 @@ bool FEdenFlightRotationFrameRateIndependence60sTest::RunTest(const FString& Par
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenFlightRotationAttitudeThrustBillsPropellantTest,
+	"Eden.Unit.Flight.Rotation.AttitudeThrustBillsPropellant",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenFlightRotationAttitudeThrustBillsPropellantTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	using namespace EdenFlightRotationTests;
+	const FEdenFlightAttitudeSettings Attitude;
+	const FEdenFlightPropulsionSettings Propulsion;
+
+	auto Step = [&](const FEdenFlightInputCommand& Command, const FVector& BodyRate)
+	{
+		FEdenFlightStepInput Input;
+		Input.Command = Command;
+		Input.MassKilograms = Propulsion.DryMassKilograms;
+		Input.Rotation.AngularVelocityBodyRadiansPerSecond = BodyRate;
+		return FEdenFlightMovementModel::StepFlight(Input, Propulsion, Attitude, FixedStep);
+	};
+
+	// Full deflection costs |tau| / lever arm: yaw 200 kN*m / 10 m = 20 kN, pitch 18 kN, roll 16 kN.
+	struct FCase
+	{
+		const TCHAR* Name;
+		FVector Input;
+		double ExpectedThrusterNewtons;
+	};
+	const FCase Cases[] = {
+		{TEXT("Full yaw"), FVector(0.0, 1.0, 0.0), Attitude.YawTorqueNewtonMeters / Attitude.ThrusterLeverArmsMeters.Z},
+		{TEXT("Full pitch"), FVector(1.0, 0.0, 0.0), Attitude.PitchTorqueNewtonMeters / Attitude.ThrusterLeverArmsMeters.Y},
+		{TEXT("Full roll"), FVector(0.0, 0.0, 1.0), Attitude.RollTorqueNewtonMeters / Attitude.ThrusterLeverArmsMeters.X},
+	};
+	for (const FCase& Case : Cases)
+	{
+		const FEdenFlightStepOutput Output = Step(MakeCommand(Case.Input, false), FVector::ZeroVector);
+		TestNearlyEqualRelative(*this, FString::Printf(TEXT("%s thruster output"), Case.Name), Output.ThrusterOutputNewtons, Case.ExpectedThrusterNewtons, 1.0e-9);
+		TestNearlyEqualRelative(
+			*this,
+			FString::Printf(TEXT("%s propulsion demand"), Case.Name),
+			Output.PropulsionDemandNormalized,
+			Case.ExpectedThrusterNewtons / Propulsion.ForwardThrustNewtons,
+			1.0e-6);
+	}
+
+	const FVector Spin(0.0, 0.0, 0.5);
+	const FEdenFlightStepOutput Coasting = Step(MakeCommand(FVector::ZeroVector, false), Spin);
+	TestEqual(TEXT("Free spin with assist off fires no thrusters"), Coasting.ThrusterOutputNewtons, 0.0);
+	TestEqual(TEXT("Free spin with assist off bills no propellant"), Coasting.PropulsionDemandNormalized, 0.0f);
+
+	const FEdenFlightStepOutput Braking = Step(MakeCommand(FVector::ZeroVector, true), Spin);
+	TestTrue(TEXT("Assist braking a spin bills propellant"), Braking.PropulsionDemandNormalized > 0.0f);
+	TestNearlyEqualRelative(
+		*this,
+		TEXT("Assist braking output is its torque over the lever arm"),
+		Braking.ThrusterOutputNewtons,
+		FMath::Abs(Braking.AppliedBodyTorqueNewtonMeters.Z) / Attitude.ThrusterLeverArmsMeters.Z,
+		1.0e-9);
+
+	const FEdenFlightStepOutput Idle = Step(MakeCommand(FVector::ZeroVector, true), FVector::ZeroVector);
+	TestEqual(TEXT("Assist at rest fires no thrusters"), Idle.ThrusterOutputNewtons, 0.0);
+
+	// Demand saturates at 1, but thruster output reports the full truth.
+	const FEdenFlightStepOutput Combined = Step(MakeCommand(FVector(0.0, 1.0, 0.0), false, FVector(1.0, 0.0, 0.0)), FVector::ZeroVector);
+	TestNearlyEqualRelative(*this, TEXT("Combined burn and yaw output is 120 kN"), Combined.ThrusterOutputNewtons, 120000.0, 1.0e-9);
+	TestEqual(TEXT("Combined demand clamps at 1"), Combined.PropulsionDemandNormalized, 1.0f);
+
+	FEdenFlightAttitudeSettings NoLeverArm;
+	NoLeverArm.ThrusterLeverArmsMeters = FVector(0.0, 10.0, 10.0);
+	TestFalse(TEXT("A zero lever arm is rejected"), FEdenFlightMovementModel::ValidateAttitudeSettings(NoLeverArm, FixedStep));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenFlightRotationInvalidInputsAndSettingsTest,
 	"Eden.Unit.Flight.Rotation.InvalidInputsAndSettings",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

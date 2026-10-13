@@ -468,6 +468,125 @@ bool FEdenRuntimeMissionSubsystemAndSolarEventAssetAccessibleTest::RunTest(const
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionOperatorControlConstrainsPhysicalFlightTest,
+	"Eden.Integration.Flight.OperatorControlConstrainsPhysicalFlight",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionOperatorControlConstrainsPhysicalFlightTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	UClass* PawnClass = StaticLoadClass(
+		AEdenSpacecraftPawn::StaticClass(),
+		nullptr,
+		EdenRuntimeCompositionTests::PawnBlueprintClassPath);
+	TestNotNull(TEXT("BP_EdenSpacecraftPawn class loads"), PawnClass);
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld RuntimeWorld;
+	UWorld* World = RuntimeWorld.Get();
+	UEdenSimulationClockSubsystem* Clock = World ? World->GetSubsystem<UEdenSimulationClockSubsystem>() : nullptr;
+	if (!PawnClass || !World || !Clock)
+	{
+		return false;
+	}
+	Clock->SetMaxCatchUpSteps(200);
+
+	AEdenSpacecraftPawn* Pawn = World->SpawnActor<AEdenSpacecraftPawn>(PawnClass, FTransform::Identity);
+	TestNotNull(TEXT("Blueprint spacecraft spawns"), Pawn);
+	if (!Pawn)
+	{
+		return false;
+	}
+	World->BeginPlay();
+	EdenRuntimeCompositionTests::EnsureBeginPlay(Pawn);
+
+	UEdenFlightMovementComponent* Flight = Pawn->GetFlightMovementComponent();
+	UEdenOperatorControlComponent* Operator = Pawn->GetOperatorControlComponent();
+	UEdenFuelSystemComponent* Fuel = Pawn->GetFuelSystemComponent();
+	TestTrue(TEXT("Operator control is enabled from its Data Asset"), Operator && Operator->IsOperatorControlEnabled());
+	if (!Flight || !Operator || !Fuel || !Operator->IsOperatorControlEnabled())
+	{
+		return false;
+	}
+
+	FEdenFlightInputCommand AssistRequested;
+	AssistRequested.bStabilizationEnabled = true;
+	auto Advance = [&](const FEdenFlightInputCommand& Command, int32 Updates)
+	{
+		for (int32 Update = 0; Update < Updates; ++Update)
+		{
+			Pawn->ApplyFlightInputCommand(Command, 0.1f);
+		}
+	};
+
+	// Load shed: assist unavailable, so the requested assist cannot fire thrusters and the ship drifts and spins on.
+	const FVector Drift(1000.0, 0.0, 0.0);
+	const FVector Spin(0.0, 0.0, 0.3);
+	Flight->Velocity = Drift;
+	Flight->SetAngularVelocityBodyRadiansPerSecond(Spin);
+	TestTrue(TEXT("Operator sheds load"), Operator->SetLoadShedMode(EEdenLoadShedMode::Shed));
+	TestFalse(TEXT("Load shed removes flight assist"), Flight->IsStabilizationAssistAvailable());
+
+	const float FuelBeforeShedKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
+	Advance(AssistRequested, 10);
+	const FEdenFlightDynamicsSnapshot Shed = Flight->GetFlightDynamicsSnapshot();
+	TestTrue(TEXT("Snapshot shows assist requested"), Shed.bFlightAssistRequested);
+	TestFalse(TEXT("Snapshot shows assist inactive under load shed"), Shed.bFlightAssistActive);
+	TestTrue(TEXT("Shed ship drifts at constant velocity"), Flight->Velocity.Equals(Drift, 1.0e-9));
+	TestTrue(TEXT("Shed ship keeps spinning (principal-axis spin, no torque)"), Flight->GetAngularVelocityBodyRadiansPerSecond() == Spin);
+	TestEqual(TEXT("Shed ship fires no thrusters"), Shed.ThrusterOutputNewtons, 0.0f);
+	Clock->Tick(1.0f);
+	EdenRuntimeCompositionTests::TestFloatNearlyEqual(
+		*this,
+		TEXT("Drifting under load shed burns no propellant"),
+		Fuel->GetFuelStateSnapshot().FuelQuantityKilograms,
+		FuelBeforeShedKilograms);
+
+	// Restore power: assist brakes translation and rotation on real thrusters and pays for it.
+	TestTrue(TEXT("Operator restores normal load"), Operator->SetLoadShedMode(EEdenLoadShedMode::Normal));
+	TestTrue(TEXT("Normal load restores flight assist"), Flight->IsStabilizationAssistAvailable());
+	Advance(AssistRequested, 1);
+	TestTrue(TEXT("Assist braking reports propulsion demand"), Flight->GetPropulsionDemandNormalized() > 0.0f);
+	TestTrue(TEXT("Assist slows the drift"), Flight->GetSpeedMetersPerSecond() < 10.0f);
+	TestTrue(TEXT("Assist slows the spin"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z < Spin.Z);
+	const float FuelBeforeBrakingKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
+	Clock->Tick(1.0f);
+	TestTrue(TEXT("Assist braking burns propellant"), Fuel->GetFuelStateSnapshot().FuelQuantityKilograms < FuelBeforeBrakingKilograms);
+
+	// Reduced propulsion priority: the operator limit scales physical thrust and torque.
+	TestTrue(TEXT("Operator reduces propulsion priority"), Operator->SetPropulsionPriorityMode(EEdenPropulsionPriorityMode::Reduced));
+	const double Authority = Operator->GetOperatorStateSnapshot().ThrustAuthority;
+	TestTrue(TEXT("Reduced priority lowers thrust authority"), Authority < 1.0);
+	TestEqual(TEXT("Movement reports the operator authority"), static_cast<double>(Flight->GetThrustAuthority()), Authority);
+
+	const FEdenFlightPropulsionSettings Propulsion;
+	const FEdenFlightAttitudeSettings Attitude;
+	const FEdenFlightDynamicsSnapshot Reduced = Flight->GetFlightDynamicsSnapshot();
+	TestTrue(
+		TEXT("Available forward thrust is scaled by authority"),
+		FMath::IsNearlyEqual(Reduced.AvailablePositiveThrustNewtons.X, Propulsion.ForwardThrustNewtons * Authority, 1.0e-3));
+	TestTrue(
+		TEXT("Available yaw torque is scaled by authority"),
+		FMath::IsNearlyEqual(Reduced.AvailableTorqueNewtonMeters.Z, Attitude.YawTorqueNewtonMeters * Authority, 1.0e-3));
+
+	Flight->StopMovementImmediately();
+	FEdenFlightInputCommand BurnAndYaw;
+	BurnAndYaw.TranslationInput = FVector(1.0, 0.0, 0.0);
+	BurnAndYaw.RotationInput = FVector(0.0, 1.0, 0.0);
+	BurnAndYaw.bStabilizationEnabled = false;
+	Advance(BurnAndYaw, 1);
+	const double ExpectedYawRate = Attitude.YawTorqueNewtonMeters * Authority / Attitude.PrincipalMomentsOfInertiaKilogramMetersSquared.Z * 0.1;
+	TestTrue(
+		FString::Printf(TEXT("Reduced yaw torque gives w = (A tau / I) t (%.9f vs %.9f)"), Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate),
+		FMath::IsNearlyEqual(Flight->GetAngularVelocityBodyRadiansPerSecond().Z, ExpectedYawRate, 1.0e-9));
+	const double ExpectedSpeed = Propulsion.ForwardThrustNewtons * Authority / Propulsion.DryMassKilograms * 0.1;
+	TestTrue(
+		FString::Printf(TEXT("Reduced thrust gives v = (A F / m) t (%.6f vs %.6f)"), Flight->GetSpeedMetersPerSecond(), ExpectedSpeed),
+		FMath::IsNearlyEqual(Flight->GetSpeedMetersPerSecond(), ExpectedSpeed, 1.0e-5));
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FEdenRuntimeCompositionSpacecraftBlueprintUsesValidFlightModelTest,
 	"Eden.Integration.Flight.SpacecraftBlueprintUsesValidFlightModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

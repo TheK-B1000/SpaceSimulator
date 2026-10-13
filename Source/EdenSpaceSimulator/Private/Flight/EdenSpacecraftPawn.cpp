@@ -123,10 +123,11 @@ void DrawFlightDynamics(UCanvas* Canvas, const FEdenFlightDynamicsSnapshot& Flig
 	DrawLine(
 		Canvas,
 		FString::Printf(
-			TEXT("Flight: Assist Requested=%s Active=%s Authority=%.2f Available+=(%.0f, %.0f, %.0f) kN SimTime=%.2fs Steps=%lld Dropped=%lld"),
+			TEXT("Flight: Assist Requested=%s Active=%s Authority=%.2f Thrusters=%.1f kN Available+=(%.0f, %.0f, %.0f) kN SimTime=%.2fs Steps=%lld Dropped=%lld"),
 			*BoolText(Flight.bFlightAssistRequested),
 			*BoolText(Flight.bFlightAssistActive),
 			Flight.EffectiveThrustAuthority,
+			Flight.ThrusterOutputNewtons / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.X / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.Y / 1000.0,
 			Flight.AvailablePositiveThrustNewtons.Z / 1000.0,

@@ -107,6 +107,9 @@ private:
 	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
+	float ThrusterOutputNewtons = 0.0f;
+
+	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")
 	FVector LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
 
 	UPROPERTY(VisibleInstanceOnly, Category = "Eden|Flight")

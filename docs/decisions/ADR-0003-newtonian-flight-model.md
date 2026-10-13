@@ -65,7 +65,7 @@ Flight advances in fixed steps (`FEdenFlightStepSettings::FixedStepHz`, default 
 
 ### Telemetry contract preserved
 
-`GetThrustAuthority()` keeps operator semantics. `GetEffectiveThrustAuthority()` reports the product of all limits. `PropulsionDemandNormalized` = Σ|applied force| / forward thrust, clamped to [0, 1], so a full forward burn reads 1.0 as before. Attitude torque is **not** counted in demand yet (see Consequences).
+`GetThrustAuthority()` keeps operator semantics. `GetEffectiveThrustAuthority()` reports the product of all limits. Thruster output = Σ|applied force| + Σ|applied torqueᵢ| / leverArmᵢ, in newtons (Checkpoint C). `PropulsionDemandNormalized` = thruster output / forward thrust, clamped to [0, 1]. A full forward burn reads 1.0 as before. Attitude control (pilot, assist or autopilot) now pays for its RCS thrust through the same measure. The unclamped total is `Dynamics.ThrusterOutputNewtons`. The field name and range on the wire are unchanged; its meaning widens from "translation thrust" to "all thruster output", which is the truthful reading of propulsion demand.
 
 Richer dynamics live in `FEdenFlightStateSnapshot::Dynamics`, in-process only:
 
@@ -116,7 +116,8 @@ Rejected. It violates momentum conservation, costs nothing, and can't be reasone
 - Collision response is still inelastic slide (normal momentum is removed). There is no angular response to impact.
 - Input is still sampled once per render frame, so a command can take effect up to one frame late.
 - Fuel samples demand at 10 Hz from the latest flight step. Averaging over flight steps arrives in 0008 Checkpoint D.
-- Attitude control is not yet billed to propellant, and empty tanks do not yet disable thrust or torque (Phase 4).
+- Empty tanks do not yet disable thrust or torque (Phase 4). Attitude control is billed to propellant from Checkpoint C.
+- Translation and attitude thrusters are separate lumped budgets. A combined manoeuvre can use the full thrust envelope and the full torque envelope at once, as if the RCS were not shared.
 - The inertia tensor is constant and the centre of mass is fixed. Propellant depletion does not shift either.
 - Torque is lumped per body axis. There are no individual thruster positions, and torque produces no translation coupling.
 - Per-axis decoupled orientation control is a seam, not a time-optimal autopilot. Large multi-axis slews converge but do not follow the shortest-time path.
@@ -126,7 +127,7 @@ Rejected. It violates momentum conservation, costs nothing, and can't be reasone
 
 - `Eden.Unit.Flight.Dynamics.*`: analytic results, conservation, envelope, assist, accumulator, frame-rate independence, frame-sampled bounds.
 - `Eden.Unit.Flight.Rotation.*`: constant torque, input signs, torque-free spin, asymmetric angular-momentum and energy conservation, release, assist stabilization and rate tracking, authority saturation, orientation request, thrust redirection, 60 s tumble frame-rate independence, invalid inputs.
-- `Eden.Integration.Flight.*`: pause gating for translation and rotation, in-world fixed step, Blueprint guard.
+- `Eden.Integration.Flight.*`: pause gating for translation and rotation, in-world fixed step, Blueprint guard, and operator load shed / reduced priority constraining physical thrust, torque and propellant use (Checkpoint C).
 - Migrated `Eden.Unit.Flight.*` and the full `Eden.` regression.
 
 ## Supersedes / Superseded by

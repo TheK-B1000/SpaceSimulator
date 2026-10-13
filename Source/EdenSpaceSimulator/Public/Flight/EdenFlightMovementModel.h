@@ -120,6 +120,7 @@ struct EDENSPACESIMULATOR_API FEdenFlightStepOutput
 	FVector AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
 	FEdenFlightThrustEnvelope Envelope;
 	FEdenFlightTorqueEnvelope TorqueEnvelope;
+	double ThrusterOutputNewtons = 0.0;
 	float PropulsionDemandNormalized = 0.0f;
 	bool bAssistActive = false;
 	bool bInputWasSanitized = false;
@@ -192,10 +193,17 @@ struct EDENSPACESIMULATOR_API FEdenFlightMovementModel
 		const FQuat& BodyRotation,
 		double DeltaTimeSeconds);
 
-	/** Fraction of reference (forward) thrust in use: sum of |F_i| / ForwardThrust, clamped to [0,1]. */
-	static float CalculatePropulsionDemandNormalized(
+	/**
+	 * Total thruster output in newtons: sum |F_i| (translation) + sum |tau_i| / LeverArm_i (attitude).
+	 * Every controller, pilot or autopilot, pays for the thrust it uses through this one measure.
+	 */
+	static double CalculateThrusterOutputNewtons(
 		const FVector& AppliedBodyForceNewtons,
-		const FEdenFlightPropulsionSettings& Settings);
+		const FVector& AppliedBodyTorqueNewtonMeters,
+		const FEdenFlightAttitudeSettings& AttitudeSettings);
+
+	/** Fraction of reference (forward) thrust in use: ThrusterOutput / ForwardThrust, clamped to [0,1]. */
+	static float CalculatePropulsionDemandNormalized(double ThrusterOutputNewtons, const FEdenFlightPropulsionSettings& Settings);
 
 	// --- Rotation ------------------------------------------------------------
 

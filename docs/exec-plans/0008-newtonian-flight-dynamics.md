@@ -2,9 +2,9 @@
 
 ## Status
 
-Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
+Approved 2026-10-12 — In progress. Checkpoint A provisionally approved (automation green; **human PIE pending**). Checkpoint B provisionally approved (automation green; **human PIE pending**). Checkpoint C implemented (automation green; **human PIE pending**). Branch `feature/0008-newtonian-flight`. Not mergeable until Checkpoint M (ExecPlan 0007) human PIE passes on `main`.
 
-Fuel note until Phase 4: propulsion demand **drives fuel consumption**, but fuel availability does **not** yet constrain thrust or torque. An empty tank still produces full thrust.
+Fuel note until Phase 4: propulsion demand (translation **and**, from CP-C, attitude thrust) **drives fuel consumption**, but fuel availability does **not** yet constrain thrust or torque. An empty tank still produces full thrust.
 
 ## Problem and outcome
 
@@ -304,6 +304,13 @@ Rollback: each checkpoint is one commit; `git revert` restores the previous acce
   - ADR-0003 updated.
 - 2026-10-12: Deviation (CP-B). `FEdenFlightMovementSettings` and `UEdenFlightMovementComponent::MovementSettings` (kinematic rotation) were removed and replaced by `FEdenFlightAttitudeSettings` / `AttitudeSettings`. `Get/SetAngularVelocityLocalDegreesPerSecond` were replaced by `Get/SetAngularVelocityBodyRadiansPerSecond`. Only tests used them, and the Blueprint did not override them. `InputReleaseTolerance` became the model constant `FEdenFlightMovementModel::InputReleaseTolerance` (0.001, unchanged value).
 - 2026-10-12: Test migration (CP-B). `Eden.Unit.Flight.AngularVelocityAcceleratesAndClamps` and `AngularStabilizationDampsReleasedAxes` were removed (kinematic) and superseded by `Rotation.ConstantTorqueAngularAcceleration`, `AssistTracksCommandedRate`, `AssistStabilizesThroughTorque` and `AssistOffConservesSpinAfterRelease`. `InvalidDeltaTimeDoesNotMutateVelocity` and `EquivalentSimulatedTimeMatchesAcrossDeltaTimePartitions` now check rigid-body rotation.
+- 2026-10-12: Checkpoint C implemented:
+  - Attitude torque is billed as RCS thrust: `ThrusterOutput = Σ|F| + Σ|τᵢ|/leverArmᵢ`, with lever arms 5/10/10 m (`FEdenFlightAttitudeSettings::ThrusterLeverArmsMeters`). `PropulsionDemandNormalized = ThrusterOutput / F_fwd`, clamped to [0, 1].
+  - `Dynamics.ThrusterOutputNewtons` (unclamped) is added to the snapshot and the debug line.
+  - T11 is `Rotation.AssistOffConservesSpinAfterRelease` (CP-B). T12 is `Dynamics.AssistBrakingIsThrustLimited` / `AssistAvailabilityAndIdleCost` (CP-A) plus the new `Rotation.AttitudeThrustBillsPropellant`. T13 is the new `Eden.Integration.Flight.OperatorControlConstrainsPhysicalFlight`, using the real Blueprint pawn: load shed means drift and spin with zero propellant; normal load means assist brakes and burns propellant; reduced priority scales physical thrust and torque.
+  - The assist controllers were already saturated on all six axes after CP-A and CP-B, so CP-C added no controller change.
+- 2026-10-12: Balance note (CP-C). Rotating now burns propellant: full yaw reads 0.2 demand, so 0.2 kg/s at the default 1 kg/s rate. Decision 2 still holds; there is no capacity or rate re-tune. Phase 4 calibrates.
+- 2026-10-12: Correction to the CP-B report. CP-B added **12** `Eden.Unit.Flight.Rotation.*` tests, not 13. With the two removed kinematic tests the net is +10 (354 → 364); the run diff shows no other test removed.
 - 2026-10-12: Feel change (CP-B), to tune in PIE. With the default inertia and torque, angular acceleration is about 27–44 deg/s² (the kinematic shell used 180 deg/s²), and assist tops out at 60 deg/s (was 90).
 
 ## Decision log

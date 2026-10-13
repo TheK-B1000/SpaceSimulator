@@ -42,6 +42,7 @@ void UEdenFlightMovementComponent::StopMovementImmediately()
 	PropulsionDemandNormalized = 0.0f;
 	AppliedBodyForceNewtons = FVector::ZeroVector;
 	AppliedBodyTorqueNewtonMeters = FVector::ZeroVector;
+	ThrusterOutputNewtons = 0.0f;
 	LastAccelerationWorldMetersPerSecondSquared = FVector::ZeroVector;
 	LastAngularAccelerationBodyRadiansPerSecondSquared = FVector::ZeroVector;
 	bWasBlockedLastMove = false;
@@ -120,6 +121,7 @@ void UEdenFlightMovementComponent::RunFlightStep(
 	bFlightAssistActive = StepOutput.bAssistActive;
 	AppliedBodyForceNewtons = StepOutput.AppliedBodyForceNewtons;
 	AppliedBodyTorqueNewtonMeters = StepOutput.AppliedBodyTorqueNewtonMeters;
+	ThrusterOutputNewtons = static_cast<float>(StepOutput.ThrusterOutputNewtons);
 	LastAngularAccelerationBodyRadiansPerSecondSquared = StepOutput.Rotation.AngularAccelerationBodyRadiansPerSecondSquared;
 	LastAccelerationWorldMetersPerSecondSquared = StepOutput.Translation.AccelerationWorldMetersPerSecondSquared;
 	PropulsionDemandNormalized = StepOutput.PropulsionDemandNormalized;
@@ -306,6 +308,7 @@ FEdenFlightDynamicsSnapshot UEdenFlightMovementComponent::GetFlightDynamicsSnaps
 	Snapshot.SpeedMetersPerSecond = GetSpeedMetersPerSecond();
 	Snapshot.AccelerationWorldMetersPerSecondSquared = LastAccelerationWorldMetersPerSecondSquared;
 	Snapshot.AppliedBodyForceNewtons = AppliedBodyForceNewtons;
+	Snapshot.ThrusterOutputNewtons = ThrusterOutputNewtons;
 
 	// Report what the thrusters can deliver now, even before the first step has run.
 	const FEdenFlightThrustEnvelope Envelope =
