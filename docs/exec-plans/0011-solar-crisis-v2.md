@@ -2,7 +2,7 @@
 
 ## Status
 
-**Revision 2 approved for implementation, 2026-10-14 (E1 with 6 kW discharge; auxiliary curtailment option (a), reporting only; flare D-a).** In progress: Checkpoints A-D done. Solar Crisis v1 (ExecPlan 0004) stays the approved, shipped scenario, with its balance and success criteria unchanged, until this plan is approved and implemented.
+**Revision 2 approved for implementation, 2026-10-14 (E1 with 6 kW discharge; auxiliary curtailment option (a), reporting only; flare D-a).** Checkpoints A-E implemented (automation green); **human PIE pending**. Development continues on `feature/0011-solar-crisis-v2` (A-D also on local `main` at `fa1fcbc`; nothing pushed). Solar Crisis v1 remains the default mission. Solar Crisis v1 (ExecPlan 0004) stays the approved, shipped scenario, with its balance and success criteria unchanged, until this plan is approved and implemented.
 
 Revision 2 applies the reviewer's decisions: thermal baseline A2, 20 °C initialization, and meaningful electrical constraints. It replaces revision 1's infeasible numbers, which were computed for A1; under A2, immediate Boost reached exactly 100 °C. Every trajectory below comes from a step-by-step replica of `FEdenThermalModel::Step` (§Validation), and the implementation must reproduce them in automated tests.
 
@@ -214,6 +214,53 @@ Battery use in every strategy: ≤ 0.05 kWh, so `MaintainPowerAbove` never binds
 - 2026-10-14: Checkpoint B. `FEdenPowerConfig::BatteryMaxDischargeKilowatts` (0 = unlimited default) and `FEdenPowerModel::AllocateBus`/`WithBusAllocation`: capacity = generation + (charged ? min(limit, energy left this step) : 0), served essential > thermal control > auxiliary; load shed removes auxiliary first. Power snapshot reports requested/served/curtailed per class, delivered demand, battery discharge and `CoolingAuthority`; limited-bus `Step` draws energy only for powered load (unlimited path uses the legacy formula unchanged). Mission override `SetBatteryDischargeLimitKilowatts`/`ClearBatteryDischargeLimitOverride`. Thermal snapshot carries `ActiveCoolingDegreesCelsiusPerSecond` and `CoolingAuthority`; effective dissipation = base + operator - active x (1 - authority); thermal pulls authority from the owner's power system every step. Operator control passes each mode's cooling kW and active cooling (`SetOperatorDemandBreakdown`, `SetOperatorCooling`). Bus inputs are re-applied in each component's `ApplySnapshot`, so no setter can drop them. Logs on bus curtailment start/end and cooling-authority changes. Wire/Telemetry v1 unchanged (hand-picked fields); note `netPowerKilowatts` on a limited bus is generation minus delivered load. Suite 418/418, flight determinism unchanged.
 - 2026-10-14: Checkpoint C. `FEdenMissionInitialConditions` on the definition (`bSetInitialTemperature`/`InitialTemperatureCelsius`, `bSetBatteryDischargeLimit`/`BatteryMaxDischargeKilowatts`), validated at load. `StartMission` (Ready -> Running is always a fresh run) applies only what is declared: clears leftover mission external heating/demand, sets the temperature, sets the bus limit; refuses to start (logged, stays Ready) if a declared target is missing or rejects the value. Runtime records `bInitialConditionsApplied`/`bAppliedBatteryDischargeLimit`; abort, reset and the next load release the run's bus limit. Battery, propellant, flight state and operator modes are untouched; undeclared missions start from current conditions. Note: after a terminal Succeeded/Failed the run's bus limit stays until reset/abort/next load (the ship keeps simulating). Initial conditions are not a mission command type, so no timeline event can apply them. Tests: `Eden.Integration.SolarCrisisV2.C.{InitialConditionsAreScopedAndExplicit, EarlyAndLateActivationMatch}` (0/60/300 s idle in Off then start: identical traces; passive peak ~105 C at T 30 s). Suite 420/420.
 - 2026-10-14: Checkpoint D. Objective types `RecoverThermalStability` (complete-seeking) and `MaintainPowerAbove` (fail-only) appended to `EEdenObjectiveType`; config gains `HoldSeconds` (5) and `DeadlineSeconds` (0 = none). `FEdenMissionObservations` adds mission heating and the realized net rate (thermal balance) to temperature/battery/fuel; `EvaluateObjectives(State, Def, Observations, Step)` keeps the legacy signature as a wrapper. Recovery: heating 0, T < target (strict), realized rate <= +0.01 C/s, held continuously (any break resets); completion on the deadline step wins; hold and deadline resolve on the nearest float step (half-step tolerance). Every objective records `ResolvedAtSeconds` and a plain-words `FailureReason`; the runtime and snapshot carry `TerminalReason` (`DescribeOutcome`); objective resolutions and the outcome are logged. Tests: `Eden.Unit.SolarCrisisV2.D.{RecoveryHoldSemantics, RecoveryDeadlineAndFloors}`. Suite 422/422.
+- 2026-10-14: Checkpoint E. `Data/Missions/SolarCrisisV2.json` (reviewable source) and editor-only commandlet `-run=EdenImportMissionDefinition -Json=... -Asset=...` (validates with `ValidateDefinition` before writing; non-editor builds refuse) generated `Content/Eden/Data/Missions/DA_SolarCrisisV2.uasset`. Re-running produces identical *content* (test `AssetMatchesJsonSourceAndV1StaysDefault` compares every field and pins the approved values) but not identical bytes (Unreal stamps a new package GUID on each save). Console `EdenStartMission <asset>` / `StartSolarCrisisV2`; Restart keeps the selected mission; v1 stays the default. HUD MISSION shows hold progress, time to deadline, resolution times, failure reasons and the outcome; SYSTEMS gains a BUS line (capacity, cooling %, auxiliary served/requested, `CURTAILED x kW`). After-action review adds outcome reason, objective times/reasons and a Power Bus section that states when auxiliary systems were not fully powered. **Bug found and fixed:** the review took objective states from the last periodic telemetry snapshot, which can precede the mission's final step (missed the recovery completion and reason); telemetry now records one snapshot at Succeeded/Failed/Aborted (schema unchanged; a finished history gains one terminal snapshot). Tests: `Eden.Integration.SolarCrisisV2.E.{AssetMatchesJsonSourceAndV1StaysDefault, StrategyMatrix, HudReviewAndPowerBusAgree}`. Suite 425/425; flight determinism references unchanged.
+
+### Checkpoint E results — strategy matrix (C++, DA_SolarCrisisV2, BP pawn, 10 Hz)
+
+| Strategy | Outcome | Time (sim / C++) | Peak | Aux curtailed | Reason |
+| --- | --- | --- | --- | --- | --- |
+| Passive (Nominal) | Fail | 28.9 / 28.9 | (100.33 at fail) | 0 | PreventOverheating: 100.33 C at T=28.9 s |
+| Immediate Boost | Succeed | 84.9 / 84.9 | 95.00 | 0 | all required objectives met |
+| Immediate Emergency | Succeed | 38.3 / 38.3 | 75.00 | 2.50 kW | all required objectives met |
+| Boost at T 15 | Succeed | 89.9 / 89.9 | 97.50 | 0 | |
+| Boost at T 18 | Succeed | 92.9 / 92.9 | 99.00 | 0 | |
+| Boost at T 21 | Fail | 29.9 / 29.9 | (100.12) | 0 | PreventOverheating |
+| Load shed only | Fail | 27.3 / 27.3 | (100.44) | 0 | PreventOverheating |
+| Boost, then Nominal in recovery | Fail | 100.0 / 100.0 | 95.00 | 0 | recovery not achieved by T=100 s (95.00 C, +0.00 C/s) |
+| Boost, then Off in recovery | Fail | 40.1 / **40.0** | (100.00) | 0 | PreventOverheating |
+| Boost, then Emergency in recovery | Succeed | 51.6 / 51.6 | 95.00 | 0 | |
+| Emergency + load shed | Succeed | 46.8 / 46.8 | 83.00 | 0.50 kW | |
+
+Deviations from the approved trajectories: (1) Boost-then-Off crosses 100 C exactly at a step boundary and fails 0.1 s earlier (40.0 s vs 40.1 s), within tolerance. (2) The plan's "empty battery" row (fail by overheat at T~29-30 s) cannot occur as written: an empty battery fails `MaintainBatteryReserve` (< 10 %) first. (3) Consequently, with the shipped battery, cooling authority stays at 100 % in every v2 strategy; within v2.0 the power bus is felt only as auxiliary curtailment under Emergency. Power-limited cooling is real and tested (B), but a mission must start with a low battery or reduced generation to exercise it.
+
+### v1 vs v2 thermal behaviour (audit)
+
+| | v1 design (pre-A2) | v1 played now (A2 baseline) | v2 |
+| --- | --- | --- | --- |
+| Off | 0.5 C/s passive; same as Nominal | passive only, net +0.5 C/s | same |
+| Nominal | 0.5 C/s passive; net +0.5 C/s | 1.0 C/s (0.5 powered, 0.5 kW); net 0 | same, powered cooling subject to the bus |
+| Boost / Emergency | +1.0 / +2.0 C/s on top of passive | replace Nominal: 1.5 / 2.5 C/s total | same, scaled by cooling authority |
+| v1 passive trajectory | 20 -> ~99.3 C at T=50 s (0.7 C margin), overheats after success | 20 -> 70 C at T=30 s, flat at 70 C; succeeds at T=50 s; no post-success overheating | — |
+
+v1's asset and automated tests are unchanged and pass; only its live (PIE) trajectory changed, because the baseline is spacecraft configuration.
+
+### EDEN (ProjectEden) integration incompatibilities found (read-only audit, nothing changed in ProjectEden)
+
+1. **Policy lists cooling modes as `{Boost, Emergency}`** (`thermal_safety_analysis.py`). Under A2, Nominal is also active cooling and Off is a heat source (net +0.5 C/s). There is no "return to Nominal" action, so with Off reported EDEN offers Boost (more power) rather than the cheapest fix, and v1-era explanations treating Off as equivalent to Nominal are invalid.
+2. **"Emergency adds at least as much cooling ... as Boost"** (`TRADEOFFS`) is false on a power-limited bus: with an empty battery Emergency gets 22 % authority (~0.44 C/s active) versus Boost 67 % (~0.67 C/s). The Boost -> Emergency escalation can then recommend *less* cooling.
+3. **Power arithmetic (low risk, verified):** on a limited bus `netPowerKilowatts` = generation - *delivered* load while `powerDemandKilowatts` stays the *requested* total, so generation - demand != net whenever load is curtailed. ProjectEden's `analyze_power_balance` uses the transmitted net (always sent) and derives generation - demand only when net is missing, so its diagnostics stay correct; an advisory sentence that computes net from generation and demand itself would be wrong under curtailment.
+4. **No cooling-authority or curtailment fields on the wire.** Thermal diagnostics use the authoritative `effectiveDissipationDegreesCelsiusPerSecond` (which already includes A2 and power limits — good), but EDEN cannot explain *why* cooling is reduced or which auxiliary load is unpowered. Needs a reviewed contract addition (e.g. `coolingAuthority`, `auxiliaryRequestedKilowatts`, `auxiliaryCurtailedKilowatts`, `busCapacityKilowatts`).
+5. **Load-shed corner case:** with the battery empty and no auxiliary load, load shed's v1 reduction comes off the essential load and frees bus capacity; with Emergency this raises net cooling by ~+0.04 C/s despite the -0.4 C/s penalty. "Load shed is never thermal relief" is then not strictly true in the model (it only arises after `MaintainBatteryReserve` has already failed in v2). Decision needed: keep, or stop shed reductions from freeing essential capacity.
+6. Mode-name assumptions should give way to authoritative rates: prefer `effectiveDissipation`/heat/external terms (already sent) plus the new bus fields over mode names.
+
+### Design decisions recorded (reviewer, 2026-10-14, second message)
+
+- 6 kW discharge limit approved, subject to the allocation/accounting tests (B: priority order, exactly-once energy, near-empty battery).
+- Auxiliary curtailment is observable (HUD, review, logs) and affects mission success only through an explicitly configured objective; v2.0 configures none.
+- Flare 4.25 C/s for 20 s with the 100 s deadline for the initial v2; tune after PIE.
+- Development moved to `feature/0011-solar-crisis-v2`; `main` keeps A-D, not rewritten.
+
 - **Deviation (A):** the thermal baseline is spacecraft configuration, not mission configuration, so Solar Crisis v1 *played in PIE* now runs on A2 (the 2.5 C/s flare peaks near 70 C, making v1 much easier). v1's asset and automated tests are unchanged and pass. Pinning v1's original balance live would need a mission-declared configuration override; not done without review.
 - 2026-10-14: Revision 2. A2 adopted; flare recalibrated by simulation (revision 1's 4.5 °C/s was infeasible under A2: immediate Boost reached 100 °C); deadline 90 → 100 s; electrical design E1 added after finding that cooling is not power-limited and battery energy cannot bind within 100 s.
 

@@ -201,6 +201,16 @@ struct EDENSPACESIMULATOR_API FEdenMissionObjectiveRuntime
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	float HoldElapsedSeconds = 0.0f;
 
+	/** Copied from the definition for display: hold required and deadline (0 = none). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float HoldTargetSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float DeadlineSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	EEdenObjectiveType ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+
 	/** Mission time when the objective completed or failed; < 0 while unresolved. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	float ResolvedAtSeconds = -1.0f;

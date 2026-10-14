@@ -18,6 +18,13 @@ struct EDENSPACESIMULATOR_API FEdenAfterActionObjectiveLine
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
 	EEdenObjectiveState State = EEdenObjectiveState::Pending;
+
+	/** Mission time it completed or failed; < 0 if unresolved. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	float ResolvedAtSeconds = -1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	FString FailureReason;
 };
 
 USTRUCT(BlueprintType)
@@ -63,6 +70,27 @@ struct EDENSPACESIMULATOR_API FEdenAfterActionResult
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
 	TArray<FEdenAfterActionObjectiveLine> Objectives;
+
+	/** Why the mission ended, from the mission subsystem. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	FString TerminalReason;
+
+	/** Power bus (ExecPlan 0011), from recorded snapshots. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	bool bPowerBusLimited = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	float LowestCoolingAuthority = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	float PeakAuxiliaryRequestedKilowatts = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	float PeakAuxiliaryCurtailedKilowatts = 0.0f;
+
+	/** Recorded time with auxiliary load curtailed (snapshot count x interval). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|AAR")
+	float SecondsAuxiliaryCurtailed = 0.0f;
 };
 
 struct EDENSPACESIMULATOR_API FEdenAfterActionModel

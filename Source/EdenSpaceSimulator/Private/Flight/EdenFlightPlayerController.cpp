@@ -12,6 +12,7 @@
 #include "Flight/EdenSpacecraftPawn.h"
 #include "HAL/PlatformMisc.h"
 #include "Misc/DateTime.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
 #include "TimerManager.h"
 #include "UnrealClient.h"
@@ -718,6 +719,7 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 	Snapshot.Flight = FlightSnapshot;
 	Snapshot.FuelCapacityKilograms = FuelCapacityKilograms;
 	Snapshot.PilotRotationCommand = GetCurrentFlightInputCommand().RotationInput;
+	Snapshot.MissionTerminalReason = MissionSnapshot.TerminalReason;
 	Snapshot.bHasEdenAdapter = bHasEdenAdapter;
 	Snapshot.EdenConnection = EdenConnection;
 	return Snapshot;
@@ -758,7 +760,7 @@ void AEdenFlightPlayerController::StartMission()
 
 	if (MissionSubsystem->GetMissionState() == EEdenMissionState::Inactive)
 	{
-		UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+		UEdenMissionDefinitionDataAsset* MissionAsset = ResolveSelectedMissionAsset();
 		if (!MissionAsset)
 		{
 			UE_LOG(
@@ -803,13 +805,13 @@ void AEdenFlightPlayerController::RestartMission()
 
 	MissionSubsystem->ResetMission();
 
-	UEdenMissionDefinitionDataAsset* MissionAsset = EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+	UEdenMissionDefinitionDataAsset* MissionAsset = ResolveSelectedMissionAsset();
 	if (!MissionAsset)
 	{
 		UE_LOG(
 			LogEdenFlight,
 			Warning,
-			TEXT("%s RestartMission: default mission Data Asset is unavailable."),
+			TEXT("%s RestartMission: selected mission Data Asset is unavailable."),
 			*GetNameSafe(this));
 		return;
 	}
@@ -820,6 +822,53 @@ void AEdenFlightPlayerController::RestartMission()
 	}
 
 	MissionSubsystem->StartMission();
+}
+
+UEdenMissionDefinitionDataAsset* AEdenFlightPlayerController::ResolveSelectedMissionAsset()
+{
+	if (SelectedMissionAssetPath.IsValid())
+	{
+		if (UEdenMissionDefinitionDataAsset* Selected = Cast<UEdenMissionDefinitionDataAsset>(SelectedMissionAssetPath.TryLoad()))
+		{
+			return Selected;
+		}
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s selected mission '%s' could not be loaded; using the default."), *GetNameSafe(this), *SelectedMissionAssetPath.ToString());
+	}
+	return EdenFlightPlayerControllerMission::ResolveDefaultMissionAsset(this);
+}
+
+void AEdenFlightPlayerController::EdenStartMission(const FString& MissionAssetPath)
+{
+	const FString Trimmed = MissionAssetPath.TrimStartAndEnd();
+	if (Trimmed.IsEmpty() || Trimmed.Equals(TEXT("default"), ESearchCase::IgnoreCase))
+	{
+		SelectedMissionAssetPath.Reset();
+	}
+	else
+	{
+		// Accept "/Game/Path/DA_Name" or the full object path.
+		const FString ObjectPath = Trimmed.Contains(TEXT(".")) ? Trimmed : FString::Printf(TEXT("%s.%s"), *Trimmed, *FPackageName::GetShortName(Trimmed));
+		SelectedMissionAssetPath = FSoftObjectPath(ObjectPath);
+		if (!Cast<UEdenMissionDefinitionDataAsset>(SelectedMissionAssetPath.TryLoad()))
+		{
+			ReportControlFeedback(FString::Printf(TEXT("MISSION '%s' NOT FOUND"), *Trimmed), false);
+			SelectedMissionAssetPath.Reset();
+			return;
+		}
+	}
+	RestartMission();
+	UWorld* World = GetWorld();
+	const UEdenMissionSubsystem* Mission = World ? World->GetSubsystem<UEdenMissionSubsystem>() : nullptr;
+	ReportControlFeedback(
+		Mission && Mission->IsMissionRunning()
+			? FString::Printf(TEXT("MISSION %s STARTED"), *Mission->GetActiveMissionId().ToString())
+			: FString(TEXT("MISSION DID NOT START (see log)")),
+		Mission && Mission->IsMissionRunning());
+}
+
+void AEdenFlightPlayerController::StartSolarCrisisV2()
+{
+	EdenStartMission(TEXT("/Game/Eden/Data/Missions/DA_SolarCrisisV2"));
 }
 
 void AEdenFlightPlayerController::AbortMission()

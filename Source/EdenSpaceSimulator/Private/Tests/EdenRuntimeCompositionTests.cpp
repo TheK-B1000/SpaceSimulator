@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "Flight/EdenFlightMovementComponent.h"
 #include "Flight/EdenFlightPlayerController.h"
@@ -27,6 +28,12 @@
 #include "EngineUtils.h"
 #include "GameFramework/PlayerController.h"
 #include "Misc/AutomationTest.h"
+#include "Telemetry/EdenAfterActionReviewWidget.h"
+#include "Telemetry/EdenAfterActionModel.h"
+#include "Telemetry/EdenTelemetrySubsystem.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "JsonObjectConverter.h"
 #include "UObject/Package.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
@@ -2109,6 +2116,294 @@ bool FEdenRuntimeCompositionEarlyAndLateActivationMatchTest::RunTest(const FStri
 		}
 		TestTrue(FString::Printf(TEXT("Starting after %.0f s of idle gives the identical temperature trace"), IdleSeconds), bIdentical);
 	}
+	return true;
+}
+
+namespace EdenRuntimeCompositionTests
+{
+const TCHAR* SolarCrisisV2Path = TEXT("/Game/Eden/Data/Missions/DA_SolarCrisisV2.DA_SolarCrisisV2");
+
+struct FV2Action
+{
+	double AtSeconds;
+	EEdenThermalControlMode Mode;
+	bool bShed;
+};
+
+struct FV2Expectation
+{
+	const TCHAR* Name;
+	TArray<FV2Action> Actions;
+	EEdenMissionState Outcome;
+	double AtSeconds;          // simulated terminal time (ExecPlan 0011 revision 2, section D)
+	double PeakCelsius;        // < 0: not compared (failures end mid-rise)
+	double AuxCurtailedKw;     // < 0: not compared
+	const TCHAR* ReasonContains;
+};
+
+struct FV2Run
+{
+	EEdenMissionState Outcome = EEdenMissionState::Running;
+	double AtSeconds = -1.0;
+	double PeakCelsius = 0.0;
+	double MaxAuxCurtailedKw = 0.0;
+	double MinCoolingAuthority = 1.0;
+	FString Reason;
+};
+
+/** Runs DA_SolarCrisisV2 on the Blueprint pawn with operator actions at mission times; 10 Hz steps. */
+FV2Run RunSolarCrisisV2(FAutomationTestBase& Test, const TArray<FV2Action>& Actions, TFunction<void(FFlightPropellantFixture&, double)> OnTick = nullptr)
+{
+	FV2Run Run;
+	FFlightPropellantFixture Fixture;
+	if (!Fixture.Setup(Test))
+	{
+		return Run;
+	}
+	PossessWithController(Fixture);
+	UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+	UEdenThermalSystemComponent* Thermal = Fixture.Pawn->GetThermalSystemComponent();
+	UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+	UEdenMissionDefinitionDataAsset* V2 = Cast<UEdenMissionDefinitionDataAsset>(FSoftObjectPath(SolarCrisisV2Path).TryLoad());
+	if (!Test.TestNotNull(TEXT("DA_SolarCrisisV2 loads"), V2) || !Operator || !Thermal || !Mission)
+	{
+		return Run;
+	}
+	Mission->SetMissionResourceTargets(Thermal, Fixture.Power, Fixture.Fuel);
+	if (!Test.TestTrue(TEXT("v2 loads"), Mission->LoadMissionFromDefinitionAsset(V2)) || !Test.TestTrue(TEXT("v2 starts"), Mission->StartMission()))
+	{
+		return Run;
+	}
+
+	TArray<bool> Applied;
+	Applied.Init(false, Actions.Num());
+	Run.PeakCelsius = Thermal->GetThermalStateSnapshot().TemperatureCelsius;
+	for (int32 Tick = 0; Tick < 1500 && Mission->IsMissionRunning(); ++Tick)
+	{
+		const double Now = Mission->GetMissionElapsedTimeSeconds();
+		for (int32 Index = 0; Index < Actions.Num(); ++Index)
+		{
+			if (!Applied[Index] && Actions[Index].AtSeconds <= Now + 1.0e-4)
+			{
+				Operator->SetThermalControlMode(Actions[Index].Mode);
+				Operator->SetLoadShedMode(Actions[Index].bShed ? EEdenLoadShedMode::Shed : EEdenLoadShedMode::Normal);
+				Applied[Index] = true;
+			}
+		}
+		Fixture.Clock->Tick(0.1f);
+		const FEdenPowerStateSnapshot Power = Fixture.Power->GetPowerStateSnapshot();
+		Run.PeakCelsius = FMath::Max(Run.PeakCelsius, static_cast<double>(Thermal->GetThermalStateSnapshot().TemperatureCelsius));
+		Run.MaxAuxCurtailedKw = FMath::Max(Run.MaxAuxCurtailedKw, static_cast<double>(Power.AuxiliaryCurtailedKilowatts));
+		Run.MinCoolingAuthority = FMath::Min(Run.MinCoolingAuthority, static_cast<double>(Thermal->GetThermalStateSnapshot().CoolingAuthority));
+		if (OnTick)
+		{
+			OnTick(Fixture, Mission->GetMissionElapsedTimeSeconds());
+		}
+	}
+	Run.Outcome = Mission->GetMissionState();
+	Run.AtSeconds = Mission->GetMissionElapsedTimeSeconds();
+	Run.Reason = Mission->GetMissionRuntimeState().TerminalReason;
+	return Run;
+}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSolarCrisisV2AssetMatchesSourceTest,
+	"Eden.Integration.SolarCrisisV2.E.AssetMatchesJsonSourceAndV1StaysDefault",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSolarCrisisV2AssetMatchesSourceTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenRuntimeCompositionTests;
+
+	FString Json;
+	const FString JsonPath = FPaths::Combine(FPaths::ProjectDir(), TEXT("Data/Missions/SolarCrisisV2.json"));
+	if (!TestTrue(TEXT("Mission source JSON is readable"), FFileHelper::LoadFileToString(Json, *JsonPath)))
+	{
+		return false;
+	}
+	FEdenMissionDefinitionConfig Source;
+	TestTrue(TEXT("JSON parses into the definition"), FJsonObjectConverter::JsonObjectStringToUStruct(Json, &Source, 0, 0));
+	const UEdenMissionDefinitionDataAsset* Asset = Cast<UEdenMissionDefinitionDataAsset>(FSoftObjectPath(SolarCrisisV2Path).TryLoad());
+	if (!TestNotNull(TEXT("DA_SolarCrisisV2 exists"), Asset))
+	{
+		return false;
+	}
+	const FEdenMissionDefinitionConfig& D = Asset->GetMissionDefinition();
+	TestTrue(TEXT("Asset definition is valid"), FEdenMissionModel::ValidateDefinition(D));
+	TestEqual(TEXT("MissionId"), D.MissionId, Source.MissionId);
+	TestTrue(TEXT("Initial conditions match the source"),
+		D.InitialConditions.bSetInitialTemperature == Source.InitialConditions.bSetInitialTemperature
+		&& D.InitialConditions.InitialTemperatureCelsius == Source.InitialConditions.InitialTemperatureCelsius
+		&& D.InitialConditions.bSetBatteryDischargeLimit == Source.InitialConditions.bSetBatteryDischargeLimit
+		&& D.InitialConditions.BatteryMaxDischargeKilowatts == Source.InitialConditions.BatteryMaxDischargeKilowatts);
+	if (TestEqual(TEXT("Event count"), D.Events.Num(), Source.Events.Num()))
+	{
+		for (int32 I = 0; I < D.Events.Num(); ++I)
+		{
+			const FEdenMissionEventConfig& A = D.Events[I];
+			const FEdenMissionEventConfig& B = Source.Events[I];
+			TestTrue(FString::Printf(TEXT("Event %s matches the source"), *B.EventId.ToString()),
+				A.EventId == B.EventId && A.TriggerTimeSeconds == B.TriggerTimeSeconds && A.CommandType == B.CommandType
+				&& A.FloatParameter == B.FloatParameter && A.PhaseParameter == B.PhaseParameter && A.NameParameter == B.NameParameter);
+		}
+	}
+	if (TestEqual(TEXT("Objective count"), D.Objectives.Num(), Source.Objectives.Num()))
+	{
+		for (int32 I = 0; I < D.Objectives.Num(); ++I)
+		{
+			const FEdenMissionObjectiveConfig& A = D.Objectives[I];
+			const FEdenMissionObjectiveConfig& B = Source.Objectives[I];
+			TestTrue(FString::Printf(TEXT("Objective %s matches the source"), *B.ObjectiveId.ToString()),
+				A.ObjectiveId == B.ObjectiveId && A.ObjectiveType == B.ObjectiveType && A.TargetValue == B.TargetValue
+				&& A.HoldSeconds == B.HoldSeconds && A.DeadlineSeconds == B.DeadlineSeconds
+				&& A.bRequired == B.bRequired && A.bActivateOnStart == B.bActivateOnStart);
+		}
+	}
+	// Approved v2 values, pinned so a JSON edit cannot silently change the calibrated scenario.
+	const FEdenMissionEventConfig* Flare = D.Events.FindByPredicate([](const FEdenMissionEventConfig& E) { return E.EventId == TEXT("SolarFlareHeating"); });
+	TestTrue(TEXT("Flare is 4.25 C/s at T=10 s"), Flare && Flare->FloatParameter == 4.25f && Flare->TriggerTimeSeconds == 10.0f);
+	const FEdenMissionObjectiveConfig* Recover = D.Objectives.FindByPredicate([](const FEdenMissionObjectiveConfig& O) { return O.ObjectiveType == EEdenObjectiveType::RecoverThermalStability; });
+	TestTrue(TEXT("Recovery: < 70 C, 5 s hold, deadline T=100 s"), Recover && Recover->TargetValue == 70.0f && Recover->HoldSeconds == 5.0f && Recover->DeadlineSeconds == 100.0f);
+
+	// Solar Crisis v1 remains the default until v2 passes human PIE.
+	UClass* ControllerClass = StaticLoadClass(AEdenFlightPlayerController::StaticClass(), nullptr, TEXT("/Game/Eden/Blueprints/BP_EdenFlightPlayerController.BP_EdenFlightPlayerController_C"));
+	const AEdenFlightPlayerController* Defaults = ControllerClass ? ControllerClass->GetDefaultObject<AEdenFlightPlayerController>() : GetDefault<AEdenFlightPlayerController>();
+	TestEqual(TEXT("Default mission is still v1 (DA_SolarEventEmergency)"),
+		Defaults->DefaultMissionDefinitionAsset.ToSoftObjectPath().GetAssetName(), FString(TEXT("DA_SolarEventEmergency")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSolarCrisisV2StrategyMatrixTest,
+	"Eden.Integration.SolarCrisisV2.E.StrategyMatrix",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSolarCrisisV2StrategyMatrixTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenRuntimeCompositionTests;
+	using M = EEdenThermalControlMode;
+	const EEdenMissionState S = EEdenMissionState::Succeeded;
+	const EEdenMissionState F = EEdenMissionState::Failed;
+
+	const FV2Expectation Matrix[] = {
+		{TEXT("Passive (Nominal)"), {}, F, 28.9, -1.0, -1.0, TEXT("PreventOverheating")},
+		{TEXT("Immediate Boost"), {{10.0, M::Boost, false}}, S, 84.9, 95.0, 0.0, TEXT("all required objectives met")},
+		{TEXT("Immediate Emergency"), {{10.0, M::Emergency, false}}, S, 38.3, 75.0, 2.5, TEXT("all required objectives met")},
+		{TEXT("Boost at T 15"), {{15.0, M::Boost, false}}, S, 89.9, 97.5, -1.0, TEXT("all required objectives met")},
+		{TEXT("Boost at T 18"), {{18.0, M::Boost, false}}, S, 92.9, 99.0, -1.0, TEXT("all required objectives met")},
+		{TEXT("Boost at T 21"), {{21.0, M::Boost, false}}, F, 29.9, -1.0, -1.0, TEXT("PreventOverheating")},
+		{TEXT("Load shed only"), {{10.0, M::Nominal, true}}, F, 27.3, -1.0, -1.0, TEXT("PreventOverheating")},
+		{TEXT("Boost, then Nominal in recovery"), {{10.0, M::Boost, false}, {30.0, M::Nominal, false}}, F, 100.0, 95.0, -1.0, TEXT("recovery not achieved by T=100 s")},
+		{TEXT("Boost, then Off in recovery"), {{10.0, M::Boost, false}, {30.0, M::Off, false}}, F, 40.1, -1.0, -1.0, TEXT("PreventOverheating")},
+		{TEXT("Boost, then Emergency in recovery"), {{10.0, M::Boost, false}, {30.0, M::Emergency, false}}, S, 51.6, 95.0, -1.0, TEXT("all required objectives met")},
+		{TEXT("Emergency + load shed"), {{10.0, M::Emergency, true}}, S, 46.8, 83.0, 0.5, TEXT("all required objectives met")},
+	};
+
+	for (const FV2Expectation& Expect : Matrix)
+	{
+		const FV2Run Run = RunSolarCrisisV2(*this, Expect.Actions);
+		UE_LOG(LogEdenMission, Display,
+			TEXT("V2 MATRIX | %-36s | %s at T=%.1f s (expected %s at %.1f) | peak %.2f C | aux curtailed max %.2f kW | min cooling authority %.0f%% | %s"),
+			Expect.Name, *UEnum::GetValueAsString(Run.Outcome), Run.AtSeconds, *UEnum::GetValueAsString(Expect.Outcome), Expect.AtSeconds,
+			Run.PeakCelsius, Run.MaxAuxCurtailedKw, Run.MinCoolingAuthority * 100.0, *Run.Reason);
+		TestEqual(FString::Printf(TEXT("%s: outcome"), Expect.Name), Run.Outcome, Expect.Outcome);
+		TestTrue(FString::Printf(TEXT("%s: resolves at T=%.1f s (expected %.1f +/- 0.15)"), Expect.Name, Run.AtSeconds, Expect.AtSeconds),
+			FMath::Abs(Run.AtSeconds - Expect.AtSeconds) <= 0.15);
+		if (Expect.PeakCelsius >= 0.0)
+		{
+			TestTrue(FString::Printf(TEXT("%s: peak %.2f C (expected %.2f +/- 0.05)"), Expect.Name, Run.PeakCelsius, Expect.PeakCelsius),
+				FMath::Abs(Run.PeakCelsius - Expect.PeakCelsius) <= 0.05);
+		}
+		if (Expect.AuxCurtailedKw >= 0.0)
+		{
+			TestTrue(FString::Printf(TEXT("%s: auxiliary curtailed %.2f kW (expected %.2f)"), Expect.Name, Run.MaxAuxCurtailedKw, Expect.AuxCurtailedKw),
+				FMath::Abs(Run.MaxAuxCurtailedKw - Expect.AuxCurtailedKw) <= 1.0e-3);
+		}
+		TestTrue(FString::Printf(TEXT("%s: reason '%s' mentions '%s'"), Expect.Name, *Run.Reason, Expect.ReasonContains), Run.Reason.Contains(Expect.ReasonContains));
+		TestTrue(FString::Printf(TEXT("%s: with a charged battery cooling is never power-limited"), Expect.Name), Run.MinCoolingAuthority == 1.0);
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSolarCrisisV2SurfacesAgreeTest,
+	"Eden.Integration.SolarCrisisV2.E.HudReviewAndPowerBusAgree",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSolarCrisisV2SurfacesAgreeTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenRuntimeCompositionTests;
+
+	bool bCheckedFlare = false;
+	bool bCheckedRecovery = false;
+	FEdenAfterActionResult Review;
+	FString ReviewText;
+	FEdenMissionStateSnapshot FinalMission;
+	const FV2Run Run = RunSolarCrisisV2(*this, {{10.0, EEdenThermalControlMode::Emergency, false}},
+		[&](FFlightPropellantFixture& Fixture, double Now)
+		{
+			AEdenFlightPlayerController* Controller = Cast<AEdenFlightPlayerController>(Fixture.Pawn->GetController());
+			if (!Controller)
+			{
+				return;
+			}
+			if (!bCheckedFlare && Now >= 20.0)
+			{
+				bCheckedFlare = true;
+				Controller->RefreshOperatorHudNow();
+				const FEdenOperatorHudSnapshot Hud = Controller->GetOperatorHudSnapshot();
+				const FEdenPowerStateSnapshot Power = Fixture.Power->GetPowerStateSnapshot();
+				TestTrue(TEXT("Flare: HUD power bus equals the authoritative power snapshot"),
+					Hud.Power.bBusLimited && Hud.Power.AuxiliaryCurtailedKilowatts == Power.AuxiliaryCurtailedKilowatts
+					&& Hud.Power.AuxiliaryServedKilowatts == Power.AuxiliaryServedKilowatts && Hud.Power.CoolingAuthority == Power.CoolingAuthority);
+				const FString Systems = UEdenOperatorHudWidget::FormatSystemsPanel(Hud);
+				AddInfo(Systems);
+				TestTrue(TEXT("Flare: SYSTEMS shows curtailed auxiliary load (never as fully powered)"), Systems.Contains(TEXT("CURTAILED 2.5 kW")));
+				TestTrue(TEXT("Flare: SYSTEMS shows full cooling power"), Systems.Contains(TEXT("cooling 100%")));
+			}
+			if (!bCheckedRecovery && Now >= 33.0)
+			{
+				bCheckedRecovery = true;
+				Controller->RefreshOperatorHudNow();
+				const FString MissionText = UEdenOperatorHudWidget::FormatMissionPanel(Controller->GetOperatorHudSnapshot());
+				AddInfo(MissionText);
+				TestTrue(TEXT("Recovery: MISSION shows hold progress and deadline"), MissionText.Contains(TEXT("stable")) && MissionText.Contains(TEXT("deadline T=100 s")));
+			}
+			UWorld* World = Fixture.Pawn->GetWorld();
+			UEdenMissionSubsystem* Mission = World->GetSubsystem<UEdenMissionSubsystem>();
+			if (Mission && !Mission->IsMissionRunning() && FinalMission.MissionState == EEdenMissionState::Inactive)
+			{
+				FinalMission = Mission->GetMissionStateSnapshot();
+				if (UEdenTelemetrySubsystem* Telemetry = World->GetSubsystem<UEdenTelemetrySubsystem>())
+				{
+					Review = Telemetry->BuildAfterActionResult();
+					ReviewText = UEdenAfterActionReviewWidget::FormatResult(Review).ToString();
+				}
+			}
+		});
+
+	TestEqual(TEXT("Emergency strategy succeeds"), Run.Outcome, EEdenMissionState::Succeeded);
+	TestTrue(TEXT("Flare and recovery checks ran"), bCheckedFlare && bCheckedRecovery);
+	AddInfo(ReviewText);
+	TestEqual(TEXT("Review outcome = mission outcome"), Review.FinalMissionState, FinalMission.MissionState);
+	TestEqual(TEXT("Review reason = mission reason"), Review.TerminalReason, FinalMission.TerminalReason);
+	if (TestEqual(TEXT("Review lists every objective"), Review.Objectives.Num(), FinalMission.ObjectiveSnapshots.Num()))
+	{
+		for (int32 I = 0; I < Review.Objectives.Num(); ++I)
+		{
+			TestTrue(FString::Printf(TEXT("Review objective %s state and time = mission"), *Review.Objectives[I].ObjectiveId.ToString()),
+				Review.Objectives[I].ObjectiveId == FinalMission.ObjectiveSnapshots[I].ObjectiveId
+				&& Review.Objectives[I].State == FinalMission.ObjectiveSnapshots[I].State
+				&& Review.Objectives[I].ResolvedAtSeconds == FinalMission.ObjectiveSnapshots[I].ResolvedAtSeconds);
+		}
+	}
+	TestTrue(TEXT("Review reports the limited power bus"), Review.bPowerBusLimited);
+	TestTrue(FString::Printf(TEXT("Review peak curtailment %.2f kW = 2.5"), Review.PeakAuxiliaryCurtailedKilowatts), FMath::IsNearlyEqual(Review.PeakAuxiliaryCurtailedKilowatts, 2.5f, 1.0e-3f));
+	TestTrue(TEXT("Review text says auxiliary systems were not fully powered"), ReviewText.Contains(TEXT("NOT fully powered")));
 	return true;
 }
 

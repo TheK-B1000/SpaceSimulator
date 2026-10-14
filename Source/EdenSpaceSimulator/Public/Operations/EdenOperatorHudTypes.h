@@ -96,6 +96,10 @@ struct EDENSPACESIMULATOR_API FEdenOperatorHudSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
 	float FuelCapacityKilograms = 0.0f;
 
+	/** Why the mission ended (empty while running), from the mission subsystem. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Mission")
+	FString MissionTerminalReason;
+
 	/** Pilot rotation command after input shaping (X pitch, Y yaw, Z roll in [-1, 1]); what the controller sends. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
 	FVector PilotRotationCommand = FVector::ZeroVector;

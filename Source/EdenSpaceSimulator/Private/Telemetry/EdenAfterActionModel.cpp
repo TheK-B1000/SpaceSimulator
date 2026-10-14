@@ -30,7 +30,26 @@ FEdenAfterActionResult FEdenAfterActionModel::Build(
 			FEdenAfterActionObjectiveLine Line;
 			Line.ObjectiveId = Objective.ObjectiveId;
 			Line.State = Objective.State;
+			Line.ResolvedAtSeconds = Objective.ResolvedAtSeconds;
+			Line.FailureReason = Objective.FailureReason;
 			Result.Objectives.Add(Line);
+		}
+		Result.TerminalReason = Snapshots.Last().Mission.TerminalReason;
+
+		for (const FEdenTelemetrySnapshot& Snapshot : Snapshots)
+		{
+			if (!Snapshot.Power.bBusLimited)
+			{
+				continue;
+			}
+			Result.bPowerBusLimited = true;
+			Result.LowestCoolingAuthority = FMath::Min(Result.LowestCoolingAuthority, Snapshot.Power.CoolingAuthority);
+			Result.PeakAuxiliaryRequestedKilowatts = FMath::Max(Result.PeakAuxiliaryRequestedKilowatts, Snapshot.Power.AuxiliaryRequestedKilowatts);
+			Result.PeakAuxiliaryCurtailedKilowatts = FMath::Max(Result.PeakAuxiliaryCurtailedKilowatts, Snapshot.Power.AuxiliaryCurtailedKilowatts);
+			if (Snapshot.Power.AuxiliaryCurtailedKilowatts > 1.0e-3f)
+			{
+				Result.SecondsAuxiliaryCurtailed += Metadata.SnapshotIntervalSeconds;
+			}
 		}
 	}
 	else if (Events.Num() > 0)

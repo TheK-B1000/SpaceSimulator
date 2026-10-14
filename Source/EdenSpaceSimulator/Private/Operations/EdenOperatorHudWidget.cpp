@@ -435,11 +435,28 @@ FString UEdenOperatorHudWidget::FormatSystemsPanel(const FEdenOperatorHudSnapsho
 		}
 	}
 
+	// Power bus (ExecPlan 0011): curtailed auxiliary systems are shown as such, never as fully powered.
+	FString Bus = TEXT("--");
+	if (Snapshot.bHasPower)
+	{
+		const FEdenPowerStateSnapshot& P = Snapshot.Power;
+		Bus = P.bBusLimited
+			? FString::Printf(
+				TEXT("cap %.1f kW  cooling %.0f%%  aux %.1f/%.1f kW%s"),
+				P.BusCapacityKilowatts,
+				P.CoolingAuthority * 100.0f,
+				P.AuxiliaryServedKilowatts,
+				P.AuxiliaryRequestedKilowatts,
+				P.AuxiliaryCurtailedKilowatts > 1.0e-3f ? *FString::Printf(TEXT("  CURTAILED %.1f kW"), P.AuxiliaryCurtailedKilowatts) : TEXT(""))
+			: FString(TEXT("unlimited (all loads powered)"));
+	}
+
 	return FString::Printf(
 		TEXT("PROPELLANT  %s\n")
 		TEXT("FLOW        %s\n")
 		TEXT("MASS        %s\n")
 		TEXT("BATTERY     %s\n")
+		TEXT("BUS         %s\n")
 		TEXT("THERMAL     %s\n")
 		TEXT("THRUST      %s\n")
 		TEXT("LIMITS      %s"),
@@ -447,6 +464,7 @@ FString UEdenOperatorHudWidget::FormatSystemsPanel(const FEdenOperatorHudSnapsho
 		*Flow,
 		*Mass,
 		*Battery,
+		*Bus,
 		*Thermal,
 		*Propulsion,
 		*Limits);
@@ -506,6 +524,29 @@ FString UEdenOperatorHudWidget::FormatMissionPanel(const FEdenOperatorHudSnapsho
 	for (const FEdenMissionObjectiveRuntime& Objective : Snapshot.Objectives)
 	{
 		Text += FString::Printf(TEXT("\n  %-26s %s"), *Objective.ObjectiveId.ToString(), *EnumToString(Objective.State));
+		if (Objective.State == EEdenObjectiveState::Active && Objective.HoldTargetSeconds > 0.0f)
+		{
+			Text += FString::Printf(TEXT("  stable %.1f/%.1f s"), Objective.HoldElapsedSeconds, Objective.HoldTargetSeconds);
+		}
+		if (Objective.State == EEdenObjectiveState::Active && Objective.DeadlineSeconds > 0.0f)
+		{
+			Text += FString::Printf(
+				TEXT("  deadline T=%.0f s (%.0f s left)"),
+				Objective.DeadlineSeconds,
+				FMath::Max(0.0f, Objective.DeadlineSeconds - Snapshot.MissionElapsedTimeSeconds));
+		}
+		if ((Objective.State == EEdenObjectiveState::Completed || Objective.State == EEdenObjectiveState::Failed) && Objective.ResolvedAtSeconds >= 0.0f)
+		{
+			Text += FString::Printf(TEXT("  at T=%.1f s"), Objective.ResolvedAtSeconds);
+		}
+		if (!Objective.FailureReason.IsEmpty())
+		{
+			Text += FString::Printf(TEXT("\n    %s"), *Objective.FailureReason);
+		}
+	}
+	if (!Snapshot.MissionTerminalReason.IsEmpty())
+	{
+		Text += FString::Printf(TEXT("\n  OUTCOME  %s"), *Snapshot.MissionTerminalReason);
 	}
 	for (const FEdenAlert& Alert : Snapshot.ActiveAlerts)
 	{

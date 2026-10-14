@@ -67,6 +67,17 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Mission")
 	void AbortMission();
 
+	/**
+	 * Selects and (re)starts a mission Data Asset, e.g. EdenStartMission /Game/Eden/Data/Missions/DA_SolarCrisisV2.
+	 * StartMission/RestartMission then use it; "EdenStartMission default" returns to the default mission.
+	 */
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void EdenStartMission(const FString& MissionAssetPath);
+
+	/** Shortcut: EdenStartMission /Game/Eden/Data/Missions/DA_SolarCrisisV2 (v1 stays the default). */
+	UFUNCTION(Exec, Category = "Eden|Mission")
+	void StartSolarCrisisV2();
+
 	UFUNCTION(Exec, Category = "Eden|Telemetry")
 	void ExportTelemetry();
 
@@ -192,6 +203,10 @@ protected:
 
 private:
 	void EnsureFlightInputAssetsLoaded();
+	UEdenMissionDefinitionDataAsset* ResolveSelectedMissionAsset();
+
+	/** Mission chosen with EdenStartMission; empty = DefaultMissionDefinitionAsset. */
+	FSoftObjectPath SelectedMissionAssetPath;
 	/** Shows confirmed control feedback on the HUD and refreshes it immediately (outside the 10 Hz cadence). */
 	void ReportControlFeedback(const FString& Message, bool bSucceeded);
 	FString DescribeOperatorRejection(const class UEdenOperatorControlComponent* Operator) const;

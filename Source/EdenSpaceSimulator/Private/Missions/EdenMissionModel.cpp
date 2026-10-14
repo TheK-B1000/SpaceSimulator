@@ -180,6 +180,9 @@ FEdenMissionRuntimeState FEdenMissionModel::InitializeRuntimeState(const FEdenMi
 		FEdenMissionObjectiveRuntime ObjRuntime;
 		ObjRuntime.ObjectiveId = ObjConfig.ObjectiveId;
 		ObjRuntime.State = ObjConfig.bActivateOnStart ? EEdenObjectiveState::Active : EEdenObjectiveState::Pending;
+		ObjRuntime.ObjectiveType = ObjConfig.ObjectiveType;
+		ObjRuntime.HoldTargetSeconds = ObjConfig.ObjectiveType == EEdenObjectiveType::RecoverThermalStability ? ObjConfig.HoldSeconds : 0.0f;
+		ObjRuntime.DeadlineSeconds = ObjConfig.DeadlineSeconds;
 		State.ObjectiveStates.Add(ObjRuntime);
 	}
 

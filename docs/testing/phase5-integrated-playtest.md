@@ -218,6 +218,19 @@ Overall: does the flight model feel enjoyable while still behaving physically co
 Observations on mouse sensitivity, rotation speed, flight assist and camera framing: __
 ```
 
+## Solar Crisis v2 (ExecPlan 0011) — human PIE, pending
+
+Branch `feature/0011-solar-crisis-v2`. v1 stays the default; start v2 with the console command `StartSolarCrisisV2` (or `EdenStartMission /Game/Eden/Data/Missions/DA_SolarCrisisV2`; `EdenStartMission default` returns to v1). Optional: `EdenHudScale 1.5`.
+
+- [ ] Idle in Nominal before starting: temperature holds (A2). With **T** set to Off it drifts up about 0.5 °C/s. Starting v2 resets it to 20 °C regardless; battery, fuel and the selected mode are not reset.
+- [ ] Passive (no input): fails at about T = 29 s, with MISSION showing `PreventOverheating failed: temperature ... exceeded 100 C`.
+- [ ] Boost (**T** to Boost) at T = 10 s: peak about 95 °C. In recovery MISSION shows `stable x/5.0 s  deadline T=100 s`. Succeeds at about T = 85 s.
+- [ ] Emergency at T = 10 s: peak about 75 °C. SYSTEMS shows `BUS cap 8.0 kW  cooling 100%  aux 2.5/5.0 kW  CURTAILED 2.5 kW` during the flare. Succeeds at about T = 38 s.
+- [ ] Boost through the flare, then back to Nominal: temperature stays flat at about 95 °C and the mission fails at T = 100 s with `recovery not achieved`.
+- [ ] Load shed only: fails earlier (about T = 27 s). Load shed does not help cooling.
+- [ ] `ShowAfterAction` after each run: outcome, reason, objective times and reasons match the HUD; the Power Bus section says when auxiliary systems were not fully powered.
+- [ ] The log shows the thermal balance and power-bus lines (`external heating changed`, `power bus curtailing load`) at T = 10 s and T = 30 s.
+
 ## Checkpoint M (separate, not part of this pass)
 
 Checkpoint M is validated in its own session against its baseline (automated baseline `455c238`; the human gate uses the PIE checklist in ExecPlan 0007). Do not use this branch for it, and do not combine its results with this report. The Checkpoint A–D PIE checklist (ExecPlan 0008 §F.5) also remains required and pending.

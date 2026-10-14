@@ -139,6 +139,14 @@ FText UEdenAfterActionReviewWidget::FormatResult(const FEdenAfterActionResult& R
 			TEXT("\n  %s %s"),
 			*ObjectiveMark(Objective.State),
 			*Objective.ObjectiveId.ToString());
+		if ((Objective.State == EEdenObjectiveState::Completed || Objective.State == EEdenObjectiveState::Failed) && Objective.ResolvedAtSeconds >= 0.0f)
+		{
+			ObjectivesText += FString::Printf(TEXT("  (T=%.1f s)"), Objective.ResolvedAtSeconds);
+		}
+		if (!Objective.FailureReason.IsEmpty())
+		{
+			ObjectivesText += FString::Printf(TEXT("\n      %s"), *Objective.FailureReason);
+		}
 	}
 	if (ObjectivesText.IsEmpty())
 	{
@@ -146,6 +154,19 @@ FText UEdenAfterActionReviewWidget::FormatResult(const FEdenAfterActionResult& R
 	}
 
 	const FString TruncationNote = Result.bHistoryTruncated ? TEXT("\n\n[History truncated]") : TEXT("");
+	FString PowerBusText;
+	if (Result.bPowerBusLimited)
+	{
+		// Curtailed auxiliary systems were not fully powered; say so explicitly.
+		PowerBusText = FString::Printf(
+			TEXT("\n\nPower Bus\n  Lowest cooling power  %.0f%%\n  Auxiliary peak        %.1f kW requested, up to %.1f kW curtailed\n  Time curtailed        %.1f s%s"),
+			Result.LowestCoolingAuthority * 100.0f,
+			Result.PeakAuxiliaryRequestedKilowatts,
+			Result.PeakAuxiliaryCurtailedKilowatts,
+			Result.SecondsAuxiliaryCurtailed,
+			Result.PeakAuxiliaryCurtailedKilowatts > 1.0e-3f ? TEXT("  (auxiliary systems were NOT fully powered)") : TEXT(""));
+	}
+	const FString ReasonText = Result.TerminalReason.IsEmpty() ? FString() : FString::Printf(TEXT("\n%s"), *Result.TerminalReason);
 	const FString Body = FString::Printf(
 		TEXT(
 			"%s\n"
@@ -159,9 +180,9 @@ FText UEdenAfterActionReviewWidget::FormatResult(const FEdenAfterActionResult& R
 			"Operator Actions      %d\n"
 			"Critical Alerts       %d\n"
 			"\n"
-			"Objectives%s%s"),
+			"Objectives%s%s%s"),
 		*Result.MissionId.ToString(),
-		*OutcomeLabel(Result.FinalMissionState),
+		*(OutcomeLabel(Result.FinalMissionState) + ReasonText),
 		Result.DurationSeconds,
 		Result.PeakRecordedSimulationTemperatureCelsius,
 		Result.LowestRecordedBatteryChargeFraction * 100.0f,
@@ -169,6 +190,7 @@ FText UEdenAfterActionReviewWidget::FormatResult(const FEdenAfterActionResult& R
 		Result.OperatorCommandCount,
 		Result.CriticalAlertCount,
 		*ObjectivesText,
+		*PowerBusText,
 		*TruncationNote);
 
 	return FText::FromString(Body);

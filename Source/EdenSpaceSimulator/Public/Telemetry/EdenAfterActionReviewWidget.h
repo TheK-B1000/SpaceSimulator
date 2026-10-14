@@ -27,6 +27,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|AAR")
 	FEdenAfterActionResult GetAfterActionResult() const;
 
+	/** Pure formatter for the review text, exposed for tests. */
+	static FText FormatResult(const FEdenAfterActionResult& Result);
+
 protected:
 	virtual void NativeConstruct() override;
 
@@ -36,7 +39,6 @@ protected:
 private:
 	void EnsureDisplayCreated();
 	void RefreshDisplayFromResult();
-	static FText FormatResult(const FEdenAfterActionResult& Result);
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Eden|AAR", meta = (AllowPrivateAccess = "true"))
 	FEdenAfterActionResult CurrentResult;

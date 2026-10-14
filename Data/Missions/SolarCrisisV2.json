@@ -1,0 +1,26 @@
+{
+	"MissionId": "SolarCrisisV2",
+	"DisplayName": "Solar Crisis v2",
+	"InitialConditions": {
+		"bSetInitialTemperature": true,
+		"InitialTemperatureCelsius": 20.0,
+		"bSetBatteryDischargeLimit": true,
+		"BatteryMaxDischargeKilowatts": 6.0
+	},
+	"Events": [
+		{ "EventId": "WarningPhaseBegin", "TriggerTimeSeconds": 5.0, "CommandType": "SetMissionPhase", "PhaseParameter": "Warning" },
+		{ "EventId": "ImpactPhaseBegin", "TriggerTimeSeconds": 10.0, "CommandType": "SetMissionPhase", "PhaseParameter": "Impact" },
+		{ "EventId": "SolarFlareHeating", "TriggerTimeSeconds": 10.0, "CommandType": "SetExternalHeatingRate", "FloatParameter": 4.25 },
+		{ "EventId": "AuxiliaryLoadDemand", "TriggerTimeSeconds": 10.0, "CommandType": "SetExternalPowerDemand", "FloatParameter": 5.0 },
+		{ "EventId": "RecoveryPhaseBegin", "TriggerTimeSeconds": 30.0, "CommandType": "SetMissionPhase", "PhaseParameter": "Recovery" },
+		{ "EventId": "ClearSolarFlare", "TriggerTimeSeconds": 30.0, "CommandType": "ClearExternalHeatingRate" },
+		{ "EventId": "ClearAuxiliaryDemand", "TriggerTimeSeconds": 30.0, "CommandType": "ClearExternalPowerDemand" },
+		{ "EventId": "ActivateRecovery", "TriggerTimeSeconds": 30.0, "CommandType": "ActivateObjective", "NameParameter": "RecoverThermalStability" }
+	],
+	"Objectives": [
+		{ "ObjectiveId": "PreventOverheating", "DisplayName": "Keep temperature at or below 100 C", "ObjectiveType": "KeepTemperatureBelow", "TargetValue": 100.0, "bRequired": true, "bActivateOnStart": true },
+		{ "ObjectiveId": "ConservePropellant", "DisplayName": "Keep propellant at or above 20%", "ObjectiveType": "MaintainFuelAbove", "TargetValue": 0.20, "bRequired": true, "bActivateOnStart": true },
+		{ "ObjectiveId": "MaintainBatteryReserve", "DisplayName": "Keep battery at or above 10%", "ObjectiveType": "MaintainPowerAbove", "TargetValue": 0.10, "bRequired": true, "bActivateOnStart": true },
+		{ "ObjectiveId": "RecoverThermalStability", "DisplayName": "Recover: below 70 C and stable for 5 s by T=100 s", "ObjectiveType": "RecoverThermalStability", "TargetValue": 70.0, "HoldSeconds": 5.0, "DeadlineSeconds": 100.0, "bRequired": true, "bActivateOnStart": false }
+	]
+}

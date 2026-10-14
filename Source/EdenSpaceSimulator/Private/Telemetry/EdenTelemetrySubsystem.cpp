@@ -571,6 +571,16 @@ void UEdenTelemetrySubsystem::HandleMissionStateChanged(EEdenMissionState Previo
 			*UEnum::GetValueAsString(NewState),
 			FString::Printf(TEXT("%s -> %s"), *UEnum::GetValueAsString(PreviousState), *UEnum::GetValueAsString(NewState)));
 	}
+
+	// The mission's last step (final objective states, terminal reason) can fall between periodic
+	// snapshots; record it now so the after-action review reports authoritative final state.
+	if (Type == EEdenTelemetryEventType::MissionSucceeded
+		|| Type == EEdenTelemetryEventType::MissionFailed
+		|| Type == EEdenTelemetryEventType::MissionAborted)
+	{
+		StepsSinceSnapshot = SnapshotDecimationSteps;
+		StoreSnapshotIfDue(AssembleSnapshot());
+	}
 }
 
 void UEdenTelemetrySubsystem::HandleMissionPhaseChanged(EEdenMissionPhase PreviousPhase, EEdenMissionPhase NewPhase)
