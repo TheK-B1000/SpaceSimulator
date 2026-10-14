@@ -243,6 +243,7 @@ bool UEdenPowerSystemComponent::SetExternalDemandKilowatts(float ExternalDemandK
 			SanitizedExternalDemand);
 	}
 
+	const float PreviousExternalDemand = CurrentSnapshot.ExternalDemandKilowatts;
 	ApplySnapshot(
 		FEdenPowerModel::MakeSnapshot(
 			ActivePowerConfig,
@@ -252,6 +253,24 @@ bool UEdenPowerSystemComponent::SetExternalDemandKilowatts(float ExternalDemandK
 			SanitizedExternalDemand,
 			CurrentSnapshot.OperatorDemandKilowatts),
 		true);
+	if (PreviousExternalDemand != CurrentSnapshot.ExternalDemandKilowatts)
+	{
+		// Authoritative confirmation that mission demand was applied or cleared.
+		UE_LOG(
+			LogEdenSystems,
+			Log,
+			TEXT("%s external demand changed %.3f -> %.3f kW. Generation=%.3f kW | demand baseline %.3f + external %.3f + operator %+.3f = %.3f kW | net %+.3f kW | battery %.3f kWh"),
+			*MakeLogContext(),
+			PreviousExternalDemand,
+			CurrentSnapshot.ExternalDemandKilowatts,
+			CurrentSnapshot.GenerationKilowatts,
+			CurrentSnapshot.BaselineDemandKilowatts,
+			CurrentSnapshot.ExternalDemandKilowatts,
+			CurrentSnapshot.OperatorDemandKilowatts,
+			CurrentSnapshot.TotalDemandKilowatts,
+			CurrentSnapshot.NetPowerKilowatts,
+			CurrentSnapshot.BatteryChargeKilowattHours);
+	}
 
 	return !bWasSanitized;
 }

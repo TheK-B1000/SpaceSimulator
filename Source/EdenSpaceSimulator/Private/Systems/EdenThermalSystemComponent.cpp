@@ -45,6 +45,10 @@ void UEdenThermalSystemComponent::AdvanceSimulation(float FixedDeltaSeconds)
 
 	const FEdenThermalStepResult StepResult =
 		FEdenThermalModel::Step(ActiveThermalConfig, CurrentSnapshot, FixedDeltaSeconds);
+	if (FEdenThermalModel::IsValidDeltaTime(FixedDeltaSeconds))
+	{
+		LastFixedDeltaSeconds = FixedDeltaSeconds;
+	}
 
 	if (!StepResult.bConfigWasValid)
 	{
@@ -249,6 +253,7 @@ bool UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond(
 			SanitizedRate);
 	}
 
+	const float PreviousExternalHeating = CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond;
 	ApplySnapshot(
 		FEdenThermalModel::MakeSnapshot(
 			ActiveThermalConfig,
@@ -258,6 +263,7 @@ bool UEdenThermalSystemComponent::SetExternalHeatingRateDegreesCelsiusPerSecond(
 			SanitizedRate,
 			CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
 		true);
+	LogThermalInputChange(TEXT("external heating"), PreviousExternalHeating, CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond);
 
 	return !bWasSanitized;
 }
@@ -292,6 +298,7 @@ bool UEdenThermalSystemComponent::SetOperatorDissipationDegreesCelsiusPerSecond(
 			SanitizedOperatorDissipation);
 	}
 
+	const float PreviousOperatorDissipation = CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond;
 	ApplySnapshot(
 		FEdenThermalModel::MakeSnapshot(
 			ActiveThermalConfig,
@@ -301,6 +308,7 @@ bool UEdenThermalSystemComponent::SetOperatorDissipationDegreesCelsiusPerSecond(
 			CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
 			SanitizedOperatorDissipation),
 		true);
+	LogThermalInputChange(TEXT("operator cooling"), PreviousOperatorDissipation, CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond);
 
 	return !bWasSanitized;
 }
@@ -448,16 +456,16 @@ void UEdenThermalSystemComponent::ApplySnapshot(const FEdenThermalStateSnapshot&
 		return;
 	}
 
+	// Logs the effective balance (all heating and cooling terms), not only the baseline rates.
+	// Human diagnostics only: ProjectEden receives structured telemetry snapshots, never these log lines.
 	UE_LOG(
 		LogEdenSystems,
 		Log,
-		TEXT("%s thermal state changed from %s to %s. Temperature=%f C Heat=%f C/s Dissipation=%f C/s"),
+		TEXT("%s thermal state changed from %s to %s. %s"),
 		*MakeLogContext(),
 		*UEnum::GetValueAsString(PreviousState),
 		*UEnum::GetValueAsString(CurrentSnapshot.ThermalState),
-		CurrentSnapshot.TemperatureCelsius,
-		CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
-		CurrentSnapshot.DissipationDegreesCelsiusPerSecond);
+		*FEdenThermalModel::DescribeThermalBalance(GetThermalBalance()));
 
 	OnThermalStateChanged.Broadcast(PreviousState, CurrentSnapshot.ThermalState);
 
@@ -465,6 +473,29 @@ void UEdenThermalSystemComponent::ApplySnapshot(const FEdenThermalStateSnapshot&
 	{
 		OnThermalOverheated.Broadcast();
 	}
+}
+
+FEdenThermalBalance UEdenThermalSystemComponent::GetThermalBalance() const
+{
+	return FEdenThermalModel::ComputeThermalBalance(ActiveThermalConfig, CurrentSnapshot, LastFixedDeltaSeconds);
+}
+
+void UEdenThermalSystemComponent::LogThermalInputChange(const TCHAR* InputName, float PreviousRate, float NewRate) const
+{
+	if (PreviousRate == NewRate)
+	{
+		return;
+	}
+
+	UE_LOG(
+		LogEdenSystems,
+		Log,
+		TEXT("%s %s changed %.3f -> %.3f C/s. %s"),
+		*MakeLogContext(),
+		InputName,
+		PreviousRate,
+		NewRate,
+		*FEdenThermalModel::DescribeThermalBalance(GetThermalBalance()));
 }
 
 FString UEdenThermalSystemComponent::MakeLogContext() const

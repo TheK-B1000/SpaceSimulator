@@ -356,3 +356,100 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 
 	return Result;
 }
+
+FEdenThermalBalance FEdenThermalModel::ComputeThermalBalance(
+	const FEdenThermalConfig& Config,
+	const FEdenThermalStateSnapshot& Snapshot,
+	float StepSeconds)
+{
+	FEdenThermalBalance Balance;
+	if (!ValidateConfig(Config) || !IsValidDeltaTime(StepSeconds))
+	{
+		return Balance;
+	}
+
+	// Same sanitation as Step(), so the terms are exactly what the simulation integrates.
+	const FEdenThermalStateSnapshot Sanitized = MakeSnapshot(
+		Config,
+		Snapshot.TemperatureCelsius,
+		Snapshot.HeatGenerationDegreesCelsiusPerSecond,
+		Snapshot.DissipationDegreesCelsiusPerSecond,
+		Snapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+		Snapshot.OperatorDissipationDegreesCelsiusPerSecond);
+
+	Balance.bIsValid = true;
+	Balance.StepSeconds = StepSeconds;
+	Balance.TemperatureCelsius = Sanitized.TemperatureCelsius;
+	Balance.BaseHeatingDegreesCelsiusPerSecond = Sanitized.HeatGenerationDegreesCelsiusPerSecond;
+	Balance.ExternalHeatingDegreesCelsiusPerSecond = Sanitized.ExternalHeatingRateDegreesCelsiusPerSecond;
+	Balance.TotalHeatingDegreesCelsiusPerSecond =
+		Balance.BaseHeatingDegreesCelsiusPerSecond + Balance.ExternalHeatingDegreesCelsiusPerSecond;
+	Balance.BaseDissipationDegreesCelsiusPerSecond = Sanitized.DissipationDegreesCelsiusPerSecond;
+	Balance.OperatorDissipationDegreesCelsiusPerSecond = Sanitized.OperatorDissipationDegreesCelsiusPerSecond;
+	Balance.EffectiveDissipationDegreesCelsiusPerSecond = Sanitized.EffectiveDissipationDegreesCelsiusPerSecond;
+	Balance.UnconstrainedNetDegreesCelsiusPerSecond =
+		Balance.TotalHeatingDegreesCelsiusPerSecond - Balance.EffectiveDissipationDegreesCelsiusPerSecond;
+
+	// The realized rate comes from the simulation's own step, so ambient and limit bounds match exactly.
+	const FEdenThermalStepResult Next = Step(Config, Snapshot, StepSeconds);
+	Balance.RealizedNetDegreesCelsiusPerSecond =
+		static_cast<double>(Next.TemperatureDeltaCelsius) / static_cast<double>(StepSeconds);
+
+	// Temperatures are float: near 100 C one ulp over a 0.1 s step is ~1e-4 C/s, so compare at 1e-3.
+	constexpr double RateTolerance = 1.0e-3;
+	if (FMath::Abs(Balance.RealizedNetDegreesCelsiusPerSecond - Balance.UnconstrainedNetDegreesCelsiusPerSecond) > RateTolerance)
+	{
+		const float NextTemperature = Next.Snapshot.TemperatureCelsius;
+		if (Balance.UnconstrainedNetDegreesCelsiusPerSecond > 0.0 && NextTemperature >= Config.AbsoluteMaxTemperatureCelsius)
+		{
+			Balance.Limit = EEdenThermalRateLimit::AbsoluteMax;
+		}
+		else if (Balance.UnconstrainedNetDegreesCelsiusPerSecond < 0.0 && NextTemperature <= Config.AbsoluteMinTemperatureCelsius)
+		{
+			Balance.Limit = EEdenThermalRateLimit::AbsoluteMin;
+		}
+		else
+		{
+			Balance.Limit = EEdenThermalRateLimit::Ambient;
+		}
+	}
+
+	return Balance;
+}
+
+FString FEdenThermalModel::DescribeThermalBalance(const FEdenThermalBalance& Balance)
+{
+	if (!Balance.bIsValid)
+	{
+		return TEXT("thermal balance unavailable (invalid configuration or step)");
+	}
+
+	const TCHAR* LimitText = TEXT("none");
+	switch (Balance.Limit)
+	{
+	case EEdenThermalRateLimit::AbsoluteMax:
+		LimitText = TEXT("held at absolute max (net heating saturated)");
+		break;
+	case EEdenThermalRateLimit::AbsoluteMin:
+		LimitText = TEXT("held at absolute min (net cooling saturated)");
+		break;
+	case EEdenThermalRateLimit::Ambient:
+		LimitText = TEXT("dissipation limited at ambient");
+		break;
+	default:
+		break;
+	}
+
+	return FString::Printf(
+		TEXT("Temperature=%.3f C | heating base %.3f + external %.3f = %.3f C/s | cooling base %.3f + operator %+.3f = effective %.3f C/s | net %+.3f C/s (realized %+.3f C/s) | limit: %s"),
+		Balance.TemperatureCelsius,
+		Balance.BaseHeatingDegreesCelsiusPerSecond,
+		Balance.ExternalHeatingDegreesCelsiusPerSecond,
+		Balance.TotalHeatingDegreesCelsiusPerSecond,
+		Balance.BaseDissipationDegreesCelsiusPerSecond,
+		Balance.OperatorDissipationDegreesCelsiusPerSecond,
+		Balance.EffectiveDissipationDegreesCelsiusPerSecond,
+		Balance.UnconstrainedNetDegreesCelsiusPerSecond,
+		Balance.RealizedNetDegreesCelsiusPerSecond,
+		LimitText);
+}
