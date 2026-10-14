@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Flight/EdenFlightPresentationTypes.h"
 #include "Flight/EdenFlightTypes.h"
 #include "GameFramework/Pawn.h"
 #include "Systems/EdenResourceDebugTypes.h"
@@ -18,6 +19,7 @@ class UCameraComponent;
 class UCanvas;
 class UNiagaraComponent;
 class USphereComponent;
+class USpringArmComponent;
 
 UCLASS(BlueprintType, Blueprintable)
 class EDENSPACESIMULATOR_API AEdenSpacecraftPawn : public APawn
@@ -60,6 +62,31 @@ public:
 
 	FEdenSpacecraftSystemsDebugSnapshot GetEdenSystemsDebugSnapshot() const;
 
+	/** Main-engine visual level last shown (delivered forward force / forward rating). Presentation only. */
+	UFUNCTION(BlueprintPure, Category = "Eden|Presentation")
+	float GetMainEngineVisualLevel() const { return MainEngineVisualLevel; }
+
+	UFUNCTION(BlueprintPure, Category = "Eden|Presentation")
+	USpringArmComponent* GetChaseCameraArm() const { return ChaseCameraArm; }
+
+	/** Bounding radius of the presentation hull (cm) used for camera framing; 0 until the hull is applied. */
+	UFUNCTION(BlueprintPure, Category = "Eden|Presentation")
+	float GetPresentationHullRadiusCentimeters() const { return PresentationHullRadiusCentimeters; }
+
+	/** Rebuilds the chase camera from CameraSettings (e.g. after editing them at runtime). */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Presentation")
+	void ApplyChaseCamera();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Presentation")
+	FEdenFlightCameraSettings CameraSettings;
+
+	/** Sky dome star brightness (M_Star_Nebula scalar parameters). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Presentation", meta = (ClampMin = "0.0"))
+	float NearStarsIntensity = 2.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Presentation", meta = (ClampMin = "0.0"))
+	float FarStarsIntensity = 1.8f;
+
 private:
 	void RestoreRequiredCollisionRoot();
 	void ApplyPresentationHull();
@@ -99,5 +126,10 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCameraComponent> PresentationCamera;
 
+	UPROPERTY(Transient)
+	TObjectPtr<USpringArmComponent> ChaseCameraArm;
+
 	float PresentationBaseFieldOfView = 90.0f;
+	float PresentationHullRadiusCentimeters = 0.0f;
+	float MainEngineVisualLevel = 0.0f;
 };

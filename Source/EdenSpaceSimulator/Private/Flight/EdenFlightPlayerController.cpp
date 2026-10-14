@@ -11,6 +11,10 @@
 #include "Flight/EdenFlightMovementModel.h"
 #include "Flight/EdenSpacecraftPawn.h"
 #include "HAL/PlatformMisc.h"
+#include "Misc/DateTime.h"
+#include "Misc/Paths.h"
+#include "TimerManager.h"
+#include "UnrealClient.h"
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "InputMappingContext.h"
@@ -93,6 +97,7 @@ void AEdenFlightPlayerController::PlayerTick(float DeltaTime)
 
 	bLoggedUnexpectedPawnState = false;
 	SpacecraftPawn->ApplyFlightInputCommand(GetCurrentFlightInputCommand(), DeltaTime);
+	AdvanceMouseStick(DeltaTime);
 
 	OperatorHudRefreshAccumulatorSeconds += DeltaTime;
 	const float RefreshIntervalSeconds = OperatorHudRefreshHz > KINDA_SMALL_NUMBER ? (1.0f / OperatorHudRefreshHz) : 0.1f;
@@ -150,6 +155,84 @@ void AEdenFlightPlayerController::Reset()
 void AEdenFlightPlayerController::ClearFlightInputIntent()
 {
 	FlightInputIntent.Reset();
+	MouseStickPitchYaw = FVector2D::ZeroVector;
+	RollKeyInput = 0.0;
+}
+
+void AEdenFlightPlayerController::EdenCaptureScreenshot(float DelaySeconds, int32 QuitAfter)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	const FString Filename = FPaths::Combine(
+		FPaths::ScreenShotDir(),
+		FString::Printf(TEXT("EdenCapture_%s.png"), *FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"))));
+	const bool bQuit = QuitAfter != 0;
+	TWeakObjectPtr<AEdenFlightPlayerController> WeakThis(this);
+	World->GetTimerManager().SetTimer(
+		ScreenshotTimerHandle,
+		FTimerDelegate::CreateLambda([WeakThis, Filename, bQuit]()
+		{
+			AEdenFlightPlayerController* Controller = WeakThis.Get();
+			if (!Controller)
+			{
+				return;
+			}
+			FScreenshotRequest::RequestScreenshot(Filename, /*bShowUI*/ true, /*bAddFilenameSuffix*/ false);
+			UE_LOG(LogEdenFlight, Display, TEXT("EdenCaptureScreenshot requested %s"), *Filename);
+			if (bQuit)
+			{
+				// Give the renderer a few frames to resolve and write the capture before quitting.
+				Controller->GetWorldTimerManager().SetTimer(
+					Controller->ScreenshotTimerHandle,
+					FTimerDelegate::CreateWeakLambda(Controller, [Controller]() { Controller->ConsoleCommand(TEXT("quit")); }),
+					2.0f,
+					false);
+			}
+		}),
+		FMath::Max(0.1f, DelaySeconds),
+		false);
+	UE_LOG(LogEdenFlight, Display, TEXT("EdenCaptureScreenshot scheduled in %.1fs -> %s%s"), FMath::Max(0.1f, DelaySeconds), *Filename, bQuit ? TEXT(" (then quit)") : TEXT(""));
+}
+
+void AEdenFlightPlayerController::EdenCenterMouseStick()
+{
+	MouseStickPitchYaw = FVector2D::ZeroVector;
+	ApplyComposedRotationIntent();
+}
+
+void AEdenFlightPlayerController::AddRotationInputSample(const FVector& RotationAxes)
+{
+	if (!RotationAxes.ContainsNaN())
+	{
+		MouseStickPitchYaw = FEdenFlightPresentationModel::AccumulateMouseStick(
+			MouseStickPitchYaw,
+			FVector2D(RotationAxes.X, RotationAxes.Y),
+			MouseStickSettings);
+		RollKeyInput = FMath::Clamp(RotationAxes.Z, -1.0, 1.0);
+	}
+	ApplyComposedRotationIntent();
+}
+
+void AEdenFlightPlayerController::ReleaseRotationInput()
+{
+	RollKeyInput = 0.0;
+	ApplyComposedRotationIntent();
+}
+
+void AEdenFlightPlayerController::AdvanceMouseStick(float DeltaSeconds)
+{
+	MouseStickPitchYaw = FEdenFlightPresentationModel::CenterMouseStick(MouseStickPitchYaw, MouseStickSettings, DeltaSeconds);
+	ApplyComposedRotationIntent();
+}
+
+void AEdenFlightPlayerController::ApplyComposedRotationIntent()
+{
+	const FVector2D Shaped = FEdenFlightPresentationModel::ApplyStickDeadZone(MouseStickPitchYaw, MouseStickSettings);
+	SetRotationIntent(FVector(Shaped.X, Shaped.Y, RollKeyInput));
 }
 
 FEdenFlightInputCommand AEdenFlightPlayerController::GetCurrentFlightInputCommand() const
@@ -296,13 +379,13 @@ void AEdenFlightPlayerController::HandleTranslateReleased(const FInputActionValu
 
 void AEdenFlightPlayerController::HandleRotateInput(const FInputActionValue& Value)
 {
-	SetRotationIntent(Value.Get<FVector>());
+	AddRotationInputSample(Value.Get<FVector>());
 }
 
 void AEdenFlightPlayerController::HandleRotateReleased(const FInputActionValue& Value)
 {
 	(void)Value;
-	SetRotationIntent(FVector::ZeroVector);
+	ReleaseRotationInput();
 }
 
 void AEdenFlightPlayerController::HandleStabilizeStarted(const FInputActionValue& Value)
@@ -622,6 +705,7 @@ FEdenOperatorHudSnapshot AEdenFlightPlayerController::AssembleOperatorHudSnapsho
 	Snapshot.bHasFlight = bHasFlight;
 	Snapshot.Flight = FlightSnapshot;
 	Snapshot.FuelCapacityKilograms = FuelCapacityKilograms;
+	Snapshot.PilotRotationCommand = GetCurrentFlightInputCommand().RotationInput;
 	Snapshot.bHasEdenAdapter = bHasEdenAdapter;
 	Snapshot.EdenConnection = EdenConnection;
 	return Snapshot;

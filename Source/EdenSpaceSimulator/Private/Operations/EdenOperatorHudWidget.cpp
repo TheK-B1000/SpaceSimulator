@@ -303,6 +303,7 @@ FString UEdenOperatorHudWidget::FormatFlightPanel(const FEdenOperatorHudSnapshot
 		TEXT("TRAVEL    %s\n")
 		TEXT("RATES     pitch %+6.1f  yaw %+6.1f  roll %+6.1f deg/s\n")
 		TEXT("ATTITUDE  P %+6.1f  Y %+6.1f  R %+6.1f deg\n")
+		TEXT("STICK     pitch %+5.2f  yaw %+5.2f  roll %+5.2f\n")
 		TEXT("ASSIST    %s   [X]"),
 		Speed,
 		AlongTravel,
@@ -316,6 +317,9 @@ FString UEdenOperatorHudWidget::FormatFlightPanel(const FEdenOperatorHudSnapshot
 		Attitude.Pitch,
 		Attitude.Yaw,
 		Attitude.Roll,
+		Snapshot.PilotRotationCommand.X,
+		Snapshot.PilotRotationCommand.Y,
+		Snapshot.PilotRotationCommand.Z,
 		*AssistText(Flight));
 }
 

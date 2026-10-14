@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Flight/EdenFlightPresentationTypes.h"
 #include "Flight/EdenFlightTypes.h"
 #include "GameFramework/PlayerController.h"
 #include "Operations/EdenOperatorHudTypes.h"
@@ -39,6 +40,23 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
 	FEdenOperatorHudSnapshot GetOperatorHudSnapshot() const;
+
+	/** Raw mouse virtual-stick deflection (X = pitch, Y = yaw), before the dead zone. */
+	UFUNCTION(BlueprintPure, Category = "Eden|Controls")
+	FVector2D GetMouseStickDeflection() const { return MouseStickPitchYaw; }
+
+	/** Re-centres the mouse virtual stick (also console). */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|Controls")
+	void EdenCenterMouseStick();
+
+	/** Mouse rotation input arrives as per-frame deltas; feeds them to the virtual stick. Exposed for tests. */
+	void AddRotationInputSample(const FVector& RotationAxes);
+
+	/** Releases the rotation action: roll keys stop, the mouse stick keeps its deflection and auto-centres. */
+	void ReleaseRotationInput();
+
+	/** Advances stick auto-centring by DeltaSeconds. Called from PlayerTick after the command is applied. */
+	void AdvanceMouseStick(float DeltaSeconds);
 
 	UFUNCTION(Exec, Category = "Eden|Mission")
 	void StartMission();
@@ -89,6 +107,13 @@ public:
 	UFUNCTION(Exec, Category = "Eden|Debug")
 	void EdenHudDiagnostics();
 
+	/**
+	 * PIE/dev: capture a screenshot (with HUD) after DelaySeconds of real time, to Saved/Screenshots.
+	 * QuitAfter != 0 quits once the capture has been written (for scripted framing checks).
+	 */
+	UFUNCTION(Exec, Category = "Eden|Debug")
+	void EdenCaptureScreenshot(float DelaySeconds, int32 QuitAfter);
+
 	/** PIE/dev: set stored propellant (kg) through the fuel system, its only owner. For empty-tank / depletion checks. */
 	UFUNCTION(Exec, Category = "Eden|Debug")
 	void EdenSetFuelKilograms(float Kilograms);
@@ -123,6 +148,9 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|HUD", meta = (ClampMin = "1.0", ClampMax = "30.0"))
 	float OperatorHudRefreshHz = 10.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Controls")
+	FEdenFlightMouseSettings MouseStickSettings;
 
 protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Eden|Flight|Input")
@@ -168,6 +196,7 @@ private:
 	void BindFlightInputActions();
 	void SetTranslationIntent(FVector NewTranslationInput);
 	void SetRotationIntent(FVector NewRotationInput);
+	void ApplyComposedRotationIntent();
 	void HandleTranslateInput(const FInputActionValue& Value);
 	void HandleTranslateReleased(const FInputActionValue& Value);
 	void HandleRotateInput(const FInputActionValue& Value);
@@ -195,4 +224,12 @@ private:
 	FEdenOperatorHudSnapshot CachedOperatorHudSnapshot;
 
 	float OperatorHudRefreshAccumulatorSeconds = 0.0f;
+
+	FTimerHandle ScreenshotTimerHandle;
+
+	/** Mouse virtual stick (X = pitch, Y = yaw) in [-1, 1]; persists between frames. */
+	FVector2D MouseStickPitchYaw = FVector2D::ZeroVector;
+
+	/** Roll keys (E/Q) are direct: held = deflected, released = centred. */
+	double RollKeyInput = 0.0;
 };

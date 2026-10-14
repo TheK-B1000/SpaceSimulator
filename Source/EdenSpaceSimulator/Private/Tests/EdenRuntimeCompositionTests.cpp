@@ -18,7 +18,10 @@
 #include "Systems/EdenThermalConfigDataAsset.h"
 #include "Systems/EdenThermalSystemComponent.h"
 
+#include "Camera/CameraComponent.h"
 #include "Components/SphereComponent.h"
+#include "Flight/EdenFlightPresentationTypes.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -1701,6 +1704,133 @@ bool FEdenRuntimeCompositionFlightFixedStepFollowsSimulationPauseTest::RunTest(c
 	TestEqual(TEXT("Reset clears flight step count"), Flight->GetFlightDynamicsSnapshot().FlightStepCount, static_cast<int64>(0));
 	TestEqual(TEXT("Reset clears velocity"), Flight->GetSpeedMetersPerSecond(), 0.0f);
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionPureRotationDoesNotLightMainEngineTest,
+	"Eden.Integration.Flight.PureRotationDoesNotLightMainEngine",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionPureRotationDoesNotLightMainEngineTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	FEdenFlightInputCommand Pitch;
+	Pitch.RotationInput = FVector(1.0, 0.0, 0.0);
+	Pitch.bStabilizationEnabled = false;
+	Fixture.Advance(Pitch, 5);
+
+	// The aggregate demand counts attitude thrusters, which is what used to drive the flame.
+	AddInfo(FString::Printf(TEXT("Pure pitch: aggregate demand %.3f, main-engine level %.3f"),
+		Fixture.Flight->GetPropulsionDemandNormalized(), Fixture.Pawn->GetMainEngineVisualLevel()));
+	TestTrue(TEXT("Attitude thrusters are firing (aggregate demand > 0)"), Fixture.Flight->GetPropulsionDemandNormalized() > 0.0f);
+	TestEqual(TEXT("Pure rotation does not light the main engine"), Fixture.Pawn->GetMainEngineVisualLevel(), 0.0f);
+
+	Fixture.Advance(EdenRuntimeCompositionTests::FFlightPropellantFixture::FullBurn(), 1);
+	TestTrue(TEXT("A full forward burn lights the main engine at its delivered level"), Fixture.Pawn->GetMainEngineVisualLevel() > 0.99f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionMouseStickHoldsAndCentresTest,
+	"Eden.Integration.Flight.MouseStickHoldsAndCentres",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionMouseStickHoldsAndCentresTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+	AEdenFlightPlayerController* Controller = EdenRuntimeCompositionTests::PossessWithController(Fixture);
+	if (!TestNotNull(TEXT("Flight controller possesses the pawn"), Controller))
+	{
+		return false;
+	}
+
+	const FEdenFlightMouseSettings& Mouse = Controller->MouseStickSettings;
+	const double Raw = 40.0 * Mouse.Sensitivity;
+	const double Expected = (Raw - Mouse.DeadZone) / (1.0 - Mouse.DeadZone);
+
+	Controller->AddRotationInputSample(FVector(40.0, 0.0, 0.0));
+	TestTrue(
+		FString::Printf(TEXT("40 counts of mouse is a proportional pitch command (%.4f)"), Controller->GetCurrentFlightInputCommand().RotationInput.X),
+		FMath::IsNearlyEqual(Controller->GetCurrentFlightInputCommand().RotationInput.X, Expected, 1.0e-5));
+
+	// The action completes when the mouse stops; the deflection must survive it.
+	Controller->ReleaseRotationInput();
+	TestTrue(TEXT("Stopping the mouse holds the deflection"), FMath::IsNearlyEqual(Controller->GetCurrentFlightInputCommand().RotationInput.X, Expected, 1.0e-5));
+
+	Controller->AddRotationInputSample(FVector(0.0, 0.0, 1.0));
+	TestTrue(TEXT("Roll keys are direct"), Controller->GetCurrentFlightInputCommand().RotationInput.Z > 0.5);
+	Controller->ReleaseRotationInput();
+	TestTrue(TEXT("Releasing roll centres roll immediately"), Controller->GetCurrentFlightInputCommand().RotationInput.Z == 0.0);
+
+	for (int32 Frame = 0; Frame < 30; ++Frame)
+	{
+		Controller->AdvanceMouseStick(0.1f);
+	}
+	TestTrue(TEXT("The stick auto-centres into the dead zone"), Controller->GetCurrentFlightInputCommand().RotationInput.IsZero());
+
+	Controller->AddRotationInputSample(FVector(40.0, -30.0, 0.0));
+	Controller->EdenCenterMouseStick();
+	TestTrue(TEXT("EdenCenterMouseStick zeroes pitch and yaw"), Controller->GetCurrentFlightInputCommand().RotationInput.IsZero());
+	TestTrue(TEXT("Stick state is zero"), Controller->GetMouseStickDeflection().IsZero());
+
+	FEdenOperatorHudSnapshot Hud;
+	Hud.bHasFlight = true;
+	Hud.PilotRotationCommand = FVector(0.45, -0.2, 0.0);
+	TestTrue(TEXT("HUD shows the shaped stick command"), UEdenOperatorHudWidget::FormatFlightPanel(Hud).Contains(TEXT("STICK     pitch +0.45  yaw -0.20  roll +0.00")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionChaseCameraFramesHullTest,
+	"Eden.Integration.Flight.ChaseCameraFramesHull",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionChaseCameraFramesHullTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+
+	USpringArmComponent* Arm = Fixture.Pawn->GetChaseCameraArm();
+	UCameraComponent* Camera = Fixture.Pawn->FindComponentByClass<UCameraComponent>();
+	if (!TestNotNull(TEXT("Chase camera arm exists"), Arm) || !TestNotNull(TEXT("Blueprint camera exists"), Camera))
+	{
+		return false;
+	}
+
+	const double Radius = Fixture.Pawn->GetPresentationHullRadiusCentimeters();
+	const FEdenFlightCameraSettings& Settings = Fixture.Pawn->CameraSettings;
+	AddInfo(FString::Printf(TEXT("Hull radius %.0f cm, arm %.0f cm, FOV %.0f deg"), Radius, Arm->TargetArmLength, Camera->FieldOfView));
+	TestTrue(TEXT("Presentation hull radius is known"), Radius > 100.0);
+	TestTrue(TEXT("Camera rides the chase arm"), Camera->GetAttachParent() == Arm);
+	TestTrue(
+		TEXT("Arm length is the framing fit for the hull"),
+		FMath::IsNearlyEqual(static_cast<double>(Arm->TargetArmLength), FEdenFlightPresentationModel::ComputeChaseArmLengthCentimeters(Radius, Settings), 1.0));
+	TestTrue(
+		TEXT("Whole hull sphere fits the frame at that length"),
+		FEdenFlightPresentationModel::ComputeHullAngularExtentRadians(Radius, Arm->TargetArmLength, Settings)
+			<= FEdenFlightPresentationModel::ComputeLimitingHalfFieldOfViewRadians(Settings) + 1.0e-6);
+	TestFalse(TEXT("Boom does not collide (it would pop in front of the hull)"), Arm->bDoCollisionTest);
+	TestTrue(TEXT("Location lag is capped"), !Arm->bEnableCameraLag || Arm->CameraLagMaxDistance > 0.0f);
+	TestTrue(TEXT("Flight still moves the collision root, not a presentation component"), Fixture.Flight->UpdatedComponent.Get() == static_cast<USceneComponent*>(Fixture.Pawn->GetRequiredCollisionRoot()));
 	return true;
 }
 

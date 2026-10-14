@@ -426,6 +426,46 @@ Console commands: `StartMission`, `RestartMission`, `AbortMission`, `ShowAfterAc
 | M4 | Stop and restart PIE | At rest, assist on, full tank, Normal power | Clean reset |
 | M5 | Output Log | No errors; no repeating `LogEdenFlight` warnings; no "dropped flight steps" at normal frame rates | Clean log |
 
+## Integration Phase 4 — handling and presentation (`feature/0009-visual-flight-integration`)
+
+Input shaping and presentation only. The flight model, its settings and the propulsion balance are unchanged. All three determinism references are bit-identical after the change (60 s profile `X=3235.959 Y=-261.001 Z=-246.422`; depletion `|w| 4.797122`, 6001 limited steps; tumble `P=44.458903 Y=60.225946 R=31.667263`).
+
+### Diagnosis of "clunky"
+
+Mouse X/Y deltas fed `SetRotationIntent` directly, as if they were stick deflection. A few counts saturated the command to full deflection. Each time the mouse stopped, the action completed and the command dropped to zero. The result was bang-bang control torque and, with assist on, an immediate braking pulse.
+
+### Changes
+
+- **Mouse virtual stick** (`FEdenFlightMouseSettings` on the player controller). Mouse deltas accumulate into a persistent pitch/yaw deflection, with sensitivity (0.012 per count, about 83 counts for full deflection), a per-axis dead zone with rescale (0.05), optional pitch inversion, and exponential, frame-rate-independent auto-centring (1.5 /s; 0 disables it). Roll keys (E/Q) stay direct. `EdenCenterMouseStick` re-centres. The HUD FLIGHT panel shows the shaped `STICK` command.
+- **Chase camera** (`FEdenFlightCameraSettings` on the pawn). A spring arm is created at BeginPlay, and the Blueprint `DebugFlightCamera` is reattached to it. The boom length is solved, by bisection, so that the hull's bounding sphere fits the *limiting* half-angle. UE's FOV is horizontal, so on 16:9 that limit is vertical. The solve accounts for the boom's height offset and look-down, then applies `FramingMargin` (1.15). With the Star Sparrow hull (radius 719 cm) at FOV 75°, the boom is 25.4 m. Boom collision is off. Rotation lag uses the engine's quaternion interpolation (safe through ±90° pitch). Location lag is capped at 0.35 × hull radius; uncapped lag would trail by speed / lag-speed without bound in Newtonian flight.
+- **Main-engine visual** is now driven by delivered **+X body force ÷ forward rating** (`CalculateMainEngineVisualLevel`), not by aggregate `PropulsionDemandNormalized`. Pure rotation, reverse, lateral and vertical thrust do not light it. An empty tank or dead battery shows nothing, because the force is delivered force. The FOV kick (5° at full thrust) uses the same signal.
+- **Star brightness** is configurable on the pawn (`NearStarsIntensity` 2.5, `FarStarsIntensity` 1.8; unchanged values).
+- **`EdenCaptureScreenshot <delay> <quit>`** is a dev command for scripted framing and HUD captures.
+
+### Rotation response (evaluated, not changed)
+
+| Axis | Torque | Inertia | Max α | 0 → 60°/s (assist cap) | 90° turn, bang-bang |
+| --- | --- | --- | --- | --- | --- |
+| Roll | 80 kN·m | 104 167 kg·m² | 44.0 °/s² | 1.4 s | 2.9 s |
+| Pitch | 180 kN·m | 354 167 kg·m² | 29.1 °/s² | 2.1 s | 3.5 s |
+| Yaw | 200 kN·m | 416 667 kg·m² | 27.5 °/s² | 2.2 s | 3.6 s |
+
+The 0.2 s assist response time never governs: the controller is torque-saturated for about 2 s before it reaches the rate cap. If PIE confirms that pitch and yaw feel sluggish, the cheapest physical fix is about 1.5× pitch/yaw torque (RCS authority), which gives about 1.4 s to the cap. Lowering the assist rate cap would also help, but cuts top turn rate. Either change rebalances RCS propellant use, so neither is applied without approval.
+
+### Visual-polish backlog (not blocking)
+
+1. Per-thruster visual signals: each thruster effect should follow its own delivered force or torque (RCS quads from `AppliedBodyTorqueNewtonMeters` and the lateral/vertical force). Only the main engine is split out so far.
+2. Skybox on a fresh Editor launch: verify that the sky renders consistently and that the `MI_Star_Nebula_01` missing dependency (the intentionally omitted 4 GB cubemap MI) leaves no persistent LoadErrors. One successful runtime substitution is not enough evidence.
+3. Rendered framing capture: the first scripted `-game` capture failed with D3D12 `8007000e` (out of memory) while creating pipeline states, under current memory pressure. Repeat when memory allows, or verify by eye in PIE.
+
+### PIE checks added by Phase 4 (human, pending)
+
+- [ ] Small mouse movements give proportional turns; letting go of the mouse keeps the turn briefly and then it centres; there is no stutter. `STICK` on the HUD matches.
+- [ ] Q/E roll stops when released.
+- [ ] The whole ship stays in frame at rest, while turning on every axis (including through ±90° pitch), and at high speed; nothing pops or flips.
+- [ ] A pure rotation with thruster effects enabled shows no main-engine flame; a forward burn shows one; an empty tank shows none.
+- [ ] Turn rates feel acceptable, or record which axis feels sluggish (see the table above).
+
 ## Progress log
 
 - 2026-10-12: Audited flight, clock, fuel, power, operator, telemetry, and tests on `main` @ `9738130`. Created branch `feature/0008-newtonian-flight`. Drafted this plan. No production code changed.

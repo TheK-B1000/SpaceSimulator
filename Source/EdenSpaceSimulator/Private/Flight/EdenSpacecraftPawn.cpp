@@ -7,6 +7,7 @@
 #include "Core/EdenLogCategories.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
+#include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Engine/Texture.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -16,6 +17,7 @@
 #include "Core/EdenSimulationClockSubsystem.h"
 #include "Engine/CollisionProfile.h"
 #include "Flight/EdenFlightMovementComponent.h"
+#include "Flight/EdenFlightPresentationTypes.h"
 #include "Flight/EdenFlightTypes.h"
 #include "Operations/EdenOperatorControlComponent.h"
 #include "Systems/EdenFuelSystemComponent.h"
@@ -260,10 +262,76 @@ void AEdenSpacecraftPawn::BeginPlay()
 	// BP instances may have serialized bEnableSpaceBackdrop=false from the crash-hardening pass.
 	// Always apply the light sky path so PIE is not a black void.
 	ApplySpaceBackdrop();
+	ApplyChaseCamera();
 	if (bEnableThrusterEffects)
 	{
 		ApplyThrusterPresentation();
 	}
+}
+
+void AEdenSpacecraftPawn::ApplyChaseCamera()
+{
+	// Presentation only: the camera boom never feeds back into flight state.
+	if (!PresentationCamera)
+	{
+		PresentationCamera = FindComponentByClass<UCameraComponent>();
+	}
+	if (!PresentationCamera)
+	{
+		return;
+	}
+	if (!CameraSettings.bEnableChaseCamera)
+	{
+		PresentationBaseFieldOfView = PresentationCamera->FieldOfView;
+		return;
+	}
+
+	if (!ChaseCameraArm)
+	{
+		ChaseCameraArm = NewObject<USpringArmComponent>(this, TEXT("ChaseCameraArm"));
+		ChaseCameraArm->SetupAttachment(RequiredCollisionRoot);
+		ChaseCameraArm->RegisterComponent();
+	}
+
+	const double HullRadius = PresentationHullRadiusCentimeters > 0.0f
+		? static_cast<double>(PresentationHullRadiusCentimeters)
+		: (RequiredCollisionRoot ? static_cast<double>(RequiredCollisionRoot->GetScaledSphereRadius()) : 600.0);
+	const double ArmLength = FEdenFlightPresentationModel::ComputeChaseArmLengthCentimeters(HullRadius, CameraSettings);
+
+	ChaseCameraArm->TargetArmLength = static_cast<float>(ArmLength);
+	ChaseCameraArm->SetRelativeLocation(FVector(0.0, 0.0, HullRadius * FMath::Max(0.0f, CameraSettings.HeightFraction)));
+	ChaseCameraArm->SetRelativeRotation(FRotator(-CameraSettings.PitchDownDegrees, 0.0f, 0.0f));
+	// Space has nothing to collide the boom against except the station, and a popping camera hides the ship.
+	ChaseCameraArm->bDoCollisionTest = false;
+	ChaseCameraArm->bUsePawnControlRotation = false;
+	ChaseCameraArm->bInheritPitch = true;
+	ChaseCameraArm->bInheritYaw = true;
+	ChaseCameraArm->bInheritRoll = true;
+	ChaseCameraArm->bEnableCameraLag = CameraSettings.bEnableCameraLag;
+	ChaseCameraArm->CameraLagSpeed = CameraSettings.LocationLagSpeed;
+	ChaseCameraArm->CameraLagMaxDistance = static_cast<float>(HullRadius * FMath::Max(0.0f, CameraSettings.LocationLagMaxDistanceFraction));
+	ChaseCameraArm->bEnableCameraRotationLag = CameraSettings.bEnableCameraLag;
+	ChaseCameraArm->CameraRotationLagSpeed = CameraSettings.RotationLagSpeed;
+
+	PresentationCamera->AttachToComponent(
+		ChaseCameraArm,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		USpringArmComponent::SocketName);
+	PresentationCamera->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+	PresentationCamera->SetRelativeScale3D(FVector::OneVector);
+	PresentationCamera->bUsePawnControlRotation = false;
+	PresentationBaseFieldOfView = FMath::Clamp(CameraSettings.FieldOfViewDegrees, 30.0f, 120.0f);
+	PresentationCamera->SetFieldOfView(PresentationBaseFieldOfView);
+
+	UE_LOG(
+		LogEdenFlight,
+		Log,
+		TEXT("%s chase camera: hull radius %.0f cm, arm %.0f cm, FOV %.0f deg, lag %s."),
+		*GetNameSafe(this),
+		HullRadius,
+		ArmLength,
+		PresentationBaseFieldOfView,
+		CameraSettings.bEnableCameraLag ? TEXT("on") : TEXT("off"));
 }
 
 void AEdenSpacecraftPawn::ApplyPresentationHull()
@@ -307,6 +375,7 @@ void AEdenSpacecraftPawn::ApplyPresentationHull()
 	HullMesh->SetRelativeScale3D(FVector(Scale));
 	HullMesh->SetRelativeLocation(-LocalBounds.Origin * Scale);
 	HullMesh->SetRelativeRotation(FRotator::ZeroRotator);
+	PresentationHullRadiusCentimeters = LocalBounds.SphereRadius * Scale;
 
 	UE_LOG(
 		LogEdenFlight,
@@ -373,8 +442,8 @@ void AEdenSpacecraftPawn::ApplySpaceBackdrop()
 	{
 		SkyMaterial->SetTextureParameterValue(TEXT("T_Alpha_Extra_Cubemap"), NebulaAlpha);
 	}
-	SkyMaterial->SetScalarParameterValue(TEXT("Near_Stars_intensity"), 2.5f);
-	SkyMaterial->SetScalarParameterValue(TEXT("Far_Stars_intensity"), 1.8f);
+	SkyMaterial->SetScalarParameterValue(TEXT("Near_Stars_intensity"), NearStarsIntensity);
+	SkyMaterial->SetScalarParameterValue(TEXT("Far_Stars_intensity"), FarStarsIntensity);
 
 	const FVector ShipLocation = GetActorLocation();
 
@@ -445,17 +514,18 @@ void AEdenSpacecraftPawn::ApplyThrusterPresentation()
 	MainThrusterEffect->SetRelativeScale3D(FVector(3.0f));
 	MainThrusterEffect->SetAutoActivate(false);
 	MainThrusterEffect->RegisterComponent();
-
-	PresentationCamera = FindComponentByClass<UCameraComponent>();
-	if (PresentationCamera)
-	{
-		PresentationBaseFieldOfView = PresentationCamera->FieldOfView;
-	}
 }
 
 void AEdenSpacecraftPawn::UpdateThrusterPresentation()
 {
-	const float Demand = FlightMovementComponent ? FlightMovementComponent->GetPropulsionDemandNormalized() : 0.0f;
+	// Delivered forward force, not aggregate propulsion demand: attitude, reverse and lateral
+	// thrust must not light the main engine. Per-thruster effects are a visual-polish backlog item.
+	MainEngineVisualLevel = FlightMovementComponent
+		? FEdenFlightPresentationModel::CalculateMainEngineVisualLevel(
+			FlightMovementComponent->GetFlightDynamicsSnapshot(),
+			FlightMovementComponent->PropulsionSettings)
+		: 0.0f;
+	const float Demand = MainEngineVisualLevel;
 	const bool bFiring = Demand > 0.02f;
 
 	if (MainThrusterEffect)
@@ -482,7 +552,7 @@ void AEdenSpacecraftPawn::UpdateThrusterPresentation()
 
 	if (PresentationCamera)
 	{
-		PresentationCamera->SetFieldOfView(PresentationBaseFieldOfView + Demand * 8.0f);
+		PresentationCamera->SetFieldOfView(PresentationBaseFieldOfView + Demand * CameraSettings.ThrustFieldOfViewKickDegrees);
 	}
 }
 

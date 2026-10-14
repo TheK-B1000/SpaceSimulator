@@ -96,6 +96,10 @@ struct EDENSPACESIMULATOR_API FEdenOperatorHudSnapshot
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
 	float FuelCapacityKilograms = 0.0f;
 
+	/** Pilot rotation command after input shaping (X pitch, Y yaw, Z roll in [-1, 1]); what the controller sends. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Flight")
+	FVector PilotRotationCommand = FVector::ZeroVector;
+
 	/** EDEN OS adapter state as reported by UEdenOsAdapterSubsystem (never inferred). */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|HUD|Advisory")
 	bool bHasEdenAdapter = false;
