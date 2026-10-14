@@ -17,17 +17,20 @@ struct EDENSPACESIMULATOR_API FEdenFlightMouseSettings
 {
 	GENERATED_BODY()
 
-	/** Stick deflection per mouse count (Enhanced Input mouse delta). 0.01 = 100 counts for full deflection. */
+	/** Stick deflection per mouse count (Enhanced Input mouse delta). 0.02 = 50 counts for full deflection. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Controls", meta = (ClampMin = "0.0001"))
-	float Sensitivity = 0.012f;
+	float Sensitivity = 0.02f;
 
 	/** Deflection below this magnitude per axis is treated as centred; the rest is rescaled to [0, 1]. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Controls", meta = (ClampMin = "0.0", ClampMax = "0.5"))
-	float DeadZone = 0.05f;
+	float DeadZone = 0.03f;
 
-	/** Exponential return-to-centre rate (1/s). 0 = the stick stays where you leave it. */
+	/**
+	 * Exponential return-to-centre rate (1/s). 0 = the stick stays where you leave it.
+	 * 0.6/s keeps about half the deflection after 1.2 s, so a turn holds after the mouse stops.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Controls", meta = (ClampMin = "0.0"))
-	float AutoCenterRatePerSecond = 1.5f;
+	float AutoCenterRatePerSecond = 0.6f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|Controls")
 	bool bInvertPitch = false;

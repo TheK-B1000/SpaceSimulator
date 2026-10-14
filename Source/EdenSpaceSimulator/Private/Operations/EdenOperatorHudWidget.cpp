@@ -139,6 +139,55 @@ void UEdenOperatorHudWidget::EnsureLayoutBuilt()
 	FeedbackBorder->SetVisibility(ESlateVisibility::Collapsed);
 	OwnedWidgets.Add(FeedbackBorder);
 	OwnedWidgets.Add(FeedbackText);
+
+	ApplyHudScale();
+}
+
+int32 UEdenOperatorHudWidget::ScaledFontSize(int32 BaseSize, float Scale)
+{
+	const float SafeScale = FMath::IsFinite(Scale) ? FMath::Clamp(Scale, 0.75f, 2.5f) : 1.0f;
+	return FMath::Max(6, FMath::RoundToInt(static_cast<float>(BaseSize) * SafeScale));
+}
+
+int32 UEdenOperatorHudWidget::GetAppliedBodyFontSize() const
+{
+	return FlightPanel.Body ? FlightPanel.Body->GetFont().Size : 0;
+}
+
+void UEdenOperatorHudWidget::SetHudScale(float NewScale)
+{
+	HudScale = FMath::IsFinite(NewScale) ? FMath::Clamp(NewScale, 0.75f, 2.5f) : 1.0f;
+	ApplyHudScale();
+}
+
+void UEdenOperatorHudWidget::ApplyHudScale()
+{
+	using namespace EdenOperatorHudWidgetPrivate;
+
+	const float Scale = FMath::IsFinite(HudScale) ? FMath::Clamp(HudScale, 0.75f, 2.5f) : 1.0f;
+	for (FPanel* Panel : {&FlightPanel, &SystemsPanel, &OperatorPanel, &MissionPanel, &EdenPanel})
+	{
+		if (Panel->Border)
+		{
+			Panel->Border->SetPadding(FMargin(12.0f * Scale, 8.0f * Scale));
+		}
+		if (Panel->Title)
+		{
+			Panel->Title->SetFont(Font(TEXT("Bold"), ScaledFontSize(11, Scale)));
+		}
+		if (Panel->Body)
+		{
+			Panel->Body->SetFont(Font(TEXT("Mono"), ScaledFontSize(10, Scale)));
+		}
+	}
+	if (FeedbackBorder)
+	{
+		FeedbackBorder->SetPadding(FMargin(14.0f * Scale, 8.0f * Scale));
+	}
+	if (FeedbackText)
+	{
+		FeedbackText->SetFont(Font(TEXT("Bold"), ScaledFontSize(14, Scale)));
+	}
 }
 
 UEdenOperatorHudWidget::FPanel UEdenOperatorHudWidget::MakePanel(

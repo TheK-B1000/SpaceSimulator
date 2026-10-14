@@ -59,6 +59,23 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|HUD", meta = (ClampMin = "0.5", Units = "s"))
 	float FeedbackDisplaySeconds = 3.0f;
 
+	/** Text and padding scale for every panel (1 = original size). Panels keep their screen anchors. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Eden|HUD", meta = (ClampMin = "0.75", ClampMax = "2.5"))
+	float HudScale = 1.35f;
+
+	/** Changes HudScale at runtime and re-applies fonts and padding (also console: EdenHudScale). */
+	UFUNCTION(BlueprintCallable, Category = "Eden|HUD")
+	void SetHudScale(float NewScale);
+
+	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
+	float GetHudScale() const { return HudScale; }
+
+	/** Scaled font size: never below 6 pt, rounded to the nearest point. Exposed for tests. */
+	static int32 ScaledFontSize(int32 BaseSize, float Scale);
+
+	/** Point size currently applied to the panel bodies (0 before the layout is built). For tests and diagnostics. */
+	int32 GetAppliedBodyFontSize() const;
+
 protected:
 	virtual TSharedRef<SWidget> RebuildWidget() override;
 	virtual void NativeConstruct() override;
@@ -78,6 +95,7 @@ private:
 	FPanel MakePanel(UCanvasPanel* Canvas, const TCHAR* Name, const FText& TitleText, const FVector2D& Anchor, const FVector2D& Offset);
 	void RefreshPanels();
 	void RefreshFeedback(double NowSeconds);
+	void ApplyHudScale();
 
 	UPROPERTY(Transient, BlueprintReadOnly, Category = "Eden|HUD", meta = (AllowPrivateAccess = "true"))
 	FEdenOperatorHudSnapshot CurrentSnapshot;

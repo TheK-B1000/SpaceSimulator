@@ -103,6 +103,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Eden|HUD")
 	bool WasLastControlFeedbackSuccessful() const;
 
+	/** Sets the HUD text and padding scale (0.75-2.5; default 1.35). Also console: EdenHudScale 1.5 */
+	UFUNCTION(BlueprintCallable, Exec, Category = "Eden|HUD")
+	void EdenHudScale(float Scale);
+
 	/** PIE/dev: log the operator HUD's widget tree, viewport attachment, visibility and geometry. */
 	UFUNCTION(Exec, Category = "Eden|Debug")
 	void EdenHudDiagnostics();

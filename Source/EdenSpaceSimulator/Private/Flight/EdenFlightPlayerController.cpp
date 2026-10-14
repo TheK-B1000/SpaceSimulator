@@ -198,6 +198,18 @@ void AEdenFlightPlayerController::EdenCaptureScreenshot(float DelaySeconds, int3
 	UE_LOG(LogEdenFlight, Display, TEXT("EdenCaptureScreenshot scheduled in %.1fs -> %s%s"), FMath::Max(0.1f, DelaySeconds), *Filename, bQuit ? TEXT(" (then quit)") : TEXT(""));
 }
 
+void AEdenFlightPlayerController::EdenHudScale(float Scale)
+{
+	EnsureOperatorHudCreated();
+	if (!OperatorHudWidget)
+	{
+		UE_LOG(LogEdenFlight, Warning, TEXT("%s cannot scale the HUD: no operator HUD widget."), *GetNameSafe(this));
+		return;
+	}
+	OperatorHudWidget->SetHudScale(Scale);
+	ReportControlFeedback(FString::Printf(TEXT("HUD SCALE %.2fx"), OperatorHudWidget->GetHudScale()), true);
+}
+
 void AEdenFlightPlayerController::EdenCenterMouseStick()
 {
 	MouseStickPitchYaw = FVector2D::ZeroVector;

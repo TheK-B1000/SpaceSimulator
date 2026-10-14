@@ -31,6 +31,8 @@
 #include "UObject/SoftObjectPath.h"
 #include "UObject/UnrealType.h"
 
+#include <limits>
+
 #if WITH_DEV_AUTOMATION_TESTS
 
 namespace EdenRuntimeCompositionTests
@@ -1776,7 +1778,11 @@ bool FEdenRuntimeCompositionMouseStickHoldsAndCentresTest::RunTest(const FString
 	Controller->ReleaseRotationInput();
 	TestTrue(TEXT("Releasing roll centres roll immediately"), Controller->GetCurrentFlightInputCommand().RotationInput.Z == 0.0);
 
-	for (int32 Frame = 0; Frame < 30; ++Frame)
+	// Long enough for any default centring rate to bring a 40-count deflection inside the dead zone.
+	const double SecondsToCentre = Mouse.AutoCenterRatePerSecond > 0.0f
+		? FMath::Loge(FMath::Max(1.0, Raw / FMath::Max(0.001, static_cast<double>(Mouse.DeadZone) * 0.5))) / Mouse.AutoCenterRatePerSecond
+		: 0.0;
+	for (int32 Frame = 0; Frame < FMath::CeilToInt(SecondsToCentre / 0.1) + 1; ++Frame)
 	{
 		Controller->AdvanceMouseStick(0.1f);
 	}
@@ -1831,6 +1837,41 @@ bool FEdenRuntimeCompositionChaseCameraFramesHullTest::RunTest(const FString& Pa
 	TestFalse(TEXT("Boom does not collide (it would pop in front of the hull)"), Arm->bDoCollisionTest);
 	TestTrue(TEXT("Location lag is capped"), !Arm->bEnableCameraLag || Arm->CameraLagMaxDistance > 0.0f);
 	TestTrue(TEXT("Flight still moves the collision root, not a presentation component"), Fixture.Flight->UpdatedComponent.Get() == static_cast<USceneComponent*>(Fixture.Pawn->GetRequiredCollisionRoot()));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenHudScaleAppliesToBuiltPanelsTest,
+	"Eden.Integration.Hud.ScaleAppliesToBuiltPanels",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenHudScaleAppliesToBuiltPanelsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	TestEqual(TEXT("Scale 1 keeps the original 10 pt body"), UEdenOperatorHudWidget::ScaledFontSize(10, 1.0f), 10);
+	TestEqual(TEXT("Scale rounds to the nearest point"), UEdenOperatorHudWidget::ScaledFontSize(10, 1.35f), 14);
+	TestEqual(TEXT("Scale clamps at 2.5"), UEdenOperatorHudWidget::ScaledFontSize(10, 9.0f), 25);
+	TestEqual(TEXT("Non-finite scale falls back to 1"), UEdenOperatorHudWidget::ScaledFontSize(10, std::numeric_limits<float>::quiet_NaN()), 10);
+
+	EdenRuntimeCompositionTests::FScopedRuntimeWorld RuntimeWorld;
+	UWorld* World = RuntimeWorld.Get();
+	UClass* HudClass = StaticLoadClass(UEdenOperatorHudWidget::StaticClass(), nullptr, EdenRuntimeCompositionTests::HudWidgetClassPath);
+	if (!TestNotNull(TEXT("WBP_EdenOperatorHud loads"), HudClass) || !World)
+	{
+		return false;
+	}
+	UEdenOperatorHudWidget* Hud = CreateWidget<UEdenOperatorHudWidget>(World, HudClass);
+	if (!TestNotNull(TEXT("HUD widget is created"), Hud))
+	{
+		return false;
+	}
+	const TSharedRef<SWidget> SlateHolder = Hud->TakeWidget();
+
+	TestEqual(TEXT("The default scale is applied in the first build"), Hud->GetAppliedBodyFontSize(), UEdenOperatorHudWidget::ScaledFontSize(10, Hud->GetHudScale()));
+	Hud->SetHudScale(2.0f);
+	TestEqual(TEXT("A runtime scale change re-applies fonts"), Hud->GetAppliedBodyFontSize(), 20);
+	TestEqual(TEXT("All five panels are still built"), Hud->GetBuiltPanelCount(), 5);
 	return true;
 }
 
