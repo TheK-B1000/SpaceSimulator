@@ -40,9 +40,28 @@ struct EDENSPACESIMULATOR_API FEdenMissionModel
 		float PowerChargeFraction,
 		float FuelFraction);
 
+	/**
+	 * Full evaluation (ExecPlan 0011): adds mission heating and the realized thermal trend for
+	 * RecoverThermalStability, the step length for hold timers, and records resolution time and reason.
+	 */
+	static FEdenMissionRuntimeState EvaluateObjectives(
+		const FEdenMissionRuntimeState& State,
+		const FEdenMissionDefinitionConfig& Definition,
+		const FEdenMissionObservations& Observations,
+		float FixedDeltaSeconds);
+
 	static EEdenMissionState EvaluateOutcome(
 		const FEdenMissionRuntimeState& State,
 		const FEdenMissionDefinitionConfig& Definition);
+
+	/** Plain-words reason for a terminal state (first required failure, or all required objectives met). */
+	static FString DescribeOutcome(
+		const FEdenMissionRuntimeState& State,
+		const FEdenMissionDefinitionConfig& Definition,
+		EEdenMissionState Outcome);
+
+	/** Realized rate at or below this counts as "stable or falling" (absorbs float noise at a plateau). */
+	static constexpr float StableTrendToleranceDegreesCelsiusPerSecond = 0.01f;
 
 	static FEdenMissionRuntimeState ResetRuntimeState();
 

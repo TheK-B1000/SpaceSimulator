@@ -59,24 +59,30 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 	const UEdenFuelSystemComponent* FuelComp = GetFuelTarget();
 
 	// Missing targets must not invent catastrophic resource readings.
-	const float ThermalTemperatureCelsius = ThermalComp
-		? ThermalComp->GetThermalStateSnapshot().TemperatureCelsius
-		: TNumericLimits<float>::Lowest();
-	const float PowerChargeFraction = PowerComp
-		? PowerComp->GetPowerStateSnapshot().ChargeFraction
-		: 1.0f;
-	const float FuelFraction = FuelComp
-		? FuelComp->GetFuelStateSnapshot().FuelFraction
-		: 1.0f;
+	FEdenMissionObservations Observations;
+	if (ThermalComp && ThermalComp->IsThermalSimulationEnabled())
+	{
+		const FEdenThermalStateSnapshot Thermal = ThermalComp->GetThermalStateSnapshot();
+		Observations.bHasThermal = true;
+		Observations.TemperatureCelsius = Thermal.TemperatureCelsius;
+		Observations.ExternalHeatingDegreesCelsiusPerSecond = Thermal.ExternalHeatingRateDegreesCelsiusPerSecond;
+		Observations.RealizedNetDegreesCelsiusPerSecond =
+			static_cast<float>(ThermalComp->GetThermalBalance().RealizedNetDegreesCelsiusPerSecond);
+	}
+	else if (ThermalComp)
+	{
+		Observations.TemperatureCelsius = ThermalComp->GetThermalStateSnapshot().TemperatureCelsius;
+	}
+	Observations.PowerChargeFraction = PowerComp ? PowerComp->GetPowerStateSnapshot().ChargeFraction : 1.0f;
+	Observations.FuelFraction = FuelComp ? FuelComp->GetFuelStateSnapshot().FuelFraction : 1.0f;
 
 	const TArray<FEdenMissionObjectiveRuntime> PreviousObjectives = CurrentRuntimeState.ObjectiveStates;
 
 	CurrentRuntimeState = FEdenMissionModel::EvaluateObjectives(
 		CurrentRuntimeState,
 		ActiveMissionDefinition,
-		ThermalTemperatureCelsius,
-		PowerChargeFraction,
-		FuelFraction);
+		Observations,
+		FixedDeltaSeconds);
 
 	for (const FEdenMissionObjectiveRuntime& NewObjective : CurrentRuntimeState.ObjectiveStates)
 	{
@@ -88,6 +94,19 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 
 		if (PreviousObjective && PreviousObjective->State != NewObjective.State)
 		{
+			if (NewObjective.State == EEdenObjectiveState::Completed || NewObjective.State == EEdenObjectiveState::Failed)
+			{
+				UE_LOG(
+					LogEdenMission,
+					Log,
+					TEXT("%s objective '%s' %s at T=%.1f s%s%s"),
+					*GetNameSafe(this),
+					*NewObjective.ObjectiveId.ToString(),
+					NewObjective.State == EEdenObjectiveState::Completed ? TEXT("completed") : TEXT("failed"),
+					NewObjective.ResolvedAtSeconds,
+					NewObjective.FailureReason.IsEmpty() ? TEXT("") : TEXT(": "),
+					*NewObjective.FailureReason);
+			}
 			OnObjectiveStateChanged.Broadcast(NewObjective.ObjectiveId, PreviousObjective->State, NewObjective.State);
 		}
 	}
@@ -98,6 +117,11 @@ void UEdenMissionSubsystem::AdvanceSimulation(float FixedDeltaSeconds)
 
 	if (EvaluatedOutcome != CurrentRuntimeState.MissionState)
 	{
+		CurrentRuntimeState.TerminalReason = FEdenMissionModel::DescribeOutcome(CurrentRuntimeState, ActiveMissionDefinition, EvaluatedOutcome);
+		if (!CurrentRuntimeState.TerminalReason.IsEmpty())
+		{
+			UE_LOG(LogEdenMission, Log, TEXT("%s mission '%s' outcome: %s."), *GetNameSafe(this), *ActiveMissionDefinition.MissionId.ToString(), *CurrentRuntimeState.TerminalReason);
+		}
 		TransitionMissionState(EvaluatedOutcome);
 	}
 

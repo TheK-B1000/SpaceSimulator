@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "Missions/EdenMissionModel.h"
 #include "Operations/EdenOperatorControlModel.h"
 #include "Systems/EdenPowerModel.h"
 #include "Systems/EdenPowerSystemComponent.h"
@@ -350,6 +351,151 @@ bool FEdenSolarCrisisV2CoolingFollowsActualPowerTest::RunTest(const FString& Par
 	TestTrue(FString::Printf(TEXT("Dead battery: the ship actually heats faster, +%.3f C/s (expected %.3f)"), Unpowered, Expected),
 		Near(Unpowered, Expected, 2.0e-3));
 	TestTrue(TEXT("Dead battery: all auxiliary load curtailed"), Near(Power->GetPowerStateSnapshot().AuxiliaryCurtailedKilowatts, 5.0));
+	return true;
+}
+
+namespace EdenSolarCrisisV2Tests
+{
+/** Recovery-only mission: RecoverThermalStability (< 70 C, hold 5 s, deadline 100 s) plus fail-only floors. */
+FEdenMissionDefinitionConfig MakeRecoveryDefinition()
+{
+	FEdenMissionDefinitionConfig Definition;
+	Definition.MissionId = TEXT("RecoveryUnit");
+	FEdenMissionObjectiveConfig Recover;
+	Recover.ObjectiveId = TEXT("RecoverThermalStability");
+	Recover.ObjectiveType = EEdenObjectiveType::RecoverThermalStability;
+	Recover.TargetValue = 70.0f;
+	Recover.HoldSeconds = 5.0f;
+	Recover.DeadlineSeconds = 100.0f;
+	Recover.bActivateOnStart = true;
+	FEdenMissionObjectiveConfig Battery;
+	Battery.ObjectiveId = TEXT("MaintainBatteryReserve");
+	Battery.ObjectiveType = EEdenObjectiveType::MaintainPowerAbove;
+	Battery.TargetValue = 0.10f;
+	Battery.bActivateOnStart = true;
+	FEdenMissionObjectiveConfig Heat;
+	Heat.ObjectiveId = TEXT("PreventOverheating");
+	Heat.ObjectiveType = EEdenObjectiveType::KeepTemperatureBelow;
+	Heat.TargetValue = 100.0f;
+	Heat.bActivateOnStart = true;
+	Definition.Objectives = {Recover, Battery, Heat};
+	return Definition;
+}
+
+FEdenMissionRuntimeState StartRuntime(const FEdenMissionDefinitionConfig& Definition, float AtSeconds)
+{
+	FEdenMissionRuntimeState State = FEdenMissionModel::InitializeRuntimeState(Definition);
+	State.MissionState = EEdenMissionState::Running;
+	for (FEdenMissionObjectiveRuntime& Objective : State.ObjectiveStates)
+	{
+		Objective.State = EEdenObjectiveState::Active;
+	}
+	State.MissionElapsedTimeSeconds = AtSeconds;
+	return State;
+}
+
+FEdenMissionObservations Observe(float Temperature, float Net, float External = 0.0f, float Battery = 1.0f)
+{
+	FEdenMissionObservations O;
+	O.bHasThermal = true;
+	O.TemperatureCelsius = Temperature;
+	O.RealizedNetDegreesCelsiusPerSecond = Net;
+	O.ExternalHeatingDegreesCelsiusPerSecond = External;
+	O.PowerChargeFraction = Battery;
+	O.FuelFraction = 1.0f;
+	return O;
+}
+
+/** Steps the model at 10 Hz with a constant observation; returns the state after Steps steps. */
+FEdenMissionRuntimeState Advance(FEdenMissionRuntimeState State, const FEdenMissionDefinitionConfig& Definition, const FEdenMissionObservations& O, int32 Steps)
+{
+	for (int32 Step = 0; Step < Steps && State.MissionState == EEdenMissionState::Running; ++Step)
+	{
+		State.MissionElapsedTimeSeconds += 0.1f;
+		State = FEdenMissionModel::EvaluateObjectives(State, Definition, O, 0.1f);
+		State.MissionState = FEdenMissionModel::EvaluateOutcome(State, Definition);
+	}
+	return State;
+}
+
+const FEdenMissionObjectiveRuntime& Recovery(const FEdenMissionRuntimeState& State)
+{
+	return State.ObjectiveStates[0];
+}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSolarCrisisV2RecoveryHoldSemanticsTest,
+	"Eden.Unit.SolarCrisisV2.D.RecoveryHoldSemantics",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSolarCrisisV2RecoveryHoldSemanticsTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenSolarCrisisV2Tests;
+
+	const FEdenMissionDefinitionConfig Definition = MakeRecoveryDefinition();
+
+	// Hold for 3 s, one interrupted step, then a full 5 s: completes 5 s after the break, not 2 s.
+	FEdenMissionRuntimeState State = StartRuntime(Definition, 30.0f);
+	State = Advance(State, Definition, Observe(65.0f, -0.5f), 30);
+	TestTrue(FString::Printf(TEXT("3 s of recovery accumulates (%.2f s)"), Recovery(State).HoldElapsedSeconds), FMath::IsNearlyEqual(Recovery(State).HoldElapsedSeconds, 3.0f, 1.0e-3f));
+	State = Advance(State, Definition, Observe(65.0f, +0.2f), 1);
+	TestEqual(TEXT("A rising step resets the hold"), Recovery(State).HoldElapsedSeconds, 0.0f);
+	State = Advance(State, Definition, Observe(65.0f, -0.5f), 49);
+	TestTrue(TEXT("4.9 s after the break: not yet"), Recovery(State).State == EEdenObjectiveState::Active);
+	State = Advance(State, Definition, Observe(65.0f, -0.5f), 1);
+	TestTrue(TEXT("5.0 s continuous: completed"), Recovery(State).State == EEdenObjectiveState::Completed);
+	TestTrue(FString::Printf(TEXT("Completion time recorded (T=%.1f)"), Recovery(State).ResolvedAtSeconds), FMath::IsNearlyEqual(Recovery(State).ResolvedAtSeconds, 38.1f, 1.0e-3f));
+	TestEqual(TEXT("Recovery with floors held: mission succeeds"), State.MissionState, EEdenMissionState::Succeeded);
+	TestTrue(TEXT("Outcome reason"), FEdenMissionModel::DescribeOutcome(State, Definition, State.MissionState).Contains(TEXT("all required objectives met")));
+
+	// The flare still in force blocks recovery even when cool and falling.
+	FEdenMissionRuntimeState Flare = Advance(StartRuntime(Definition, 30.0f), Definition, Observe(40.0f, -0.5f, 4.25f), 100);
+	TestEqual(TEXT("Mission heating in force: no recovery"), Recovery(Flare).HoldElapsedSeconds, 0.0f);
+
+	// Strictly below the threshold: a plateau exactly at 70 C is not recovered; just under it is.
+	TestEqual(TEXT("70.00 C plateau does not count"), Recovery(Advance(StartRuntime(Definition, 30.0f), Definition, Observe(70.0f, 0.0f), 60)).State, EEdenObjectiveState::Active);
+	TestEqual(TEXT("69.99 C stable completes"), Recovery(Advance(StartRuntime(Definition, 30.0f), Definition, Observe(69.99f, 0.0f), 60)).State, EEdenObjectiveState::Completed);
+
+	// Float noise at a plateau is stable; a genuine rise is not.
+	TestEqual(TEXT("+0.005 C/s noise counts as stable"), Recovery(Advance(StartRuntime(Definition, 30.0f), Definition, Observe(60.0f, 0.005f), 60)).State, EEdenObjectiveState::Completed);
+	TestEqual(TEXT("+0.02 C/s rise never completes"), Recovery(Advance(StartRuntime(Definition, 30.0f), Definition, Observe(60.0f, 0.02f), 60)).State, EEdenObjectiveState::Active);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenSolarCrisisV2RecoveryDeadlineTest,
+	"Eden.Unit.SolarCrisisV2.D.RecoveryDeadlineAndFloors",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenSolarCrisisV2RecoveryDeadlineTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenSolarCrisisV2Tests;
+
+	const FEdenMissionDefinitionConfig Definition = MakeRecoveryDefinition();
+
+	// Flat at 95 C (Boost in the flare, Nominal after): deadline failure with a stated reason.
+	FEdenMissionRuntimeState Flat = Advance(StartRuntime(Definition, 30.0f), Definition, Observe(95.0f, 0.0f), 2000);
+	TestEqual(TEXT("Flat above Warning: recovery fails"), Recovery(Flat).State, EEdenObjectiveState::Failed);
+	TestTrue(FString::Printf(TEXT("Fails at the deadline (T=%.1f)"), Recovery(Flat).ResolvedAtSeconds), FMath::IsNearlyEqual(Recovery(Flat).ResolvedAtSeconds, 100.0f, 0.05f));
+	TestTrue(FString::Printf(TEXT("Reason says why: '%s'"), *Recovery(Flat).FailureReason), Recovery(Flat).FailureReason.Contains(TEXT("recovery not achieved by T=100 s")));
+	TestEqual(TEXT("Mission fails"), Flat.MissionState, EEdenMissionState::Failed);
+	TestTrue(TEXT("Outcome reason names the objective"), FEdenMissionModel::DescribeOutcome(Flat, Definition, Flat.MissionState).StartsWith(TEXT("RecoverThermalStability failed")));
+
+	// Completing on the deadline step wins.
+	FEdenMissionRuntimeState Late = StartRuntime(Definition, 95.0f);
+	Late = Advance(Late, Definition, Observe(65.0f, -0.1f), 50);
+	TestEqual(TEXT("Hold completing exactly at T=100 s succeeds"), Recovery(Late).State, EEdenObjectiveState::Completed);
+
+	// Fail-only floors: battery and temperature.
+	FEdenMissionRuntimeState LowBattery = Advance(StartRuntime(Definition, 30.0f), Definition, Observe(80.0f, -0.5f, 0.0f, 0.09f), 1);
+	TestEqual(TEXT("Battery below 10% fails MaintainPowerAbove"), LowBattery.ObjectiveStates[1].State, EEdenObjectiveState::Failed);
+	TestEqual(TEXT("...and the mission"), LowBattery.MissionState, EEdenMissionState::Failed);
+	FEdenMissionRuntimeState Hot = Advance(StartRuntime(Definition, 28.0f), Definition, Observe(100.05f, 4.25f, 4.25f), 1);
+	TestTrue(FString::Printf(TEXT("Overheat reason: '%s'"), *Hot.ObjectiveStates[2].FailureReason), Hot.ObjectiveStates[2].FailureReason.Contains(TEXT("exceeded 100 C")));
+	TestEqual(TEXT("Equality at 100 C is still safe"), Advance(StartRuntime(Definition, 28.0f), Definition, Observe(100.0f, 0.0f, 4.25f), 1).ObjectiveStates[2].State, EEdenObjectiveState::Active);
 	return true;
 }
 

@@ -45,7 +45,14 @@ enum class EEdenObjectiveType : uint8
 	SurviveUntilTime,
 	KeepTemperatureBelow,
 	RestorePowerAbove,
-	MaintainFuelAbove
+	MaintainFuelAbove,
+	/**
+	 * Complete-seeking (ExecPlan 0011): mission heating over, temperature below TargetValue, and a stable
+	 * or falling realized trend, held continuously for HoldSeconds; fails at DeadlineSeconds.
+	 */
+	RecoverThermalStability,
+	/** Fail-only: battery charge fraction must not drop below TargetValue. */
+	MaintainPowerAbove
 };
 
 UENUM(BlueprintType)
@@ -112,6 +119,14 @@ struct EDENSPACESIMULATOR_API FEdenMissionObjectiveConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	bool bActivateOnStart = false;
+
+	/** RecoverThermalStability: continuous seconds the recovery conditions must hold. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission", meta = (ClampMin = "0.0", Units = "s"))
+	float HoldSeconds = 5.0f;
+
+	/** Mission time by which a complete-seeking objective must complete; 0 = no deadline. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission", meta = (ClampMin = "0.0", Units = "s"))
+	float DeadlineSeconds = 0.0f;
 };
 
 /**
@@ -181,6 +196,45 @@ struct EDENSPACESIMULATOR_API FEdenMissionObjectiveRuntime
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	EEdenObjectiveState State = EEdenObjectiveState::Pending;
+
+	/** RecoverThermalStability: continuous seconds the recovery conditions have held. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float HoldElapsedSeconds = 0.0f;
+
+	/** Mission time when the objective completed or failed; < 0 while unresolved. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float ResolvedAtSeconds = -1.0f;
+
+	/** Why it failed, in plain words (empty unless Failed). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	FString FailureReason;
+};
+
+/** Authoritative resource observations for one mission evaluation step. */
+USTRUCT(BlueprintType)
+struct EDENSPACESIMULATOR_API FEdenMissionObservations
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	bool bHasThermal = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float TemperatureCelsius = TNumericLimits<float>::Lowest();
+
+	/** Mission-applied (external) heating currently in force. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float ExternalHeatingDegreesCelsiusPerSecond = 0.0f;
+
+	/** Realized temperature rate for the next step (thermal balance), C/s. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float RealizedNetDegreesCelsiusPerSecond = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float PowerChargeFraction = 1.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	float FuelFraction = 1.0f;
 };
 
 USTRUCT(BlueprintType)
@@ -210,6 +264,10 @@ struct EDENSPACESIMULATOR_API FEdenMissionRuntimeState
 	/** This run limited the power bus; the override is cleared on abort and reset. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	bool bAppliedBatteryDischargeLimit = false;
+
+	/** Why the mission reached its terminal state (first failed objective's reason, or success). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	FString TerminalReason;
 };
 
 USTRUCT(BlueprintType)
@@ -231,4 +289,7 @@ struct EDENSPACESIMULATOR_API FEdenMissionStateSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	TArray<FEdenMissionObjectiveRuntime> ObjectiveSnapshots;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	FString TerminalReason;
 };

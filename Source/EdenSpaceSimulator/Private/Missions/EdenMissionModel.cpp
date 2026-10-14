@@ -101,7 +101,17 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 
 		const bool bRequiresNormalizedFraction =
 			Objective.ObjectiveType == EEdenObjectiveType::RestorePowerAbove
-			|| Objective.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove;
+			|| Objective.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove
+			|| Objective.ObjectiveType == EEdenObjectiveType::MaintainPowerAbove;
+
+		if (!FMath::IsFinite(Objective.HoldSeconds) || Objective.HoldSeconds < 0.0f
+			|| !FMath::IsFinite(Objective.DeadlineSeconds) || Objective.DeadlineSeconds < 0.0f)
+		{
+			bIsValid = false;
+			EdenMissionModel::AddValidationError(
+				OutErrors,
+				FString::Printf(TEXT("HoldSeconds and DeadlineSeconds must be finite and >= 0 for ObjectiveId '%s'."), *Objective.ObjectiveId.ToString()));
+		}
 
 		if (bRequiresNormalizedFraction
 			&& (Objective.TargetValue < 0.0f || Objective.TargetValue > 1.0f))
@@ -273,6 +283,21 @@ FEdenMissionRuntimeState FEdenMissionModel::EvaluateObjectives(
 	float PowerChargeFraction,
 	float FuelFraction)
 {
+	// Legacy signature: temperature-only thermal observation, no trend, no hold timing.
+	FEdenMissionObservations Observations;
+	Observations.bHasThermal = ThermalTemperatureCelsius > TNumericLimits<float>::Lowest();
+	Observations.TemperatureCelsius = ThermalTemperatureCelsius;
+	Observations.PowerChargeFraction = PowerChargeFraction;
+	Observations.FuelFraction = FuelFraction;
+	return EvaluateObjectives(State, Definition, Observations, 0.0f);
+}
+
+FEdenMissionRuntimeState FEdenMissionModel::EvaluateObjectives(
+	const FEdenMissionRuntimeState& State,
+	const FEdenMissionDefinitionConfig& Definition,
+	const FEdenMissionObservations& Observations,
+	float FixedDeltaSeconds)
+{
 	if (State.MissionState != EEdenMissionState::Running)
 	{
 		return State;
@@ -284,7 +309,11 @@ FEdenMissionRuntimeState FEdenMissionModel::EvaluateObjectives(
 		ObjectiveConfigs.Add(Objective.ObjectiveId, &Objective);
 	}
 
+	const float StepSeconds = FMath::IsFinite(FixedDeltaSeconds) ? FMath::Max(0.0f, FixedDeltaSeconds) : 0.0f;
+	// Mission time and hold timers accumulate in float steps; resolve thresholds on the nearest step.
+	const float TimeTolerance = StepSeconds > 0.0f ? 0.5f * StepSeconds : 1.0e-4f;
 	FEdenMissionRuntimeState NewState = State;
+	const float Now = NewState.MissionElapsedTimeSeconds;
 	for (FEdenMissionObjectiveRuntime& ObjectiveRuntime : NewState.ObjectiveStates)
 	{
 		if (ObjectiveRuntime.State != EEdenObjectiveState::Active)
@@ -299,37 +328,81 @@ FEdenMissionRuntimeState FEdenMissionModel::EvaluateObjectives(
 		}
 
 		const FEdenMissionObjectiveConfig& Config = **ConfigPtr;
+		auto Complete = [&]()
+		{
+			ObjectiveRuntime.State = EEdenObjectiveState::Completed;
+			ObjectiveRuntime.ResolvedAtSeconds = Now;
+		};
+		auto Fail = [&](const FString& Reason)
+		{
+			ObjectiveRuntime.State = EEdenObjectiveState::Failed;
+			ObjectiveRuntime.ResolvedAtSeconds = Now;
+			ObjectiveRuntime.FailureReason = Reason;
+		};
+
 		switch (Config.ObjectiveType)
 		{
 		case EEdenObjectiveType::SurviveUntilTime:
-			if (NewState.MissionElapsedTimeSeconds >= Config.TargetValue)
+			if (Now >= Config.TargetValue)
 			{
-				ObjectiveRuntime.State = EEdenObjectiveState::Completed;
+				Complete();
 			}
 			break;
 
 		case EEdenObjectiveType::KeepTemperatureBelow:
 			// Equality is valid; fail only when temperature exceeds the limit.
-			if (ThermalTemperatureCelsius > Config.TargetValue)
+			if (Observations.TemperatureCelsius > Config.TargetValue)
 			{
-				ObjectiveRuntime.State = EEdenObjectiveState::Failed;
+				Fail(FString::Printf(TEXT("temperature %.2f C exceeded %.0f C at T=%.1f s"), Observations.TemperatureCelsius, Config.TargetValue, Now));
 			}
 			break;
 
 		case EEdenObjectiveType::RestorePowerAbove:
-			if (PowerChargeFraction >= Config.TargetValue)
+			if (Observations.PowerChargeFraction >= Config.TargetValue)
 			{
-				ObjectiveRuntime.State = EEdenObjectiveState::Completed;
+				Complete();
 			}
 			break;
 
 		case EEdenObjectiveType::MaintainFuelAbove:
 			// Equality is valid; fail only when fuel fraction drops below the limit.
-			if (FuelFraction < Config.TargetValue)
+			if (Observations.FuelFraction < Config.TargetValue)
 			{
-				ObjectiveRuntime.State = EEdenObjectiveState::Failed;
+				Fail(FString::Printf(TEXT("propellant %.0f%% fell below %.0f%% at T=%.1f s"), Observations.FuelFraction * 100.0f, Config.TargetValue * 100.0f, Now));
 			}
 			break;
+
+		case EEdenObjectiveType::MaintainPowerAbove:
+			if (Observations.PowerChargeFraction < Config.TargetValue)
+			{
+				Fail(FString::Printf(TEXT("battery %.0f%% fell below %.0f%% at T=%.1f s"), Observations.PowerChargeFraction * 100.0f, Config.TargetValue * 100.0f, Now));
+			}
+			break;
+
+		case EEdenObjectiveType::RecoverThermalStability:
+		{
+			const bool bRecovering = Observations.bHasThermal
+				&& Observations.ExternalHeatingDegreesCelsiusPerSecond <= 0.0f
+				&& Observations.TemperatureCelsius < Config.TargetValue
+				&& Observations.RealizedNetDegreesCelsiusPerSecond <= StableTrendToleranceDegreesCelsiusPerSecond;
+			// Any break resets the hold: the conditions must hold continuously.
+			ObjectiveRuntime.HoldElapsedSeconds = bRecovering ? ObjectiveRuntime.HoldElapsedSeconds + StepSeconds : 0.0f;
+			if (bRecovering && ObjectiveRuntime.HoldElapsedSeconds >= Config.HoldSeconds - TimeTolerance)
+			{
+				Complete(); // Completion this step wins over a deadline reached this same step.
+			}
+			else if (Config.DeadlineSeconds > 0.0f && Now >= Config.DeadlineSeconds - TimeTolerance)
+			{
+				Fail(FString::Printf(
+					TEXT("recovery not achieved by T=%.0f s (%.2f C, %+.2f C/s, stable for %.1f/%.1f s)"),
+					Config.DeadlineSeconds,
+					Observations.TemperatureCelsius,
+					Observations.RealizedNetDegreesCelsiusPerSecond,
+					ObjectiveRuntime.HoldElapsedSeconds,
+					Config.HoldSeconds));
+			}
+			break;
+		}
 
 		default:
 			break;
@@ -377,7 +450,8 @@ EEdenMissionState FEdenMissionModel::EvaluateOutcome(
 
 		const bool bFailOnlyConstraint =
 			Config.ObjectiveType == EEdenObjectiveType::KeepTemperatureBelow
-			|| Config.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove;
+			|| Config.ObjectiveType == EEdenObjectiveType::MaintainFuelAbove
+			|| Config.ObjectiveType == EEdenObjectiveType::MaintainPowerAbove;
 
 		if (bFailOnlyConstraint)
 		{
@@ -411,6 +485,36 @@ EEdenMissionState FEdenMissionModel::EvaluateOutcome(
 	return EEdenMissionState::Running;
 }
 
+FString FEdenMissionModel::DescribeOutcome(
+	const FEdenMissionRuntimeState& State,
+	const FEdenMissionDefinitionConfig& Definition,
+	EEdenMissionState Outcome)
+{
+	if (Outcome == EEdenMissionState::Succeeded)
+	{
+		return FString::Printf(TEXT("all required objectives met at T=%.1f s"), State.MissionElapsedTimeSeconds);
+	}
+	if (Outcome == EEdenMissionState::Failed)
+	{
+		for (const FEdenMissionObjectiveConfig& Config : Definition.Objectives)
+		{
+			if (!Config.bRequired)
+			{
+				continue;
+			}
+			const FEdenMissionObjectiveRuntime* Runtime = State.ObjectiveStates.FindByPredicate(
+				[&Config](const FEdenMissionObjectiveRuntime& Candidate) { return Candidate.ObjectiveId == Config.ObjectiveId; });
+			if (Runtime && Runtime->State == EEdenObjectiveState::Failed)
+			{
+				return FString::Printf(TEXT("%s failed: %s"), *Config.ObjectiveId.ToString(),
+					Runtime->FailureReason.IsEmpty() ? TEXT("objective failed") : *Runtime->FailureReason);
+			}
+		}
+		return TEXT("a required objective failed");
+	}
+	return FString();
+}
+
 FEdenMissionRuntimeState FEdenMissionModel::ResetRuntimeState()
 {
 	return FEdenMissionRuntimeState();
@@ -424,5 +528,6 @@ FEdenMissionStateSnapshot FEdenMissionModel::MakeSnapshot(const FEdenMissionRunt
 	Snapshot.MissionElapsedTimeSeconds = State.MissionElapsedTimeSeconds;
 	Snapshot.ActiveMissionId = MissionId;
 	Snapshot.ObjectiveSnapshots = State.ObjectiveStates;
+	Snapshot.TerminalReason = State.TerminalReason;
 	return Snapshot;
 }
