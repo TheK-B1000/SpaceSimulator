@@ -90,6 +90,41 @@ struct EDENSPACESIMULATOR_API FEdenThermalLimitsSnapshot
 	float AbsoluteMaxTemperatureCelsius = 0.0f;
 };
 
+/** Which bound, if any, kept the realized temperature rate from matching heating minus cooling. */
+enum class EEdenThermalRateLimit : uint8
+{
+	None,
+	/** Net heating, but the temperature is held at AbsoluteMaxTemperatureCelsius. */
+	AbsoluteMax,
+	/** Net cooling, but the temperature is held at AbsoluteMinTemperatureCelsius. */
+	AbsoluteMin,
+	/** Dissipation only pulls toward ambient; it cannot carry the temperature past it. */
+	Ambient
+};
+
+/**
+ * Diagnostic breakdown of the effective thermal balance, derived from the authoritative snapshot
+ * with the same Step() the simulation uses. Read-only: computing it never changes thermal state,
+ * and it is not part of the telemetry contract.
+ */
+struct EDENSPACESIMULATOR_API FEdenThermalBalance
+{
+	double TemperatureCelsius = 0.0;
+	double BaseHeatingDegreesCelsiusPerSecond = 0.0;
+	double ExternalHeatingDegreesCelsiusPerSecond = 0.0;
+	double TotalHeatingDegreesCelsiusPerSecond = 0.0;
+	double BaseDissipationDegreesCelsiusPerSecond = 0.0;
+	double OperatorDissipationDegreesCelsiusPerSecond = 0.0;
+	double EffectiveDissipationDegreesCelsiusPerSecond = 0.0;
+	/** Total heating minus effective dissipation, before any bound applies. */
+	double UnconstrainedNetDegreesCelsiusPerSecond = 0.0;
+	/** Rate the next simulation step will actually produce (after ambient and absolute-limit bounds). */
+	double RealizedNetDegreesCelsiusPerSecond = 0.0;
+	EEdenThermalRateLimit Limit = EEdenThermalRateLimit::None;
+	double StepSeconds = 0.0;
+	bool bIsValid = false;
+};
+
 struct EDENSPACESIMULATOR_API FEdenThermalStepResult
 {
 	FEdenThermalStateSnapshot Snapshot;
@@ -128,4 +163,13 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 		const FEdenThermalConfig& Config,
 		const FEdenThermalStateSnapshot& CurrentSnapshot,
 		float DeltaTimeSeconds);
+
+	/** Effective thermal balance for the next step of StepSeconds. Pure; does not alter the snapshot. */
+	static FEdenThermalBalance ComputeThermalBalance(
+		const FEdenThermalConfig& Config,
+		const FEdenThermalStateSnapshot& Snapshot,
+		float StepSeconds);
+
+	/** One-line log form of a balance: every heating and cooling term, the net rates, and any bound. */
+	static FString DescribeThermalBalance(const FEdenThermalBalance& Balance);
 };

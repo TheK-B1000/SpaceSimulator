@@ -70,6 +70,9 @@ public:
 
 	FEdenThermalDebugSnapshot GetThermalDebugSnapshot() const;
 
+	/** Effective thermal balance for the next simulation step (diagnostics only; never alters state). */
+	FEdenThermalBalance GetThermalBalance() const;
+
 	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
 	bool RegisterWithSimulationClock();
 
@@ -91,6 +94,7 @@ private:
 	void DisableThermalSimulation(const FString& Reason);
 	bool ValidateAndLogConfig(const FEdenThermalConfig& ThermalConfig) const;
 	void ApplySnapshot(const FEdenThermalStateSnapshot& NewSnapshot, bool bBroadcastEvents);
+	void LogThermalInputChange(const TCHAR* InputName, float PreviousRate, float NewRate) const;
 	FString MakeLogContext() const;
 
 	UPROPERTY(EditAnywhere, Category = "Eden|Thermal")
@@ -98,6 +102,9 @@ private:
 
 	UPROPERTY(Transient)
 	FEdenThermalConfig ActiveThermalConfig;
+
+	/** Last fixed step received from the simulation clock; used to evaluate the diagnostic balance. */
+	float LastFixedDeltaSeconds = 0.1f;
 
 	UPROPERTY(Transient)
 	FEdenThermalStateSnapshot CurrentSnapshot;
