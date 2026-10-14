@@ -156,6 +156,24 @@ struct EDENSPACESIMULATOR_API FEdenOsAdvisoryContext
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	FEdenOsAdvisoryTrend FuelFractionTrend;
 
+	/** Source validity of Thermal, Power and Operator, from the same newest snapshot. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FEdenTelemetrySourceAvailability Sources;
+
+	/** Thermal limits captured with the newest snapshot (not read from live configuration). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	FEdenThermalLimitsSnapshot ThermalLimits;
+
+	/**
+	 * Newest minus oldest snapshot simulation time across RecentSnapshots, the span the trend
+	 * deltas cover. Valid only with at least two snapshots and a positive finite span.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	float WindowDurationSeconds = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
+	bool bHasWindowDuration = false;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|OS|Advisory")
 	TArray<FEdenTelemetrySnapshot> RecentSnapshots;
 

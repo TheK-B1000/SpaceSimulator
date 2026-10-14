@@ -64,6 +64,32 @@ struct EDENSPACESIMULATOR_API FEdenThermalStateSnapshot
 	EEdenThermalState ThermalState = EEdenThermalState::Overheated;
 };
 
+/**
+ * Thermal limits in force when a snapshot was taken, captured by value so a later
+ * configuration change cannot alter what an earlier snapshot reports. bIsValid is false when
+ * the configuration fails ValidateConfig; the other values are then not observations.
+ */
+USTRUCT(BlueprintType)
+struct EDENSPACESIMULATOR_API FEdenThermalLimitsSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	bool bIsValid = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float AmbientTemperatureCelsius = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float WarningTemperatureCelsius = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float CriticalTemperatureCelsius = 0.0f;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float AbsoluteMaxTemperatureCelsius = 0.0f;
+};
+
 struct EDENSPACESIMULATOR_API FEdenThermalStepResult
 {
 	FEdenThermalStateSnapshot Snapshot;
@@ -96,6 +122,8 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 		float ExternalHeatingRateDegreesCelsiusPerSecond = 0.0f,
 		float OperatorDissipationDegreesCelsiusPerSecond = 0.0f);
 	static FEdenThermalStateSnapshot MakeInitialSnapshot(const FEdenThermalConfig& Config);
+	/** Value copy of the configured limits; invalid when the configuration is invalid. */
+	static FEdenThermalLimitsSnapshot MakeLimitsSnapshot(const FEdenThermalConfig& Config);
 	static FEdenThermalStepResult Step(
 		const FEdenThermalConfig& Config,
 		const FEdenThermalStateSnapshot& CurrentSnapshot,

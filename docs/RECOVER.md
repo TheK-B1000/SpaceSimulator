@@ -67,6 +67,14 @@ Then read `AGENTS.md` and ExecPlan 0007 (§23 M; HUMAN PIE PENDING).
 - Checkpoint M **automation** complete: mode matrix + live FastAPI + full Unreal/PE regression + source/security audit. Evidence: `Saved/Automation/EdenOsLiveE2E/20260808-M-Closeout/`.
 - 2026-08-18: Editor compile failure was MSVC 14.50 ICE + UBA OOM, not a C++ defect. Pinned 14.44 and rebuilt both project copies successfully.
 
+### Side branch: ExecPlan 0010 (H.1 rich advisory context), 2026-10-14
+
+- Branch `feature/0010-h1-rich-advisory-context`, cut from `feature/0009-visual-flight-integration` @ `e0f8c96` without changing files on disk. Not pushed, not merged. `main`, 0008, 0009 and `EdenSpaceSimulator 5.8` are untouched.
+- Editor build passed. `Eden.Unit.EdenOs.RichContext` 8/8 and `Eden.` 404/404 passed.
+- The untracked `docs/exec-plans/0009-visual-vertical-slice.md` draft is the user's; it was left untracked.
+- The build needs `-EngineRoot "K:\Program Files\Epic Games\UE_5.8"` because the registry lookup fails.
+- Human PIE for 0010 is pending. It does not replace the 0007 §23.8 gate below.
+
 ### Next (human)
 
 - Perform §23.8 PIE checklist; report PASS/FAIL.

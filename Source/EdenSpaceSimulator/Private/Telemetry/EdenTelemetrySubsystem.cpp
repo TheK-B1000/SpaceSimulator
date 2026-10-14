@@ -486,17 +486,27 @@ FEdenTelemetrySnapshot UEdenTelemetrySubsystem::AssembleSnapshot() const
 	{
 		Snapshot.Fuel = Fuel->GetFuelStateSnapshot();
 	}
+	// A bound owner that is not simulating still answers with default values; Sources records
+	// whether each value set is an observation.
 	if (const UEdenPowerSystemComponent* Power = BoundPower.Get())
 	{
 		Snapshot.Power = Power->GetPowerStateSnapshot();
+		Snapshot.Sources.bPower = Power->IsPowerSimulationEnabled();
 	}
 	if (const UEdenThermalSystemComponent* Thermal = BoundThermal.Get())
 	{
 		Snapshot.Thermal = Thermal->GetThermalStateSnapshot();
+		Snapshot.Sources.bThermal = Thermal->IsThermalSimulationEnabled();
+		if (Snapshot.Sources.bThermal)
+		{
+			// Captured now, at this step, so the snapshot keeps the limits it was judged against.
+			Snapshot.ThermalLimits = FEdenThermalModel::MakeLimitsSnapshot(Thermal->GetActiveThermalConfig());
+		}
 	}
 	if (const UEdenOperatorControlComponent* Operator = BoundOperator.Get())
 	{
 		Snapshot.Operator = Operator->GetOperatorStateSnapshot();
+		Snapshot.Sources.bOperator = Operator->IsOperatorControlEnabled();
 	}
 	if (const UEdenFlightMovementComponent* Movement = BoundMovement.Get())
 	{

@@ -226,6 +226,22 @@ FEdenThermalStateSnapshot FEdenThermalModel::MakeSnapshot(
 	return Snapshot;
 }
 
+FEdenThermalLimitsSnapshot FEdenThermalModel::MakeLimitsSnapshot(const FEdenThermalConfig& Config)
+{
+	FEdenThermalLimitsSnapshot Limits;
+	if (!ValidateConfig(Config))
+	{
+		return Limits;
+	}
+
+	Limits.bIsValid = true;
+	Limits.AmbientTemperatureCelsius = Config.AmbientTemperatureCelsius;
+	Limits.WarningTemperatureCelsius = Config.WarningTemperatureCelsius;
+	Limits.CriticalTemperatureCelsius = Config.CriticalTemperatureCelsius;
+	Limits.AbsoluteMaxTemperatureCelsius = Config.AbsoluteMaxTemperatureCelsius;
+	return Limits;
+}
+
 FEdenThermalStateSnapshot FEdenThermalModel::MakeInitialSnapshot(const FEdenThermalConfig& Config)
 {
 	if (!ValidateConfig(Config))

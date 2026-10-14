@@ -160,6 +160,121 @@ namespace EdenOsWireSerializationPrivate
 		CanonicalJson.TrimEndInline();
 		return CanonicalJson;
 	}
+
+	// Exact H.1 wire vocabulary for operator modes. An unmapped value is omitted, never guessed.
+	const TCHAR* ThermalModeToWire(EEdenThermalControlMode Mode)
+	{
+		switch (Mode)
+		{
+		case EEdenThermalControlMode::Off:
+			return TEXT("Off");
+		case EEdenThermalControlMode::Nominal:
+			return TEXT("Nominal");
+		case EEdenThermalControlMode::Boost:
+			return TEXT("Boost");
+		case EEdenThermalControlMode::Emergency:
+			return TEXT("Emergency");
+		default:
+			return nullptr;
+		}
+	}
+
+	const TCHAR* LoadShedModeToWire(EEdenLoadShedMode Mode)
+	{
+		switch (Mode)
+		{
+		case EEdenLoadShedMode::Normal:
+			return TEXT("Normal");
+		case EEdenLoadShedMode::Shed:
+			return TEXT("Shed");
+		default:
+			return nullptr;
+		}
+	}
+
+	const TCHAR* PropulsionPriorityToWire(EEdenPropulsionPriorityMode Mode)
+	{
+		switch (Mode)
+		{
+		case EEdenPropulsionPriorityMode::Full:
+			return TEXT("Full");
+		case EEdenPropulsionPriorityMode::Reduced:
+			return TEXT("Reduced");
+		default:
+			return nullptr;
+		}
+	}
+
+	void AddRichNumber(TArray<FString>& Lines, const TCHAR* Field, float Value)
+	{
+		// ProjectEden rejects non-finite numbers; an unusable value is unknown, so it is omitted.
+		if (FMath::IsFinite(Value))
+		{
+			Lines.Add(FString::Printf(TEXT("    \"%s\": %.6f"), Field, Value));
+		}
+	}
+
+	void AddRichText(TArray<FString>& Lines, const TCHAR* Field, const TCHAR* Value)
+	{
+		if (Value)
+		{
+			Lines.Add(FString::Printf(TEXT("    \"%s\": \"%s\""), Field, Value));
+		}
+	}
+
+	/**
+	 * Optional H.1 rich-context lines (docs: ProjectEden h1-rich-advisory-context.md). A field is
+	 * present only when its source was available at the newest snapshot: absence means unknown,
+	 * and an observed zero is still sent. All values come from that one snapshot.
+	 */
+	TArray<FString> BuildRichContextLines(const FEdenOsAdvisoryContext& Context)
+	{
+		TArray<FString> Lines;
+		if (Context.bHasWindowDuration)
+		{
+			AddRichNumber(Lines, TEXT("windowDurationSeconds"), Context.WindowDurationSeconds);
+		}
+
+		const FEdenThermalLimitsSnapshot& Limits = Context.ThermalLimits;
+		if (Context.Sources.bThermal && Limits.bIsValid)
+		{
+			AddRichNumber(Lines, TEXT("thermalWarningCelsius"), Limits.WarningTemperatureCelsius);
+			AddRichNumber(Lines, TEXT("thermalCriticalCelsius"), Limits.CriticalTemperatureCelsius);
+			AddRichNumber(Lines, TEXT("thermalAmbientCelsius"), Limits.AmbientTemperatureCelsius);
+			AddRichNumber(Lines, TEXT("thermalAbsoluteMaxCelsius"), Limits.AbsoluteMaxTemperatureCelsius);
+		}
+		if (Context.Sources.bThermal)
+		{
+			AddRichNumber(
+				Lines,
+				TEXT("heatGenerationDegreesCelsiusPerSecond"),
+				Context.Thermal.HeatGenerationDegreesCelsiusPerSecond);
+			AddRichNumber(
+				Lines,
+				TEXT("effectiveDissipationDegreesCelsiusPerSecond"),
+				Context.Thermal.EffectiveDissipationDegreesCelsiusPerSecond);
+			AddRichNumber(
+				Lines,
+				TEXT("externalHeatingRateDegreesCelsiusPerSecond"),
+				Context.Thermal.ExternalHeatingRateDegreesCelsiusPerSecond);
+		}
+		if (Context.Sources.bOperator)
+		{
+			AddRichText(Lines, TEXT("thermalControlMode"), ThermalModeToWire(Context.Operator.ThermalMode));
+			AddRichText(Lines, TEXT("loadShedMode"), LoadShedModeToWire(Context.Operator.LoadShedMode));
+			AddRichText(
+				Lines,
+				TEXT("propulsionPriority"),
+				PropulsionPriorityToWire(Context.Operator.PropulsionPriority));
+		}
+		if (Context.Sources.bPower)
+		{
+			AddRichNumber(Lines, TEXT("powerGenerationKilowatts"), Context.Power.GenerationKilowatts);
+			AddRichNumber(Lines, TEXT("powerDemandKilowatts"), Context.Power.TotalDemandKilowatts);
+			AddRichNumber(Lines, TEXT("netPowerKilowatts"), Context.Power.NetPowerKilowatts);
+		}
+		return Lines;
+	}
 }
 
 FEdenOsWireSerializationResult FEdenOsWireSerializationResult::Succeeded(FString InJson)
@@ -471,9 +586,18 @@ FEdenOsWireSerializationResult FEdenOsWireSerializationModel::BuildAdvisoryJsonV
 	Json += FString::Printf(
 		TEXT("    \"contextTruncated\": %s,\n"),
 		Request.Context.bContextTruncated ? TEXT("true") : TEXT("false"));
+	// Rich fields are appended after the legacy keys, so a context without them serializes to
+	// exactly the pre-rich body.
+	const TArray<FString> RichLines = BuildRichContextLines(Request.Context);
 	Json += FString::Printf(
-		TEXT("    \"upstreamHistoryTruncated\": %s\n"),
-		Request.Context.bUpstreamHistoryTruncated ? TEXT("true") : TEXT("false"));
+		TEXT("    \"upstreamHistoryTruncated\": %s%s\n"),
+		Request.Context.bUpstreamHistoryTruncated ? TEXT("true") : TEXT("false"),
+		RichLines.Num() > 0 ? TEXT(",") : TEXT(""));
+	if (RichLines.Num() > 0)
+	{
+		Json += FString::Join(RichLines, TEXT(",\n"));
+		Json += TEXT("\n");
+	}
 	Json += TEXT("  }\n");
 	Json += TEXT("}\n");
 

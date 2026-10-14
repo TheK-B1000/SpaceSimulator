@@ -90,6 +90,28 @@ struct EDENSPACESIMULATOR_API FEdenFlightStateSnapshot
 	FEdenFlightDynamicsSnapshot Dynamics;
 };
 
+/**
+ * Which resource owners were bound and simulating when a snapshot was assembled.
+ *
+ * An unavailable owner leaves default values (0.0, Normal, Full) in its snapshot struct. Those
+ * defaults are not observations, so consumers that must distinguish "unknown" from "observed
+ * zero" (the EDEN OS rich advisory context) read these flags first.
+ */
+USTRUCT(BlueprintType)
+struct EDENSPACESIMULATOR_API FEdenTelemetrySourceAvailability
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	bool bThermal = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	bool bPower = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	bool bOperator = false;
+};
+
 USTRUCT(BlueprintType)
 struct EDENSPACESIMULATOR_API FEdenTelemetrySnapshot
 {
@@ -121,6 +143,17 @@ struct EDENSPACESIMULATOR_API FEdenTelemetrySnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
 	FEdenOperatorStateSnapshot Operator;
+
+	/** Source validity for Thermal, Power and Operator above. Not part of Export Schema v1. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	FEdenTelemetrySourceAvailability Sources;
+
+	/**
+	 * Thermal limits captured at this snapshot's simulation step (invalid when thermal is
+	 * unavailable). Not part of Export Schema v1.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Telemetry")
+	FEdenThermalLimitsSnapshot ThermalLimits;
 };
 
 USTRUCT(BlueprintType)

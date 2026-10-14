@@ -212,6 +212,17 @@ FEdenOsAdvisoryContext FEdenOsAdvisoryModel::BuildContext(
 		Context.Thermal = Latest.Thermal;
 		Context.Flight = Latest.Flight;
 		Context.Operator = Latest.Operator;
+		// Validity and limits travel with the same newest snapshot, so every rich field describes
+		// one simulation step.
+		Context.Sources = Latest.Sources;
+		Context.ThermalLimits = Latest.ThermalLimits;
+
+		if (Context.RecentSnapshots.Num() >= 2)
+		{
+			const float Duration = Latest.SimulationTimeSeconds - Context.RecentSnapshots[0].SimulationTimeSeconds;
+			Context.bHasWindowDuration = FMath::IsFinite(Duration) && Duration > 0.0f;
+			Context.WindowDurationSeconds = Context.bHasWindowDuration ? Duration : 0.0f;
+		}
 
 		Context.TemperatureCelsiusTrend = BuildTrendFromWindow(
 			Context.RecentSnapshots,
