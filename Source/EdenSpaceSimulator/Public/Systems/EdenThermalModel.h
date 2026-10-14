@@ -62,6 +62,14 @@ struct EDENSPACESIMULATOR_API FEdenThermalStateSnapshot
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
 	EEdenThermalState ThermalState = EEdenThermalState::Overheated;
+
+	/** Powered share of the operator dissipation (ExecPlan 0011); it delivers CoolingAuthority of itself. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float ActiveCoolingDegreesCelsiusPerSecond = 0.0f;
+
+	/** Fraction of active cooling the power bus can supply, in [0, 1]. Passive cooling never depends on it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Thermal")
+	float CoolingAuthority = 1.0f;
 };
 
 /**
@@ -116,6 +124,9 @@ struct EDENSPACESIMULATOR_API FEdenThermalBalance
 	double BaseDissipationDegreesCelsiusPerSecond = 0.0;
 	double OperatorDissipationDegreesCelsiusPerSecond = 0.0;
 	double EffectiveDissipationDegreesCelsiusPerSecond = 0.0;
+	/** Powered share of the operator cooling and the fraction of it the power bus supplies. */
+	double ActiveCoolingDegreesCelsiusPerSecond = 0.0;
+	double CoolingAuthority = 1.0;
 	/** Total heating minus effective dissipation, before any bound applies. */
 	double UnconstrainedNetDegreesCelsiusPerSecond = 0.0;
 	/** Rate the next simulation step will actually produce (after ambient and absolute-limit bounds). */
@@ -163,6 +174,15 @@ struct EDENSPACESIMULATOR_API FEdenThermalModel
 		const FEdenThermalConfig& Config,
 		const FEdenThermalStateSnapshot& CurrentSnapshot,
 		float DeltaTimeSeconds);
+
+	/**
+	 * Sets the powered-cooling inputs and recomputes effective dissipation:
+	 * base + operator - active * (1 - authority), never below 0.
+	 */
+	static FEdenThermalStateSnapshot WithCooling(
+		const FEdenThermalStateSnapshot& Snapshot,
+		float ActiveCoolingDegreesCelsiusPerSecond,
+		float CoolingAuthority);
 
 	/** Effective thermal balance for the next step of StepSeconds. Pure; does not alter the snapshot. */
 	static FEdenThermalBalance ComputeThermalBalance(

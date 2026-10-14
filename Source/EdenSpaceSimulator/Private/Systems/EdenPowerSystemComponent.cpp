@@ -90,6 +90,8 @@ bool UEdenPowerSystemComponent::InitializePowerSimulation(const FEdenPowerConfig
 	ActivePowerConfig = PowerConfig;
 	bPowerSimulationEnabled = true;
 	bHasValidPowerConfiguration = true;
+	ThermalControlDemandKilowatts = 0.0f;
+	BatteryDischargeLimitOverrideKilowatts = -1.0f;
 	ApplySnapshot(FEdenPowerModel::MakeInitialSnapshot(ActivePowerConfig), false);
 
 	return true;
@@ -106,6 +108,8 @@ bool UEdenPowerSystemComponent::ResetPowerState()
 		}
 	}
 
+	ThermalControlDemandKilowatts = 0.0f;
+	BatteryDischargeLimitOverrideKilowatts = -1.0f;
 	ApplySnapshot(FEdenPowerModel::MakeInitialSnapshot(ActivePowerConfig), true);
 
 	return true;
@@ -282,6 +286,78 @@ bool UEdenPowerSystemComponent::ClearExternalDemand()
 
 bool UEdenPowerSystemComponent::SetOperatorDemandKilowatts(float OperatorDemandKilowatts)
 {
+	ThermalControlDemandKilowatts = 0.0f;
+	return SetOperatorDemandInternal(OperatorDemandKilowatts);
+}
+
+bool UEdenPowerSystemComponent::SetOperatorDemandBreakdown(float TotalOperatorDemandKilowatts, float InThermalControlDemandKilowatts)
+{
+	const float SanitizedCooling = FEdenPowerModel::SanitizeNonnegativeKilowatts(InThermalControlDemandKilowatts);
+	ThermalControlDemandKilowatts = bPowerSimulationEnabled ? SanitizedCooling : ThermalControlDemandKilowatts;
+	return SetOperatorDemandInternal(TotalOperatorDemandKilowatts);
+}
+
+bool UEdenPowerSystemComponent::SetBatteryDischargeLimitKilowatts(float BatteryMaxDischargeKilowatts)
+{
+	if (!bPowerSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set discharge limit; power simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+	if (!FMath::IsFinite(BatteryMaxDischargeKilowatts) || BatteryMaxDischargeKilowatts <= 0.0f)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s rejected discharge limit %f kW (must be finite and > 0)."), *MakeLogContext(), BatteryMaxDischargeKilowatts);
+		return false;
+	}
+
+	BatteryDischargeLimitOverrideKilowatts = BatteryMaxDischargeKilowatts;
+	ApplySnapshot(CurrentSnapshot, true);
+	UE_LOG(
+		LogEdenSystems,
+		Log,
+		TEXT("%s power bus limited: battery discharge %.3f kW + generation %.3f kW = capacity %.3f kW."),
+		*MakeLogContext(),
+		BatteryMaxDischargeKilowatts,
+		CurrentSnapshot.GenerationKilowatts,
+		CurrentSnapshot.BusCapacityKilowatts);
+	return true;
+}
+
+bool UEdenPowerSystemComponent::ClearBatteryDischargeLimitOverride()
+{
+	if (!bPowerSimulationEnabled)
+	{
+		return false;
+	}
+	const bool bHadOverride = BatteryDischargeLimitOverrideKilowatts >= 0.0f;
+	BatteryDischargeLimitOverrideKilowatts = -1.0f;
+	ApplySnapshot(CurrentSnapshot, true);
+	if (bHadOverride)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Log,
+			TEXT("%s power bus discharge limit restored to config (%s)."),
+			*MakeLogContext(),
+			ActivePowerConfig.BatteryMaxDischargeKilowatts > 0.0f
+				? *FString::Printf(TEXT("%.3f kW"), ActivePowerConfig.BatteryMaxDischargeKilowatts)
+				: TEXT("unlimited"));
+	}
+	return true;
+}
+
+float UEdenPowerSystemComponent::GetEffectiveBatteryDischargeLimitKilowatts() const
+{
+	return BatteryDischargeLimitOverrideKilowatts >= 0.0f ? BatteryDischargeLimitOverrideKilowatts : ActivePowerConfig.BatteryMaxDischargeKilowatts;
+}
+
+float UEdenPowerSystemComponent::GetCoolingAuthority() const
+{
+	return bPowerSimulationEnabled ? CurrentSnapshot.CoolingAuthority : 1.0f;
+}
+
+bool UEdenPowerSystemComponent::SetOperatorDemandInternal(float OperatorDemandKilowatts)
+{
 	if (!bPowerSimulationEnabled)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set operator demand; power simulation is disabled."), *MakeLogContext());
@@ -455,7 +531,34 @@ bool UEdenPowerSystemComponent::ValidateAndLogConfig(const FEdenPowerConfig& Pow
 void UEdenPowerSystemComponent::ApplySnapshot(const FEdenPowerStateSnapshot& NewSnapshot, bool bBroadcastEvents)
 {
 	const EEdenPowerState PreviousState = CurrentSnapshot.PowerState;
-	CurrentSnapshot = NewSnapshot;
+	// Every snapshot carries the bus inputs owned here, so no setter can drop them.
+	CurrentSnapshot = FEdenPowerModel::WithBusAllocation(
+		NewSnapshot,
+		ThermalControlDemandKilowatts,
+		GetEffectiveBatteryDischargeLimitKilowatts());
+
+	const bool bCurtailing = CurrentSnapshot.bBusLimited
+		&& (CurrentSnapshot.AuxiliaryCurtailedKilowatts > 1.0e-4f || CurrentSnapshot.CoolingAuthority < 1.0f - 1.0e-4f);
+	if (bBroadcastEvents && bCurtailing != bBusWasCurtailing)
+	{
+		UE_LOG(
+			LogEdenSystems,
+			Log,
+			TEXT("%s power bus %s. Capacity=%.3f kW | essential %.3f/%.3f | cooling %.3f/%.3f (authority %.0f%%) | auxiliary %.3f/%.3f (curtailed %.3f) kW | battery %.3f kWh"),
+			*MakeLogContext(),
+			bCurtailing ? TEXT("curtailing load") : TEXT("serving all load"),
+			CurrentSnapshot.BusCapacityKilowatts,
+			CurrentSnapshot.EssentialServedKilowatts,
+			CurrentSnapshot.EssentialRequestedKilowatts,
+			CurrentSnapshot.ThermalControlServedKilowatts,
+			CurrentSnapshot.ThermalControlDemandKilowatts,
+			CurrentSnapshot.CoolingAuthority * 100.0f,
+			CurrentSnapshot.AuxiliaryServedKilowatts,
+			CurrentSnapshot.AuxiliaryRequestedKilowatts,
+			CurrentSnapshot.AuxiliaryCurtailedKilowatts,
+			CurrentSnapshot.BatteryChargeKilowattHours);
+	}
+	bBusWasCurtailing = bCurtailing;
 
 	if (!bBroadcastEvents || PreviousState == CurrentSnapshot.PowerState)
 	{

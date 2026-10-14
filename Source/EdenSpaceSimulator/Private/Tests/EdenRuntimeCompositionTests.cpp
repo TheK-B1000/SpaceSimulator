@@ -1885,4 +1885,48 @@ bool FEdenHudScaleAppliesToBuiltPanelsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionOperatorCoolingReachesPowerBusTest,
+	"Eden.Integration.SolarCrisisV2.B.OperatorCoolingReachesPowerBus",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionOperatorCoolingReachesPowerBusTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+
+	EdenRuntimeCompositionTests::FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+	UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+	UEdenThermalSystemComponent* Thermal = Fixture.Pawn->GetThermalSystemComponent();
+	if (!TestNotNull(TEXT("Operator"), Operator) || !TestNotNull(TEXT("Thermal"), Thermal))
+	{
+		return false;
+	}
+
+	// Default spacecraft: unlimited bus, so every existing scenario keeps full cooling.
+	TestTrue(TEXT("Boost accepted"), Operator->SetThermalControlMode(EEdenThermalControlMode::Boost));
+	Fixture.Clock->Tick(0.1f);
+	const FEdenPowerStateSnapshot Unlimited = Fixture.Power->GetPowerStateSnapshot();
+	TestFalse(TEXT("Default bus is unlimited"), Unlimited.bBusLimited);
+	TestTrue(TEXT("Boost cooling power reaches the bus as thermal control"), FMath::IsNearlyEqual(Unlimited.ThermalControlDemandKilowatts, 1.5f));
+	TestTrue(TEXT("Boost active cooling reaches thermal"), FMath::IsNearlyEqual(Thermal->GetThermalStateSnapshot().ActiveCoolingDegreesCelsiusPerSecond, 1.0f));
+	TestTrue(TEXT("Unlimited bus: full cooling authority"), Thermal->GetThermalStateSnapshot().CoolingAuthority == 1.0f);
+
+	// A mission-declared 6 kW limit and an empty battery: generation 2 kW - essential 1 kW leaves 1 of 1.5 kW.
+	TestTrue(TEXT("Discharge limit accepted"), Fixture.Power->SetBatteryDischargeLimitKilowatts(6.0f));
+	TestTrue(TEXT("Battery emptied"), Fixture.Power->SetBatteryChargeKilowattHours(0.0f));
+	Fixture.Clock->Tick(0.1f);
+	TestTrue(
+		FString::Printf(TEXT("Limited bus, empty battery: Boost authority 67%% (%.3f)"), Thermal->GetThermalStateSnapshot().CoolingAuthority),
+		FMath::IsNearlyEqual(Thermal->GetThermalStateSnapshot().CoolingAuthority, 1.0f / 1.5f, 1.0e-3f));
+
+	TestTrue(TEXT("Override cleared"), Fixture.Power->ClearBatteryDischargeLimitOverride());
+	Fixture.Clock->Tick(0.1f);
+	TestTrue(TEXT("Back to the unlimited default: full authority"), Thermal->GetThermalStateSnapshot().CoolingAuthority == 1.0f);
+	return true;
+}
+
 #endif

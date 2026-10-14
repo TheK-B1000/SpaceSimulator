@@ -4,6 +4,7 @@
 
 #include "Core/EdenLogCategories.h"
 #include "Core/EdenSimulationClockSubsystem.h"
+#include "Systems/EdenPowerSystemComponent.h"
 #include "Systems/EdenThermalConfigDataAsset.h"
 
 UEdenThermalSystemComponent::UEdenThermalSystemComponent()
@@ -14,6 +15,14 @@ UEdenThermalSystemComponent::UEdenThermalSystemComponent()
 void UEdenThermalSystemComponent::BeginPlay()
 {
 	Super::BeginPlay();
+
+	if (!CoolingPowerSource.IsValid())
+	{
+		if (const AActor* Owner = GetOwner())
+		{
+			CoolingPowerSource = Owner->FindComponentByClass<UEdenPowerSystemComponent>();
+		}
+	}
 
 	if (InitializeFromConfiguredDataAsset())
 	{
@@ -43,6 +52,7 @@ void UEdenThermalSystemComponent::AdvanceSimulation(float FixedDeltaSeconds)
 		return;
 	}
 
+	PullCoolingAuthority();
 	const FEdenThermalStepResult StepResult =
 		FEdenThermalModel::Step(ActiveThermalConfig, CurrentSnapshot, FixedDeltaSeconds);
 	if (FEdenThermalModel::IsValidDeltaTime(FixedDeltaSeconds))
@@ -276,6 +286,13 @@ bool UEdenThermalSystemComponent::ClearExternalHeatingRate()
 bool UEdenThermalSystemComponent::SetOperatorDissipationDegreesCelsiusPerSecond(
 	float OperatorDissipationDegreesCelsiusPerSecond)
 {
+	// Legacy path: no powered share, so cooling never depends on the power bus.
+	ActiveCoolingDegreesCelsiusPerSecond = 0.0f;
+	return SetOperatorDissipationInternal(OperatorDissipationDegreesCelsiusPerSecond);
+}
+
+bool UEdenThermalSystemComponent::SetOperatorDissipationInternal(float OperatorDissipationDegreesCelsiusPerSecond)
+{
 	if (!bThermalSimulationEnabled)
 	{
 		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set operator dissipation; thermal simulation is disabled."), *MakeLogContext());
@@ -449,7 +466,8 @@ bool UEdenThermalSystemComponent::ValidateAndLogConfig(const FEdenThermalConfig&
 void UEdenThermalSystemComponent::ApplySnapshot(const FEdenThermalStateSnapshot& NewSnapshot, bool bBroadcastEvents)
 {
 	const EEdenThermalState PreviousState = CurrentSnapshot.ThermalState;
-	CurrentSnapshot = NewSnapshot;
+	// Every snapshot carries the powered-cooling inputs owned here, so no setter can drop them.
+	CurrentSnapshot = FEdenThermalModel::WithCooling(NewSnapshot, ActiveCoolingDegreesCelsiusPerSecond, CoolingAuthority);
 
 	if (!bBroadcastEvents || PreviousState == CurrentSnapshot.ThermalState)
 	{
@@ -472,6 +490,64 @@ void UEdenThermalSystemComponent::ApplySnapshot(const FEdenThermalStateSnapshot&
 	if (CurrentSnapshot.ThermalState == EEdenThermalState::Overheated)
 	{
 		OnThermalOverheated.Broadcast();
+	}
+}
+
+bool UEdenThermalSystemComponent::SetOperatorCooling(
+	float TotalOperatorDissipationDegreesCelsiusPerSecond,
+	float InActiveCoolingDegreesCelsiusPerSecond)
+{
+	if (!bThermalSimulationEnabled)
+	{
+		UE_LOG(LogEdenSystems, Warning, TEXT("%s cannot set operator cooling; thermal simulation is disabled."), *MakeLogContext());
+		return false;
+	}
+	ActiveCoolingDegreesCelsiusPerSecond = FMath::IsFinite(InActiveCoolingDegreesCelsiusPerSecond)
+		? FMath::Max(0.0f, InActiveCoolingDegreesCelsiusPerSecond)
+		: 0.0f;
+	PullCoolingAuthority();
+	return SetOperatorDissipationInternal(TotalOperatorDissipationDegreesCelsiusPerSecond);
+}
+
+void UEdenThermalSystemComponent::SetCoolingAuthority(float InCoolingAuthority)
+{
+	const float NewAuthority = FMath::IsFinite(InCoolingAuthority) ? FMath::Clamp(InCoolingAuthority, 0.0f, 1.0f) : 1.0f;
+	if (NewAuthority == CoolingAuthority)
+	{
+		return;
+	}
+	const float PreviousAuthority = CoolingAuthority;
+	CoolingAuthority = NewAuthority;
+	if (bThermalSimulationEnabled)
+	{
+		ApplySnapshot(CurrentSnapshot, true);
+		// Log only meaningful changes (bus limiting starting, ending, or moving by >= 1 %).
+		if (FMath::Abs(NewAuthority - PreviousAuthority) >= 0.01f || NewAuthority == 1.0f)
+		{
+			UE_LOG(
+				LogEdenSystems,
+				Log,
+				TEXT("%s cooling authority %.0f%% -> %.0f%%. %s"),
+				*MakeLogContext(),
+				PreviousAuthority * 100.0f,
+				NewAuthority * 100.0f,
+				*FEdenThermalModel::DescribeThermalBalance(GetThermalBalance()));
+		}
+	}
+}
+
+void UEdenThermalSystemComponent::SetCoolingPowerSource(UEdenPowerSystemComponent* PowerSource)
+{
+	CoolingPowerSource = PowerSource;
+	PullCoolingAuthority();
+}
+
+void UEdenThermalSystemComponent::PullCoolingAuthority()
+{
+	const UEdenPowerSystemComponent* Power = CoolingPowerSource.Get();
+	if (Power && Power->IsPowerSimulationEnabled())
+	{
+		SetCoolingAuthority(Power->GetCoolingAuthority());
 	}
 }
 

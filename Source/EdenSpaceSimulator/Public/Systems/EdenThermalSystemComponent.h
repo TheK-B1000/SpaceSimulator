@@ -73,6 +73,20 @@ public:
 	/** Effective thermal balance for the next simulation step (diagnostics only; never alters state). */
 	FEdenThermalBalance GetThermalBalance() const;
 
+	/**
+	 * Operator cooling with its powered share identified (ExecPlan 0011): ActiveCooling delivers only the
+	 * fraction the power bus supplies. SetOperatorDissipationDegreesCelsiusPerSecond treats all as unpowered.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
+	bool SetOperatorCooling(float TotalOperatorDissipationDegreesCelsiusPerSecond, float ActiveCoolingDegreesCelsiusPerSecond);
+
+	/** Fraction of active cooling powered, [0, 1]. Normally pulled from the power source each step. */
+	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
+	void SetCoolingAuthority(float CoolingAuthority);
+
+	/** Power system whose bus allocation sets the cooling authority each step (found on the owner at BeginPlay). */
+	void SetCoolingPowerSource(class UEdenPowerSystemComponent* PowerSource);
+
 	UFUNCTION(BlueprintCallable, Category = "Eden|Thermal")
 	bool RegisterWithSimulationClock();
 
@@ -95,6 +109,12 @@ private:
 	bool ValidateAndLogConfig(const FEdenThermalConfig& ThermalConfig) const;
 	void ApplySnapshot(const FEdenThermalStateSnapshot& NewSnapshot, bool bBroadcastEvents);
 	void LogThermalInputChange(const TCHAR* InputName, float PreviousRate, float NewRate) const;
+	void PullCoolingAuthority();
+	bool SetOperatorDissipationInternal(float OperatorDissipationDegreesCelsiusPerSecond);
+
+	float ActiveCoolingDegreesCelsiusPerSecond = 0.0f;
+	float CoolingAuthority = 1.0f;
+	TWeakObjectPtr<class UEdenPowerSystemComponent> CoolingPowerSource;
 	FString MakeLogContext() const;
 
 	UPROPERTY(EditAnywhere, Category = "Eden|Thermal")

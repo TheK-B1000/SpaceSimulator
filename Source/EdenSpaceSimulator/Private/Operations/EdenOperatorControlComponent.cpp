@@ -239,10 +239,14 @@ bool UEdenOperatorControlComponent::ApplyCurrentIntent(const FEdenOperatorIntent
 			bWaitingForPower && bWaitingForThermal ? TEXT("power and thermal") : (bWaitingForPower ? TEXT("power") : TEXT("thermal")));
 	}
 
-	const bool bPowerOk =
-		bWaitingForPower || Power->SetOperatorDemandKilowatts(CurrentModifiers.OperatorDemandKilowatts);
+	// Thermal control is identified to both systems: power serves it before auxiliary load, and thermal
+	// delivers only the powered fraction of active cooling (ExecPlan 0011, E1).
+	const bool bPowerOk = bWaitingForPower
+		|| Power->SetOperatorDemandBreakdown(CurrentModifiers.OperatorDemandKilowatts, CurrentModifiers.ThermalControlDemandKilowatts);
 	const bool bThermalOk = bWaitingForThermal
-		|| Thermal->SetOperatorDissipationDegreesCelsiusPerSecond(CurrentModifiers.OperatorDissipationDegreesCelsiusPerSecond);
+		|| Thermal->SetOperatorCooling(
+			CurrentModifiers.OperatorDissipationDegreesCelsiusPerSecond,
+			CurrentModifiers.ActiveCoolingDegreesCelsiusPerSecond);
 	const bool bThrustOk = Movement->SetThrustAuthority(CurrentModifiers.ThrustAuthority);
 	Movement->SetStabilizationAssistAvailable(CurrentModifiers.bStabilizationAssistAvailable);
 

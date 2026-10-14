@@ -272,13 +272,16 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 	}
 
 	bool bTemperatureWasSanitized = false;
-	Result.Snapshot = MakeSnapshot(
+	Result.Snapshot = WithCooling(
+		MakeSnapshot(
 		Config,
 		ClampTemperatureCelsius(CurrentSnapshot.TemperatureCelsius, Config, &bTemperatureWasSanitized),
 		CurrentSnapshot.HeatGenerationDegreesCelsiusPerSecond,
 		CurrentSnapshot.DissipationDegreesCelsiusPerSecond,
 		CurrentSnapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
-		CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond);
+		CurrentSnapshot.OperatorDissipationDegreesCelsiusPerSecond),
+		CurrentSnapshot.ActiveCoolingDegreesCelsiusPerSecond,
+		CurrentSnapshot.CoolingAuthority);
 	Result.bTemperatureWasSanitized = bTemperatureWasSanitized;
 
 	bool bHeatGenerationWasSanitized = false;
@@ -302,22 +305,25 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 	Result.bOperatorDissipationWasSanitized = bOperatorDissipationWasSanitized;
 	Result.bExternalHeatingRateWasSanitized = bExternalHeatingRateWasSanitized;
 
-	const double RawEffectiveDissipation =
-		static_cast<double>(DissipationDegreesCelsiusPerSecond)
-		+ static_cast<double>(OperatorDissipationDegreesCelsiusPerSecond);
-	const float EffectiveDissipationDegreesCelsiusPerSecond =
-		static_cast<float>(FMath::Max(0.0, RawEffectiveDissipation));
+	const FEdenThermalStateSnapshot CoolingInputs = WithCooling(
+		Result.Snapshot,
+		CurrentSnapshot.ActiveCoolingDegreesCelsiusPerSecond,
+		CurrentSnapshot.CoolingAuthority);
+	const float EffectiveDissipationDegreesCelsiusPerSecond = CoolingInputs.EffectiveDissipationDegreesCelsiusPerSecond;
 
 	if (!IsValidDeltaTime(DeltaTimeSeconds))
 	{
 		Result.bDeltaTimeWasValid = false;
-		Result.Snapshot = MakeSnapshot(
+		Result.Snapshot = WithCooling(
+		MakeSnapshot(
 			Config,
 			Result.Snapshot.TemperatureCelsius,
 			HeatGenerationDegreesCelsiusPerSecond,
 			DissipationDegreesCelsiusPerSecond,
 			ExternalHeatingRateDegreesCelsiusPerSecond,
-			OperatorDissipationDegreesCelsiusPerSecond);
+			OperatorDissipationDegreesCelsiusPerSecond),
+		CurrentSnapshot.ActiveCoolingDegreesCelsiusPerSecond,
+		CurrentSnapshot.CoolingAuthority);
 		return Result;
 	}
 
@@ -346,15 +352,38 @@ FEdenThermalStepResult FEdenThermalModel::Step(
 	const float ClampedTemperatureCelsius =
 		ClampTemperatureCelsius(static_cast<float>(NextTemperatureCelsius), Config);
 	Result.TemperatureDeltaCelsius = ClampedTemperatureCelsius - Result.Snapshot.TemperatureCelsius;
-	Result.Snapshot = MakeSnapshot(
+	Result.Snapshot = WithCooling(
+		MakeSnapshot(
 		Config,
 		ClampedTemperatureCelsius,
 		HeatGenerationDegreesCelsiusPerSecond,
 		DissipationDegreesCelsiusPerSecond,
 		ExternalHeatingRateDegreesCelsiusPerSecond,
-		OperatorDissipationDegreesCelsiusPerSecond);
+		OperatorDissipationDegreesCelsiusPerSecond),
+		CurrentSnapshot.ActiveCoolingDegreesCelsiusPerSecond,
+		CurrentSnapshot.CoolingAuthority);
 
 	return Result;
+}
+
+FEdenThermalStateSnapshot FEdenThermalModel::WithCooling(
+	const FEdenThermalStateSnapshot& InSnapshot,
+	float ActiveCoolingDegreesCelsiusPerSecond,
+	float CoolingAuthority)
+{
+	FEdenThermalStateSnapshot Snapshot = InSnapshot;
+	Snapshot.ActiveCoolingDegreesCelsiusPerSecond = FMath::IsFinite(ActiveCoolingDegreesCelsiusPerSecond)
+		? FMath::Max(0.0f, ActiveCoolingDegreesCelsiusPerSecond)
+		: 0.0f;
+	Snapshot.CoolingAuthority = FMath::IsFinite(CoolingAuthority) ? FMath::Clamp(CoolingAuthority, 0.0f, 1.0f) : 1.0f;
+	const double Unpowered =
+		static_cast<double>(Snapshot.ActiveCoolingDegreesCelsiusPerSecond) * (1.0 - static_cast<double>(Snapshot.CoolingAuthority));
+	const double RawEffective =
+		static_cast<double>(Snapshot.DissipationDegreesCelsiusPerSecond)
+		+ static_cast<double>(Snapshot.OperatorDissipationDegreesCelsiusPerSecond)
+		- Unpowered;
+	Snapshot.EffectiveDissipationDegreesCelsiusPerSecond = static_cast<float>(FMath::Max(0.0, RawEffective));
+	return Snapshot;
 }
 
 FEdenThermalBalance FEdenThermalModel::ComputeThermalBalance(
@@ -369,13 +398,16 @@ FEdenThermalBalance FEdenThermalModel::ComputeThermalBalance(
 	}
 
 	// Same sanitation as Step(), so the terms are exactly what the simulation integrates.
-	const FEdenThermalStateSnapshot Sanitized = MakeSnapshot(
-		Config,
-		Snapshot.TemperatureCelsius,
-		Snapshot.HeatGenerationDegreesCelsiusPerSecond,
-		Snapshot.DissipationDegreesCelsiusPerSecond,
-		Snapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
-		Snapshot.OperatorDissipationDegreesCelsiusPerSecond);
+	const FEdenThermalStateSnapshot Sanitized = WithCooling(
+		MakeSnapshot(
+			Config,
+			Snapshot.TemperatureCelsius,
+			Snapshot.HeatGenerationDegreesCelsiusPerSecond,
+			Snapshot.DissipationDegreesCelsiusPerSecond,
+			Snapshot.ExternalHeatingRateDegreesCelsiusPerSecond,
+			Snapshot.OperatorDissipationDegreesCelsiusPerSecond),
+		Snapshot.ActiveCoolingDegreesCelsiusPerSecond,
+		Snapshot.CoolingAuthority);
 
 	Balance.bIsValid = true;
 	Balance.StepSeconds = StepSeconds;
@@ -387,6 +419,8 @@ FEdenThermalBalance FEdenThermalModel::ComputeThermalBalance(
 	Balance.BaseDissipationDegreesCelsiusPerSecond = Sanitized.DissipationDegreesCelsiusPerSecond;
 	Balance.OperatorDissipationDegreesCelsiusPerSecond = Sanitized.OperatorDissipationDegreesCelsiusPerSecond;
 	Balance.EffectiveDissipationDegreesCelsiusPerSecond = Sanitized.EffectiveDissipationDegreesCelsiusPerSecond;
+	Balance.ActiveCoolingDegreesCelsiusPerSecond = Sanitized.ActiveCoolingDegreesCelsiusPerSecond;
+	Balance.CoolingAuthority = Sanitized.CoolingAuthority;
 	Balance.UnconstrainedNetDegreesCelsiusPerSecond =
 		Balance.TotalHeatingDegreesCelsiusPerSecond - Balance.EffectiveDissipationDegreesCelsiusPerSecond;
 
@@ -441,7 +475,7 @@ FString FEdenThermalModel::DescribeThermalBalance(const FEdenThermalBalance& Bal
 	}
 
 	return FString::Printf(
-		TEXT("Temperature=%.3f C | heating base %.3f + external %.3f = %.3f C/s | cooling base %.3f + operator %+.3f = effective %.3f C/s | net %+.3f C/s (realized %+.3f C/s) | limit: %s"),
+		TEXT("Temperature=%.3f C | heating base %.3f + external %.3f = %.3f C/s | cooling base %.3f + operator %+.3f = effective %.3f C/s | net %+.3f C/s (realized %+.3f C/s) | limit: %s | active cooling %.3f C/s at %.0f%% power"),
 		Balance.TemperatureCelsius,
 		Balance.BaseHeatingDegreesCelsiusPerSecond,
 		Balance.ExternalHeatingDegreesCelsiusPerSecond,
@@ -451,5 +485,7 @@ FString FEdenThermalModel::DescribeThermalBalance(const FEdenThermalBalance& Bal
 		Balance.EffectiveDissipationDegreesCelsiusPerSecond,
 		Balance.UnconstrainedNetDegreesCelsiusPerSecond,
 		Balance.RealizedNetDegreesCelsiusPerSecond,
-		LimitText);
+		LimitText,
+		Balance.ActiveCoolingDegreesCelsiusPerSecond,
+		Balance.CoolingAuthority * 100.0);
 }
