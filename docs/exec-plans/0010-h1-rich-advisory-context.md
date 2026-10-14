@@ -102,6 +102,9 @@ Human PIE (Milestone C, not done): run Advisory mode against a local ProjectEden
 - 2026-10-14: `Validate-Project.ps1 -Build -EngineRoot "K:\Program Files\Epic Games\UE_5.8"`: Win64 Development Editor build succeeded (VS 2022 14.44.35207, 12 actions, 214 s). The registry lookup for engine association `5.8` failed, so `-EngineRoot` must be passed.
 - 2026-10-14: `-RunTests -TestFilter "Eden.Unit.EdenOs.RichContext"`: 8/8 passed.
 - 2026-10-14: `-RunTests -TestFilter "Eden."`: 404/404 passed, exit 0. The 6 `LogEdenOs` warnings come from existing negative-path tests (synthetic transport failures, invalid JSON, convergence failure).
+- 2026-10-14: Added `Eden.External.EdenOs.LiveRichAdvisoryContext` (skips without live env vars), `scripts/Start-EdenPieSession.ps1` (throwaway ProjectEden on 127.0.0.1 with deterministic advisories and a temp SQLite DB; JWT only in process env, never printed) and `scripts/Get-EdenPieEvidence.ps1` (exports received contexts and responses, no credentials).
+- 2026-10-14: Live run against ProjectEden `4f831f4`, deterministic advisories, isolated DB (`Saved/Automation/EdenPie/20261014-125445`). Real `BP_EdenSpacecraftPawn` with its Data Assets, possessed by `AEdenFlightPlayerController`, Solar Event mission, Advisory authority. 6 phases (Nominal, Boost, Boost+Shed, Emergency, Emergency+Reduced, custom 60/95 C thresholds): Result=Success. 13 advisories accepted; rich fields 14/14 from the second evaluation (13/14 on the first, single snapshot, window duration correctly omitted); context modes matched operator intent every phase; HUD showed the latest accepted advisory every phase; 0 command proposals, 0 executed external commands; no bearer token in ProjectEden logs. Operator effects on the wire matched ADR-0002 exactly (Boost 1.5 C/s / 2.5 kW; Boost+Shed 1.1 C/s / 0.5 kW; Emergency 2.5 C/s). First run failed only because the test world never fires the HUD's 10 Hz timer; the test now calls `RefreshOperatorHudNow()` as the timer would.
+- 2026-10-14: Build for that run included another session's uncommitted logging-only edits (thermal balance diagnostics for 0011) in the shared working tree; no physics or wire change. The workspace is checked out on `feature/0011-thermal-diagnostics`; this commit was written to `feature/0010-h1-rich-advisory-context` without switching branches.
 
 ## Decision log
 
@@ -111,7 +114,7 @@ Human PIE (Milestone C, not done): run Advisory mode against a local ProjectEden
 ## Acceptance evidence
 
 - Milestone A: Editor build passed (progress log, 2026-10-14).
-- Milestone B: 8/8 RichContext tests and 404/404 `Eden.` tests passed.
+- Milestone B: 8/8 RichContext tests and 404/404 `Eden.` tests passed. Live `Eden.External.EdenOs.LiveRichAdvisoryContext` passed against ProjectEden `4f831f4` (automation, not PIE).
 - Milestone C (human PIE): **not done**. Not self-certified.
 
 ## Handoff
