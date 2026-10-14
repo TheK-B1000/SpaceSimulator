@@ -36,7 +36,7 @@ When v2 is complete:
 
 ### Out of scope
 
-- EDEN live advisory work (separate track) and any EDEN control authority. The deterministic EDEN safety policy is unchanged: load shed and reduced propulsion are never thermal remedies.
+- EDEN live advisory work (separate track) and any EDEN control authority. The deterministic EDEN safety policy is unchanged: EDEN does not recommend load shed or reduced propulsion as thermal mitigations. (Physically, load shed can marginally improve cooling in narrow bus-limited conditions; see the decision log for 2026-10-15.)
 - Orbital missions. "Start from current conditions" is designed here and covered by tests only.
 - Flight and propulsion rebalancing, damage models, radiator geometry.
 - Telemetry Export v1 / EDEN wire schema changes. New fields (cooling authority, curtailed load) are in-process only until a separate contract review.
@@ -247,11 +247,11 @@ v1's asset and automated tests are unchanged and pass; only its live (PIE) traje
 
 ### EDEN (ProjectEden) integration incompatibilities found (read-only audit, nothing changed in ProjectEden)
 
-1. **Policy lists cooling modes as `{Boost, Emergency}`** (`thermal_safety_analysis.py`). Under A2, Nominal is also active cooling and Off is a heat source (net +0.5 C/s). There is no "return to Nominal" action, so with Off reported EDEN offers Boost (more power) rather than the cheapest fix, and v1-era explanations treating Off as equivalent to Nominal are invalid.
+1. **Policy lists cooling modes as `{Boost, Emergency}`** (`thermal_safety_analysis.py`). Under A2, Nominal is also powered (active) cooling, and Off provides passive cooling only (0.5 C/s). Off does not generate heat, but the 1.0 C/s baseline heating exceeds passive cooling, so the ship warms at +0.5 C/s in Off. There is no "return to Nominal" action, so with Off reported EDEN offers Boost (more power) rather than the cheapest fix, and v1-era explanations treating Off as equivalent to Nominal are invalid.
 2. **"Emergency adds at least as much cooling ... as Boost"** (`TRADEOFFS`) is false on a power-limited bus: with an empty battery Emergency gets 22 % authority (~0.44 C/s active) versus Boost 67 % (~0.67 C/s). The Boost -> Emergency escalation can then recommend *less* cooling.
 3. **Power arithmetic (low risk, verified):** on a limited bus `netPowerKilowatts` = generation - *delivered* load while `powerDemandKilowatts` stays the *requested* total, so generation - demand != net whenever load is curtailed. ProjectEden's `analyze_power_balance` uses the transmitted net (always sent) and derives generation - demand only when net is missing, so its diagnostics stay correct; an advisory sentence that computes net from generation and demand itself would be wrong under curtailment.
 4. **No cooling-authority or curtailment fields on the wire.** Thermal diagnostics use the authoritative `effectiveDissipationDegreesCelsiusPerSecond` (which already includes A2 and power limits — good), but EDEN cannot explain *why* cooling is reduced or which auxiliary load is unpowered. Needs a reviewed contract addition (e.g. `coolingAuthority`, `auxiliaryRequestedKilowatts`, `auxiliaryCurtailedKilowatts`, `busCapacityKilowatts`).
-5. **Load-shed corner case:** with the battery empty and no auxiliary load, load shed's v1 reduction comes off the essential load and frees bus capacity; with Emergency this raises net cooling by ~+0.04 C/s despite the -0.4 C/s penalty. "Load shed is never thermal relief" is then not strictly true in the model (it only arises after `MaintainBatteryReserve` has already failed in v2). Decision needed: keep, or stop shed reductions from freeing essential capacity.
+5. **Load-shed corner case (resolved 2026-10-15: keep the physics):** with the battery empty and no auxiliary load, load shed's reduction comes off the essential load and frees bus capacity; with Emergency this raises net cooling by ~+0.044 C/s despite the -0.4 C/s penalty (Emergency +0.056 -> +0.011 C/s). Even then it remains worse than Nominal (0.000) or Boost (-0.167). The bus keeps allocating whatever power is genuinely available; the documentation no longer claims load shed can never improve cooling. EDEN still must not recommend load shed as a thermal mitigation without separately verified safety justification.
 6. Mode-name assumptions should give way to authoritative rates: prefer `effectiveDissipation`/heat/external terms (already sent) plus the new bus fields over mode names.
 
 ### Design decisions recorded (reviewer, 2026-10-14, second message)
@@ -270,7 +270,13 @@ v1's asset and automated tests are unchanged and pass; only its live (PIE) traje
 - 2026-10-14 (reviewer): Thermal baseline **A2** — passive 0.5 °C/s kept; Nominal adds 0.5 °C/s of active cooling at a configurable electrical cost; Off keeps passive cooling only.
 - 2026-10-14 (reviewer): A fresh Solar Crisis initializes to 20 °C; other missions keep their physical state; battery, fuel and unrelated systems are not reset.
 - 2026-10-14 (reviewer): Battery and power must be meaningful through calibrated constraints, not arbitrary drain; load shed must not be presented as thermal relief.
-- Pending review: E1 bus model and 6 kW discharge limit; curtailment reporting (a) or objective (b); D-a (4.25 °C/s, 20 s, deadline 100 s) or D-b.
+- 2026-10-15 (reviewer): Checkpoint E (`faf11b5`) provisionally approved at the implementation level.
+- 2026-10-15 (reviewer): **Keep physically correct power redistribution.** Load shed may free bus capacity that cooling then uses; this is not prevented. Policy stays conservative: load shed is a power-management action with potentially negative thermal consequences, and EDEN must not recommend it for cooling.
+- 2026-10-15 (reviewer): EDEN must never assume a higher thermal mode cools more; it must evaluate available power, actual cooling authority and predicted temperature response. Nominal is powered cooling (an appropriate low-cost mitigation); Off is passive cooling only. ProjectEden changes are owned by the ProjectEden session (handoff: `docs/handoffs/0011-projecteden-thermal-policy.md`).
+- 2026-10-15 (reviewer): Mission configuration preserved: flare 4.25 C/s for 20 s, deadline T 100 s, battery floor 10 %, auxiliary curtailment reported only.
+- 2026-10-15 (confirmation): **6 kW vs 8 kW.** 6 kW is the battery *discharge* limit declared by the mission (`BatteryMaxDischargeKilowatts`); 8 kW is the resulting *bus capacity* = 2 kW generation + 6 kW discharge, available only while the battery holds charge (2 kW when empty). The HUD BUS line shows the capacity (`cap 8.0 kW`); both numbers are correct and describe different things.
+- 2026-10-15 (confirmation): **v1's changed live trajectory is intentional.** The A2 baseline is spacecraft configuration (approved), so v1 played in PIE now peaks near 70 C and holds; `DA_SolarEventEmergency` and v1's automated tests are unchanged. Restoring v1's original live balance would require a mission-declared configuration override and has not been requested.
+- Resolved 2026-10-14: E1 with a 6 kW discharge limit; curtailment reporting (a); flare D-a (4.25 °C/s, 20 s, deadline 100 s).
 
 ## Acceptance evidence
 
