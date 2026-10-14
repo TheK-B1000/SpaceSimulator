@@ -153,6 +153,16 @@ bool UEdenMissionSubsystem::LoadMission(const FEdenMissionDefinitionConfig& Defi
 		return false;
 	}
 
+	// A finished previous run may still hold its power-bus limit; it must not carry into the next mission.
+	if (CurrentRuntimeState.bAppliedBatteryDischargeLimit)
+	{
+		if (UEdenPowerSystemComponent* PowerComp = GetPowerTarget())
+		{
+			PowerComp->ClearBatteryDischargeLimitOverride();
+		}
+		CurrentRuntimeState.bAppliedBatteryDischargeLimit = false;
+	}
+
 	TArray<FString> ValidationErrors;
 	if (!FEdenMissionModel::ValidateDefinition(Definition, &ValidationErrors))
 	{
@@ -231,6 +241,14 @@ bool UEdenMissionSubsystem::StartMission()
 			TEXT("%s failed to register with simulation clock when starting mission '%s'."),
 			*GetNameSafe(this),
 			*ActiveMissionDefinition.MissionId.ToString());
+		return false;
+	}
+
+	// Ready -> Running is always a fresh run (Ready only follows LoadMission), so declared initial
+	// conditions apply here and nowhere else.
+	if (!ApplyInitialConditions())
+	{
+		UnregisterFromSimulationClock();
 		return false;
 	}
 
@@ -588,6 +606,72 @@ void UEdenMissionSubsystem::ExecuteMissionEvent(const FEdenMissionEventConfig& E
 	}
 }
 
+bool UEdenMissionSubsystem::ApplyInitialConditions()
+{
+	const FEdenMissionInitialConditions& Initial = ActiveMissionDefinition.InitialConditions;
+	if (!Initial.bSetInitialTemperature && !Initial.bSetBatteryDischargeLimit)
+	{
+		return true; // Start from the spacecraft's current physical condition.
+	}
+
+	UEdenThermalSystemComponent* ThermalComp = GetThermalTarget();
+	UEdenPowerSystemComponent* PowerComp = GetPowerTarget();
+	if ((Initial.bSetInitialTemperature && (!ThermalComp || !ThermalComp->IsThermalSimulationEnabled()))
+		|| (Initial.bSetBatteryDischargeLimit && (!PowerComp || !PowerComp->IsPowerSimulationEnabled())))
+	{
+		UE_LOG(
+			LogEdenMission,
+			Error,
+			TEXT("%s cannot start mission '%s': it declares initial conditions but the %s target is missing or not simulating."),
+			*GetNameSafe(this),
+			*ActiveMissionDefinition.MissionId.ToString(),
+			Initial.bSetInitialTemperature && (!ThermalComp || !ThermalComp->IsThermalSimulationEnabled()) ? TEXT("thermal") : TEXT("power"));
+		return false;
+	}
+
+	// Leftover mission-owned disturbances must not leak into the scripted start.
+	ClearMissionExternalModifiers();
+
+	if (Initial.bSetInitialTemperature && !ThermalComp->SetTemperatureCelsius(Initial.InitialTemperatureCelsius))
+	{
+		UE_LOG(
+			LogEdenMission,
+			Error,
+			TEXT("%s cannot start mission '%s': initial temperature %.3f C was rejected by the thermal system."),
+			*GetNameSafe(this),
+			*ActiveMissionDefinition.MissionId.ToString(),
+			Initial.InitialTemperatureCelsius);
+		return false;
+	}
+
+	if (Initial.bSetBatteryDischargeLimit)
+	{
+		if (!PowerComp->SetBatteryDischargeLimitKilowatts(Initial.BatteryMaxDischargeKilowatts))
+		{
+			UE_LOG(
+				LogEdenMission,
+				Error,
+				TEXT("%s cannot start mission '%s': battery discharge limit %.3f kW was rejected."),
+				*GetNameSafe(this),
+				*ActiveMissionDefinition.MissionId.ToString(),
+				Initial.BatteryMaxDischargeKilowatts);
+			return false;
+		}
+		CurrentRuntimeState.bAppliedBatteryDischargeLimit = true;
+	}
+
+	CurrentRuntimeState.bInitialConditionsApplied = true;
+	UE_LOG(
+		LogEdenMission,
+		Log,
+		TEXT("%s applied declared initial conditions for '%s': %s%s. Battery charge, propellant, flight state and operator modes are unchanged."),
+		*GetNameSafe(this),
+		*ActiveMissionDefinition.MissionId.ToString(),
+		Initial.bSetInitialTemperature ? *FString::Printf(TEXT("temperature %.2f C"), Initial.InitialTemperatureCelsius) : TEXT("temperature unchanged"),
+		Initial.bSetBatteryDischargeLimit ? *FString::Printf(TEXT(", power bus discharge limit %.2f kW"), Initial.BatteryMaxDischargeKilowatts) : TEXT(""));
+	return true;
+}
+
 void UEdenMissionSubsystem::ClearMissionExternalModifiers()
 {
 	if (UEdenThermalSystemComponent* ThermalComp = GetThermalTarget())
@@ -605,6 +689,11 @@ void UEdenMissionSubsystem::ClearMissionExternalModifiers()
 
 	if (UEdenPowerSystemComponent* PowerComp = GetPowerTarget())
 	{
+		if (CurrentRuntimeState.bAppliedBatteryDischargeLimit)
+		{
+			PowerComp->ClearBatteryDischargeLimitOverride();
+			CurrentRuntimeState.bAppliedBatteryDischargeLimit = false;
+		}
 		if (!PowerComp->ClearExternalDemand())
 		{
 			UE_LOG(

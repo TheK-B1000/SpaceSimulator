@@ -140,6 +140,8 @@ private:
 	void TransitionMissionPhase(EEdenMissionPhase NewPhase);
 	void ExecuteMissionEvent(const FEdenMissionEventConfig& EventConfig);
 	void ClearMissionExternalModifiers();
+	/** Applies the definition's declared initial conditions for a fresh start; false (and logged) if impossible. */
+	bool ApplyInitialConditions();
 	bool TryResolveResourceTargetsFromPossessedSpacecraft();
 	UEdenThermalSystemComponent* GetThermalTarget() const;
 	UEdenPowerSystemComponent* GetPowerTarget() const;

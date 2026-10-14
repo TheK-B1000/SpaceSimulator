@@ -1929,4 +1929,187 @@ bool FEdenRuntimeCompositionOperatorCoolingReachesPowerBusTest::RunTest(const FS
 	return true;
 }
 
+namespace EdenRuntimeCompositionTests
+{
+/** A minimal scripted mission: optional declared initial conditions, an optional 4.25 C/s flare T 10-30 s. */
+FEdenMissionDefinitionConfig MakeInitialConditionsMission(FName MissionId, bool bDeclareInitialConditions, bool bWithFlare)
+{
+	FEdenMissionDefinitionConfig Definition;
+	Definition.MissionId = MissionId;
+	FEdenMissionObjectiveConfig Survive;
+	Survive.ObjectiveId = TEXT("SurviveLong");
+	Survive.ObjectiveType = EEdenObjectiveType::SurviveUntilTime;
+	Survive.TargetValue = 1000.0f;
+	Survive.bActivateOnStart = true;
+	Definition.Objectives.Add(Survive);
+	if (bWithFlare)
+	{
+		FEdenMissionEventConfig Flare;
+		Flare.EventId = TEXT("Flare");
+		Flare.TriggerTimeSeconds = 10.0f;
+		Flare.CommandType = EEdenMissionCommandType::SetExternalHeatingRate;
+		Flare.FloatParameter = 4.25f;
+		FEdenMissionEventConfig Clear;
+		Clear.EventId = TEXT("ClearFlare");
+		Clear.TriggerTimeSeconds = 30.0f;
+		Clear.CommandType = EEdenMissionCommandType::ClearExternalHeatingRate;
+		Definition.Events.Add(Flare);
+		Definition.Events.Add(Clear);
+	}
+	if (bDeclareInitialConditions)
+	{
+		Definition.InitialConditions.bSetInitialTemperature = true;
+		Definition.InitialConditions.InitialTemperatureCelsius = 20.0f;
+		Definition.InitialConditions.bSetBatteryDischargeLimit = true;
+		Definition.InitialConditions.BatteryMaxDischargeKilowatts = 6.0f;
+	}
+	return Definition;
+}
+
+void TickSeconds(FFlightPropellantFixture& Fixture, double Seconds)
+{
+	for (int32 Tick = 0; Tick < FMath::RoundToInt(Seconds / 0.1); ++Tick)
+	{
+		Fixture.Clock->Tick(0.1f);
+	}
+}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionInitialConditionsAreScopedTest,
+	"Eden.Integration.SolarCrisisV2.C.InitialConditionsAreScopedAndExplicit",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionInitialConditionsAreScopedTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenRuntimeCompositionTests;
+
+	FFlightPropellantFixture Fixture;
+	if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+	{
+		return false;
+	}
+	UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+	UEdenThermalSystemComponent* Thermal = Fixture.Pawn->GetThermalSystemComponent();
+	UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+	if (!Operator || !Thermal || !Mission)
+	{
+		return false;
+	}
+
+	// The ship sat with cooling Off for a minute before the player started the scenario.
+	Operator->SetThermalControlMode(EEdenThermalControlMode::Off);
+	TickSeconds(Fixture, 60.0);
+	TestTrue(TEXT("Idle Off for 60 s heated the ship (about 50 C)"), Thermal->GetThermalStateSnapshot().TemperatureCelsius > 45.0f);
+	Fixture.Power->SetBatteryChargeKilowattHours(15.0f);
+	const float BatteryBefore = Fixture.Power->GetPowerStateSnapshot().BatteryChargeKilowattHours;
+	const float FuelBefore = Fixture.Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
+
+	Mission->SetMissionResourceTargets(Thermal, Fixture.Power, Fixture.Fuel);
+	TestTrue(TEXT("Declaring mission loads"), Mission->LoadMission(MakeInitialConditionsMission(TEXT("V2InitDeclared"), true, false)));
+	TestTrue(TEXT("Declaring mission starts"), Mission->StartMission());
+	TestEqual(TEXT("Declared temperature applied exactly"), Thermal->GetThermalStateSnapshot().TemperatureCelsius, 20.0f);
+	TestEqual(TEXT("Declared bus limit applied"), Fixture.Power->GetEffectiveBatteryDischargeLimitKilowatts(), 6.0f);
+	TestEqual(TEXT("Battery charge NOT reset"), Fixture.Power->GetPowerStateSnapshot().BatteryChargeKilowattHours, BatteryBefore);
+	TestEqual(TEXT("Propellant NOT reset"), Fixture.Fuel->GetFuelStateSnapshot().FuelQuantityKilograms, FuelBefore);
+	TestTrue(TEXT("Operator mode NOT reset (still Off)"), Operator->GetOperatorStateSnapshot().ThermalMode == EEdenThermalControlMode::Off);
+	TestTrue(TEXT("Runtime records the application"), Mission->GetMissionRuntimeState().bInitialConditionsApplied);
+
+	TestTrue(TEXT("Abort"), Mission->AbortMission());
+	TestEqual(TEXT("Abort releases the mission's bus limit"), Fixture.Power->GetEffectiveBatteryDischargeLimitKilowatts(), 0.0f);
+	const float AfterAbort = Thermal->GetThermalStateSnapshot().TemperatureCelsius;
+
+	// A mission that declares nothing starts from the ship's actual condition (orbital-mission mode).
+	TickSeconds(Fixture, 10.0); // still Off: heats
+	const float Current = Thermal->GetThermalStateSnapshot().TemperatureCelsius;
+	TestTrue(TEXT("Ship kept heating after abort (temperature not reset by abort)"), Current > AfterAbort);
+	TestTrue(TEXT("Reset before the next mission"), Mission->ResetMission());
+	TestTrue(TEXT("Undeclared mission loads"), Mission->LoadMission(MakeInitialConditionsMission(TEXT("V2InitUndeclared"), false, false)));
+	TestTrue(TEXT("Undeclared mission starts"), Mission->StartMission());
+	TestEqual(TEXT("Undeclared mission keeps the current temperature"), Thermal->GetThermalStateSnapshot().TemperatureCelsius, Current);
+	TestFalse(TEXT("Nothing applied"), Mission->GetMissionRuntimeState().bInitialConditionsApplied);
+	TestEqual(TEXT("Undeclared mission leaves the bus unlimited"), Fixture.Power->GetEffectiveBatteryDischargeLimitKilowatts(), 0.0f);
+	Mission->AbortMission();
+	Mission->ResetMission();
+
+	// Invalid declarations are rejected at load; impossible ones refuse to start.
+	FEdenMissionDefinitionConfig Invalid = MakeInitialConditionsMission(TEXT("V2InitInvalid"), true, false);
+	Invalid.InitialConditions.InitialTemperatureCelsius = std::numeric_limits<float>::quiet_NaN();
+	AddExpectedError(TEXT("InitialTemperatureCelsius must be finite"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("Non-finite initial temperature is rejected"), Mission->LoadMission(Invalid));
+
+	Mission->SetMissionResourceTargets(nullptr, Fixture.Power, Fixture.Fuel);
+	TestTrue(TEXT("Declaring mission loads without a thermal target"), Mission->LoadMission(MakeInitialConditionsMission(TEXT("V2InitNoThermal"), true, false)));
+	AddExpectedError(TEXT("declares initial conditions but the thermal target"), EAutomationExpectedErrorFlags::Contains, 1);
+	TestFalse(TEXT("Start fails visibly when a declared target is missing"), Mission->StartMission());
+	TestEqual(TEXT("Mission stays Ready"), Mission->GetMissionState(), EEdenMissionState::Ready);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FEdenRuntimeCompositionEarlyAndLateActivationMatchTest,
+	"Eden.Integration.SolarCrisisV2.C.EarlyAndLateActivationMatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdenRuntimeCompositionEarlyAndLateActivationMatchTest::RunTest(const FString& Parameters)
+{
+	(void)Parameters;
+	using namespace EdenRuntimeCompositionTests;
+
+	TArray<float> ReferenceTrace;
+	for (const double IdleSeconds : {0.0, 60.0, 300.0})
+	{
+		FFlightPropellantFixture Fixture;
+		if (!TestTrue(TEXT("Blueprint pawn with fuel and power runs"), Fixture.Setup(*this)))
+		{
+			return false;
+		}
+		UEdenOperatorControlComponent* Operator = Fixture.Pawn->GetOperatorControlComponent();
+		UEdenThermalSystemComponent* Thermal = Fixture.Pawn->GetThermalSystemComponent();
+		UEdenMissionSubsystem* Mission = Fixture.Pawn->GetWorld()->GetSubsystem<UEdenMissionSubsystem>();
+		if (!Operator || !Thermal || !Mission)
+		{
+			return false;
+		}
+
+		// The player lingers with cooling Off (the worst case), then returns to Nominal and starts.
+		Operator->SetThermalControlMode(EEdenThermalControlMode::Off);
+		TickSeconds(Fixture, IdleSeconds);
+		Operator->SetThermalControlMode(EEdenThermalControlMode::Nominal);
+		const float BeforeStart = Thermal->GetThermalStateSnapshot().TemperatureCelsius;
+
+		Mission->SetMissionResourceTargets(Thermal, Fixture.Power, Fixture.Fuel);
+		TestTrue(TEXT("Mission loads"), Mission->LoadMission(MakeInitialConditionsMission(TEXT("V2Activation"), true, true)));
+		TestTrue(TEXT("Mission starts"), Mission->StartMission());
+
+		TArray<float> Trace;
+		for (int32 Tick = 0; Tick < 400; ++Tick)
+		{
+			Fixture.Clock->Tick(0.1f);
+			Trace.Add(Thermal->GetThermalStateSnapshot().TemperatureCelsius);
+		}
+		AddInfo(FString::Printf(TEXT("Idle %.0f s: %.2f C before start; T=30 s %.3f C; T=40 s %.3f C"), IdleSeconds, BeforeStart, Trace[299], Trace[399]));
+		if (ReferenceTrace.IsEmpty())
+		{
+			ReferenceTrace = Trace;
+			// Passive (Nominal) through the 4.25 C/s flare: 20 + 4.25 x 20 = 105 C at the end of the flare.
+			TestTrue(FString::Printf(TEXT("Reference reaches ~105 C at the end of the flare (%.3f)"), Trace[299]), FMath::IsNearlyEqual(Trace[299], 105.0f, 0.5f));
+			continue;
+		}
+		bool bIdentical = true;
+		for (int32 Index = 0; Index < Trace.Num(); ++Index)
+		{
+			if (!FMath::IsNearlyEqual(Trace[Index], ReferenceTrace[Index], 1.0e-4f))
+			{
+				AddError(FString::Printf(TEXT("Idle %.0f s diverges at T=%.1f s: %.4f vs %.4f C"), IdleSeconds, (Index + 1) * 0.1, Trace[Index], ReferenceTrace[Index]));
+				bIdentical = false;
+				break;
+			}
+		}
+		TestTrue(FString::Printf(TEXT("Starting after %.0f s of idle gives the identical temperature trace"), IdleSeconds), bIdentical);
+	}
+	return true;
+}
+
 #endif

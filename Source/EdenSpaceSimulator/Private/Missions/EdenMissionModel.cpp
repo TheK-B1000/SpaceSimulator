@@ -26,6 +26,19 @@ bool FEdenMissionModel::ValidateDefinition(const FEdenMissionDefinitionConfig& D
 		EdenMissionModel::AddValidationError(OutErrors, TEXT("MissionId must not be empty."));
 	}
 
+	const FEdenMissionInitialConditions& Initial = Definition.InitialConditions;
+	if (Initial.bSetInitialTemperature && !FMath::IsFinite(Initial.InitialTemperatureCelsius))
+	{
+		bIsValid = false;
+		EdenMissionModel::AddValidationError(OutErrors, TEXT("InitialConditions.InitialTemperatureCelsius must be finite."));
+	}
+	if (Initial.bSetBatteryDischargeLimit
+		&& (!FMath::IsFinite(Initial.BatteryMaxDischargeKilowatts) || Initial.BatteryMaxDischargeKilowatts <= 0.0f))
+	{
+		bIsValid = false;
+		EdenMissionModel::AddValidationError(OutErrors, TEXT("InitialConditions.BatteryMaxDischargeKilowatts must be finite and > 0."));
+	}
+
 	TSet<FName> SeenEventIds;
 	for (const FEdenMissionEventConfig& Event : Definition.Events)
 	{

@@ -114,6 +114,30 @@ struct EDENSPACESIMULATOR_API FEdenMissionObjectiveConfig
 	bool bActivateOnStart = false;
 };
 
+/**
+ * Explicit, scenario-scoped starting conditions (ExecPlan 0011). Applied once, on a fresh start, and only
+ * what is declared: nothing else on the spacecraft (battery charge, propellant, flight state, operator
+ * modes) is reset. A mission that declares nothing starts from the ship's current condition.
+ */
+USTRUCT(BlueprintType)
+struct EDENSPACESIMULATOR_API FEdenMissionInitialConditions
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	bool bSetInitialTemperature = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission", meta = (EditCondition = "bSetInitialTemperature"))
+	float InitialTemperatureCelsius = 20.0f;
+
+	/** Limit the power bus for this run (E1). Cleared again when the mission is aborted or reset. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	bool bSetBatteryDischargeLimit = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission", meta = (EditCondition = "bSetBatteryDischargeLimit", ClampMin = "0.001"))
+	float BatteryMaxDischargeKilowatts = 6.0f;
+};
+
 USTRUCT(BlueprintType)
 struct EDENSPACESIMULATOR_API FEdenMissionDefinitionConfig
 {
@@ -130,6 +154,9 @@ struct EDENSPACESIMULATOR_API FEdenMissionDefinitionConfig
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	TArray<FEdenMissionObjectiveConfig> Objectives;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	FEdenMissionInitialConditions InitialConditions;
 };
 
 USTRUCT(BlueprintType)
@@ -175,6 +202,14 @@ struct EDENSPACESIMULATOR_API FEdenMissionRuntimeState
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
 	TArray<FEdenMissionObjectiveRuntime> ObjectiveStates;
+
+	/** Declared initial conditions were applied at this run's start (none declared: false). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	bool bInitialConditionsApplied = false;
+
+	/** This run limited the power bus; the override is cleared on abort and reset. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Mission")
+	bool bAppliedBatteryDischargeLimit = false;
 };
 
 USTRUCT(BlueprintType)
