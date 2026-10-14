@@ -119,7 +119,15 @@ bool FEdenOperatorPassiveVsEmergencyDemandDiffersTest::RunTest(const FString& Pa
 	const FEdenOperatorResolvedModifiers PassiveModifiers = FEdenOperatorControlModel::ResolveIntent(Passive, Config);
 	const FEdenOperatorResolvedModifiers EmergencyModifiers = FEdenOperatorControlModel::ResolveIntent(Emergency, Config);
 
-	TestTrue(TEXT("Passive demand near zero"), FMath::IsNearlyZero(PassiveModifiers.OperatorDemandKilowatts));
+	// Baseline A2: Nominal (the passive default) runs active cooling at its configured electrical cost.
+	TestTrue(
+		TEXT("Passive (Nominal) demand is the Nominal cooling cost"),
+		FMath::IsNearlyEqual(PassiveModifiers.OperatorDemandKilowatts, Config.NominalCoolingDemandKilowatts));
+	FEdenOperatorIntent Off;
+	Off.ThermalMode = EEdenThermalControlMode::Off;
+	const FEdenOperatorResolvedModifiers OffModifiers = FEdenOperatorControlModel::ResolveIntent(Off, Config);
+	TestTrue(TEXT("Off draws no cooling power"), FMath::IsNearlyZero(OffModifiers.OperatorDemandKilowatts));
+	TestTrue(TEXT("Off has no active cooling (passive only)"), FMath::IsNearlyZero(OffModifiers.OperatorDissipationDegreesCelsiusPerSecond));
 	TestTrue(
 		TEXT("Emergency demand higher"),
 		EmergencyModifiers.OperatorDemandKilowatts > PassiveModifiers.OperatorDemandKilowatts + KINDA_SMALL_NUMBER);

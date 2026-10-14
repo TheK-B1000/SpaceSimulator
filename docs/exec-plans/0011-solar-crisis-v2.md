@@ -2,7 +2,7 @@
 
 ## Status
 
-**Revision 2 for review, 2026-10-14. Not approved; do not implement.** Solar Crisis v1 (ExecPlan 0004) stays the approved, shipped scenario, with its balance and success criteria unchanged, until this plan is approved and implemented.
+**Revision 2 approved for implementation, 2026-10-14 (E1 with 6 kW discharge; auxiliary curtailment option (a), reporting only; flare D-a).** In progress: Checkpoint A done. Solar Crisis v1 (ExecPlan 0004) stays the approved, shipped scenario, with its balance and success criteria unchanged, until this plan is approved and implemented.
 
 Revision 2 applies the reviewer's decisions: thermal baseline A2, 20 °C initialization, and meaningful electrical constraints. It replaces revision 1's infeasible numbers, which were computed for A1; under A2, immediate Boost reached exactly 100 °C. Every trajectory below comes from a step-by-step replica of `FEdenThermalModel::Step` (§Validation), and the implementation must reproduce them in automated tests.
 
@@ -210,6 +210,8 @@ Battery use in every strategy: ≤ 0.05 kWh, so `MaintainPowerAbove` never binds
 ## Progress log
 
 - 2026-10-14: Revision 1 drafted after the v1 audit.
+- 2026-10-14: Checkpoint A. A2 implemented in `FEdenOperatorControlModel::ResolveIntent`: Nominal +0.5 C/s at 0.5 kW (new `NominalDissipation...`/`NominalCoolingDemand...` config, C++ defaults so the shipped DA picks them up); Off = passive only; Boost/Emergency replace Nominal. Modifiers now also carry the mode's `ThermalControlDemandKilowatts` and `ActiveCoolingDegreesCelsiusPerSecond` for Checkpoint B. Three existing tests updated to A2 expectations (load-shed net demand -1.5 kW; idle Nominal ship holds temperature, Off heats; Nominal costs 0.5 kW). New `Eden.Unit.SolarCrisisV2.A.*`. Suite 412/412, flight determinism unchanged.
+- **Deviation (A):** the thermal baseline is spacecraft configuration, not mission configuration, so Solar Crisis v1 *played in PIE* now runs on A2 (the 2.5 C/s flare peaks near 70 C, making v1 much easier). v1's asset and automated tests are unchanged and pass. Pinning v1's original balance live would need a mission-declared configuration override; not done without review.
 - 2026-10-14: Revision 2. A2 adopted; flare recalibrated by simulation (revision 1's 4.5 °C/s was infeasible under A2: immediate Boost reached 100 °C); deadline 90 → 100 s; electrical design E1 added after finding that cooling is not power-limited and battery energy cannot bind within 100 s.
 
 ## Decision log

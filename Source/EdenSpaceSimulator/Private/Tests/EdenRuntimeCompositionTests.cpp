@@ -285,7 +285,15 @@ bool FEdenRuntimeCompositionBlueprintPawnUsesRuntimeSystemsTest::RunTest(const F
 	Clock->Tick(1.0f);
 	TestTrue(TEXT("Simulation time advances"), Clock->GetElapsedSimulationTimeSeconds() > InitialElapsedSeconds);
 	TestTrue(TEXT("Sustained runtime propulsion demand reduces fuel"), Fuel->GetFuelStateSnapshot().FuelQuantityKilograms < InitialFuelKilograms);
-	TestTrue(TEXT("Thermal model advances in runtime wiring"), Thermal->GetThermalStateSnapshot().TemperatureCelsius > InitialTemperatureCelsius);
+	// Baseline A2 (ExecPlan 0011): a healthy idle ship in Nominal is thermally stable...
+	TestTrue(
+		TEXT("Idle Nominal ship holds its temperature (A2 baseline)"),
+		FMath::IsNearlyEqual(Thermal->GetThermalStateSnapshot().TemperatureCelsius, InitialTemperatureCelsius, 0.01f));
+	// ...and the thermal model still advances: with active cooling Off, passive radiation alone loses to heating.
+	TestTrue(TEXT("Thermal mode Off is accepted"), Operator->SetThermalControlMode(EEdenThermalControlMode::Off));
+	Clock->Tick(1.0f);
+	TestTrue(TEXT("Thermal model advances in runtime wiring (Off heats up)"), Thermal->GetThermalStateSnapshot().TemperatureCelsius > InitialTemperatureCelsius);
+	TestTrue(TEXT("Thermal mode back to Nominal"), Operator->SetThermalControlMode(EEdenThermalControlMode::Nominal));
 
 	// Newtonian flight (ExecPlan 0008): with Flight Assist off, released controls fire no thrusters and the ship drifts.
 	const float FuelAfterThrustKilograms = Fuel->GetFuelStateSnapshot().FuelQuantityKilograms;
@@ -1318,7 +1326,9 @@ bool FEdenRuntimeCompositionOperatorModifiersDeferredUntilResourcesReadyTest::Ru
 	TestFalse(TEXT("Nothing pending after apply"), Operator->IsIntentApplyPending());
 	TestTrue(
 		TEXT("Power received the deferred load-shed reduction"),
-		FMath::IsNearlyEqual(Power->GetPowerStateSnapshot().OperatorDemandKilowatts, -OperatorConfig.LoadShedDemandReductionKilowatts));
+		FMath::IsNearlyEqual(
+			Power->GetPowerStateSnapshot().OperatorDemandKilowatts,
+			OperatorConfig.NominalCoolingDemandKilowatts - OperatorConfig.LoadShedDemandReductionKilowatts));
 
 	// 2. Genuine failure: power began play but stayed disabled (no config). Not pending; reported as failure.
 	AActor* BrokenShip = MakeShip();

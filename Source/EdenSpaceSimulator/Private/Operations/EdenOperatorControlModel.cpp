@@ -18,6 +18,8 @@ bool FEdenOperatorControlModel::ValidateConfig(const FEdenOperatorControlConfig&
 	bool bIsValid = true;
 
 	const float NonNegativeFields[] = {
+		Config.NominalDissipationDegreesCelsiusPerSecond,
+		Config.NominalCoolingDemandKilowatts,
 		Config.BoostDissipationDegreesCelsiusPerSecond,
 		Config.EmergencyDissipationDegreesCelsiusPerSecond,
 		Config.BoostCoolingDemandKilowatts,
@@ -81,21 +83,28 @@ FEdenOperatorResolvedModifiers FEdenOperatorControlModel::ResolveIntent(
 		return Modifiers;
 	}
 
+	// Each mode selects one active-cooling level and its electrical cost (they replace, not stack).
 	switch (Intent.ThermalMode)
 	{
+	case EEdenThermalControlMode::Nominal:
+		Modifiers.ActiveCoolingDegreesCelsiusPerSecond = Config.NominalDissipationDegreesCelsiusPerSecond;
+		Modifiers.ThermalControlDemandKilowatts = Config.NominalCoolingDemandKilowatts;
+		break;
 	case EEdenThermalControlMode::Boost:
-		Modifiers.OperatorDissipationDegreesCelsiusPerSecond += Config.BoostDissipationDegreesCelsiusPerSecond;
-		Modifiers.OperatorDemandKilowatts += Config.BoostCoolingDemandKilowatts;
+		Modifiers.ActiveCoolingDegreesCelsiusPerSecond = Config.BoostDissipationDegreesCelsiusPerSecond;
+		Modifiers.ThermalControlDemandKilowatts = Config.BoostCoolingDemandKilowatts;
 		break;
 	case EEdenThermalControlMode::Emergency:
-		Modifiers.OperatorDissipationDegreesCelsiusPerSecond += Config.EmergencyDissipationDegreesCelsiusPerSecond;
-		Modifiers.OperatorDemandKilowatts += Config.EmergencyCoolingDemandKilowatts;
+		Modifiers.ActiveCoolingDegreesCelsiusPerSecond = Config.EmergencyDissipationDegreesCelsiusPerSecond;
+		Modifiers.ThermalControlDemandKilowatts = Config.EmergencyCoolingDemandKilowatts;
 		break;
 	case EEdenThermalControlMode::Off:
-	case EEdenThermalControlMode::Nominal:
 	default:
+		// Passive radiation only.
 		break;
 	}
+	Modifiers.OperatorDissipationDegreesCelsiusPerSecond += Modifiers.ActiveCoolingDegreesCelsiusPerSecond;
+	Modifiers.OperatorDemandKilowatts += Modifiers.ThermalControlDemandKilowatts;
 
 	if (Intent.LoadShedMode == EEdenLoadShedMode::Shed)
 	{

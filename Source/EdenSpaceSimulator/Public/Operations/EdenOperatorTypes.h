@@ -42,6 +42,18 @@ struct EDENSPACESIMULATOR_API FEdenOperatorControlConfig
 {
 	GENERATED_BODY()
 
+	/**
+	 * Active cooling in Nominal mode (ExecPlan 0011, baseline A2). With the default 0.5 C/s passive
+	 * dissipation this balances the 1.0 C/s baseline heating, so a healthy idle ship is stable. Off keeps
+	 * passive cooling only. Boost and Emergency replace (do not add to) the Nominal contribution.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Operations", meta = (ClampMin = "0.0"))
+	float NominalDissipationDegreesCelsiusPerSecond = 0.5f;
+
+	/** Electrical cost of Nominal active cooling. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Operations", meta = (ClampMin = "0.0"))
+	float NominalCoolingDemandKilowatts = 0.5f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Eden|Operations", meta = (ClampMin = "0.0"))
 	float BoostDissipationDegreesCelsiusPerSecond = 1.0f;
 
@@ -95,6 +107,14 @@ struct EDENSPACESIMULATOR_API FEdenOperatorResolvedModifiers
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Operations")
 	bool bStabilizationAssistAvailable = true;
+
+	/** Electrical demand of the selected thermal-control mode alone (included in OperatorDemandKilowatts). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Operations")
+	float ThermalControlDemandKilowatts = 0.0f;
+
+	/** Powered (active) cooling of the selected mode alone (included in OperatorDissipation...). */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Eden|Operations")
+	float ActiveCoolingDegreesCelsiusPerSecond = 0.0f;
 };
 
 USTRUCT(BlueprintType)
